@@ -203,3 +203,40 @@ Open a Pull Request from your fork back to the main branch.
 
 # 📜 License
 MIT License — free to use, modify, and distribute.
+
+## Soroban Configuration (networks)
+
+This workspace includes a deterministic, strongly-typed Soroban network configuration system.
+
+Add a network (example CLI stub):
+
+```bash
+soroban config network add <name> \
+   --rpc-url <url> \
+   --network-passphrase "<passphrase>"
+```
+
+List networks (profiles in `soroban.toml`):
+
+```bash
+soroban config network ls
+```
+
+Select a network (this sets the active profile name; loader reads `SOROBAN_NETWORK`):
+
+```bash
+soroban config network use <name>
+```
+
+Environment variable override behavior
+
+- `SOROBAN_NETWORK` selects a profile (e.g. `testnet`, `mainnet`, `sandbox`).
+- `SOROBAN_RPC_URL` and `SOROBAN_NETWORK_PASSPHRASE` override profile values when set.
+
+Verify the resolved network with the included CLI tool:
+
+```bash
+cargo run -p stellaraid-tools -- network
+```
+
+See `.env.example` for a safe example of environment variables you can copy to `.env`.

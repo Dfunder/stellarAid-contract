@@ -1,6 +1,9 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+mod config;
+use config::Config;
+
 #[derive(Parser)]
 #[command(name = "stellaraid-cli")]
 #[command(about = "StellarAid CLI tools for contract deployment and management")]
@@ -11,16 +14,20 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Deploy a contract (placeholder)
     Deploy {
         #[arg(short, long)]
         network: String,
         #[arg(short, long)]
         contract_id: Option<String>,
     },
+    /// Configuration utilities
     Config {
         #[command(subcommand)]
         action: ConfigAction,
     },
+    /// Print resolved network configuration
+    Network,
 }
 
 #[derive(Subcommand)]
@@ -41,17 +48,25 @@ fn main() -> Result<()> {
             if let Some(id) = contract_id {
                 println!("Using contract ID: {}", id);
             }
-            // TODO: Implement deployment logic
         }
-        Commands::Config { action } => {
-            match action {
-                ConfigAction::Check => {
-                    println!("Checking configuration...");
-                    // TODO: Implement config check
+        Commands::Config { action } => match action {
+            ConfigAction::Check => {
+                println!("Checking configuration...");
+            }
+            ConfigAction::Init => {
+                println!("Initializing configuration...");
+            }
+        },
+        Commands::Network => {
+            match Config::load(None) {
+                Ok(cfg) => {
+                    println!("Active network: {}", cfg.network);
+                    println!("RPC URL: {}", cfg.rpc_url);
+                    println!("Passphrase: {}", cfg.network_passphrase);
                 }
-                ConfigAction::Init => {
-                    println!("Initializing configuration...");
-                    // TODO: Implement config initialization
+                Err(e) => {
+                    eprintln!("Failed to load config: {}", e);
+                    std::process::exit(2);
                 }
             }
         }

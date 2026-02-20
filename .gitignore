@@ -1,0 +1,40 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# WASM
+*.wasm
+*.wat
+
+# Soroban
+soroban-token-cli
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/

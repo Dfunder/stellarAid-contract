@@ -3,13 +3,75 @@ A blockchain-based crowdfunding platform built on the **Stellar Network** for tr
 
 StellarAid enables project creators to raise funds in **XLM** or any Stellar-based asset (USDC, NGNT, custom tokens), while donors can contribute with full on-chain transparency.
 
-# 📌 Development Setup 
-```bash
-Blockchain
+## � Workspace Layout
 
-Stellar Testnet
-Horizon API
-Supported wallets (Freighter, Albedo, Lobstr)
+This project uses a Rust Cargo workspace with the following structure:
+
+```
+stellarAid-contract/
+├── Cargo.toml                 # Workspace configuration
+├── crates/
+│   ├── contracts/
+│   │   └── core/             # Core Soroban smart contract
+│   │       ├── Cargo.toml
+│   │       └── src/
+│   │           └── lib.rs    # Contract implementation
+│   └── tools/                # CLI utilities and deployment tools
+│       ├── Cargo.toml
+│       └── src/
+│           └── main.rs       # CLI entry point
+├── .gitignore
+└── README.md
+```
+
+### Crates Overview
+
+- **`stellaraid-core`**: Main Soroban smart contract implementing the crowdfunding logic
+- **`stellaraid-tools`**: CLI utilities for contract deployment, configuration, and management
+
+## 🛠️ Development Setup 
+
+### Prerequisites
+- Rust 1.70+ with `wasm32-unknown-unknown` target
+- Soroban CLI tools
+
+### Installation
+```bash
+# Add WASM target
+rustup target add wasm32-unknown-unknown
+
+# Install Soroban CLI (if not already installed)
+cargo install soroban-cli
+```
+
+### Building
+```bash
+# Build the core contract for WASM
+cargo build -p stellaraid-core --target wasm32-unknown-unknown --release
+
+# Build the CLI tools
+cargo build -p stellaraid-tools
+
+# Build entire workspace
+cargo build --workspace
+```
+
+### Testing
+```bash
+# Run contract tests
+cargo test -p stellaraid-core
+
+# Run all tests
+cargo test --workspace
+```
+
+### CLI Usage
+```bash
+# Check configuration
+cargo run -p stellaraid-tools -- config check
+
+# Deploy contract (placeholder)
+cargo run -p stellaraid-tools -- deploy --network testnet
 ```
 ## 📌 Features
 

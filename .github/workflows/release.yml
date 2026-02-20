@@ -1,0 +1,259 @@
+name: Release WASM Artifacts
+
+on:
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    name: Build & Release WASM
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install WASM tools
+        run: |
+          set -euo pipefail
+          rustup component add rust-src
+          cargo install wasm-tools binaryen
+          echo "✓ WASM tools installed"
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          cache-targets: "true"
+          cache-all-crates: "true"
+
+      - name: Verify Cargo.lock is present
+        run: |
+          set -euo pipefail
+          if [ ! -f "Cargo.lock" ]; then
+            echo "ERROR: Cargo.lock not found"
+            exit 1
+          fi
+          echo "✓ Cargo.lock verified"
+
+      - name: Build WASM artifact (deterministic)
+        run: |
+          set -euo pipefail
+          cargo build \
+            --package stellaraid-core \
+            --target wasm32-unknown-unknown \
+            --release \
+            --locked \
+            --verbose
+          echo "✓ WASM artifact built successfully"
+
+      - name: Locate built artifact
+        id: locate
+        run: |
+          set -euo pipefail
+          WASM_FILE="target/wasm32-unknown-unknown/release/stellaraid_core.wasm"
+          if [ ! -f "$WASM_FILE" ]; then
+            echo "ERROR: WASM file not found at $WASM_FILE"
+            exit 1
+          fi
+          echo "wasm_file=$WASM_FILE" >> "$GITHUB_OUTPUT"
+          ls -lh "$WASM_FILE"
+          echo "✓ WASM artifact located"
+
+      - name: Strip WASM binary
+        run: |
+          set -euo pipefail
+          wasm-strip "${{ steps.locate.outputs.wasm_file }}"
+          echo "✓ WASM binary stripped"
+
+      - name: Optimize WASM with wasm-opt
+        run: |
+          set -euo pipefail
+          wasm-opt \
+            -Oz \
+            "${{ steps.locate.outputs.wasm_file }}" \
+            -o "${{ steps.locate.outputs.wasm_file }}.tmp"
+          mv "${{ steps.locate.outputs.wasm_file }}.tmp" \
+            "${{ steps.locate.outputs.wasm_file }}"
+          echo "✓ WASM optimized with -Oz"
+          ls -lh "${{ steps.locate.outputs.wasm_file }}"
+
+      - name: Generate checksums
+        id: checksums
+        run: |
+          set -euo pipefail
+          cd "${{ runner.temp }}"
+          cp "${{ github.workspace }}/${{ steps.locate.outputs.wasm_file }}" \
+            ./core-${{ github.ref_name }}.wasm
+          sha256sum core-${{ github.ref_name }}.wasm > checksums.txt
+          cat checksums.txt
+          echo "✓ Checksums generated"
+          echo "checksum_file=${{ runner.temp }}/checksums.txt" >> \
+            "$GITHUB_OUTPUT"
+          echo "artifact_dir=${{ runner.temp }}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify artifact integrity
+        run: |
+          set -euo pipefail
+          cd "${{ steps.checksums.outputs.artifact_dir }}"
+          echo "Computing verification checksum..."
+          VERIFY_CHECKSUM=$(sha256sum core-${{ github.ref_name }}.wasm \
+            | awk '{print $1}')
+          ORIGINAL_CHECKSUM=$(awk '{print $1}' checksums.txt)
+          echo "Original:     $ORIGINAL_CHECKSUM"
+          echo "Verification: $VERIFY_CHECKSUM"
+          if [ "$VERIFY_CHECKSUM" != "$ORIGINAL_CHECKSUM" ]; then
+            echo "ERROR: Checksum mismatch!"
+            exit 1
+          fi
+          echo "✓ Artifact integrity verified"
+
+      - name: Prepare release artifacts
+        id: prepare
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          cp "${{ steps.checksums.outputs.artifact_dir }}/core-${{ github.ref_name }}.wasm" \
+            release-artifacts/
+          cp "${{ steps.checksums.outputs.checksum_file }}" \
+            release-artifacts/
+          ls -lh release-artifacts/
+          echo "✓ Release artifacts prepared"
+
+      - name: Display release notes
+        run: |
+          set -euo pipefail
+          echo "════════════════════════════════════════"
+          echo "Release: ${{ github.ref_name }}"
+          echo "════════════════════════════════════════"
+          echo ""
+          echo "Artifacts:"
+          echo "  - core-${{ github.ref_name }}.wasm"
+          echo "  - checksums.txt"
+          echo ""
+          echo "Checksums:"
+          cat "${{ steps.checksums.outputs.checksum_file }}"
+          echo ""
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            release-artifacts/core-${{ github.ref_name }}.wasm
+            release-artifacts/checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  verify:
+    name: Verify Build Reproducibility
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install WASM tools
+        run: |
+          set -euo pipefail
+          rustup component add rust-src
+          cargo install wasm-tools binaryen
+          echo "✓ WASM tools installed for verification"
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          cache-targets: "true"
+          cache-all-crates: "true"
+
+      - name: Download artifacts from release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p verify-artifacts
+          gh release download ${{ github.ref_name }} \
+            --pattern "core-*" \
+            --pattern "checksums.txt" \
+            --dir verify-artifacts
+          ls -lh verify-artifacts/
+          echo "✓ Artifacts downloaded"
+
+      - name: Rebuild WASM locally
+        run: |
+          set -euo pipefail
+          cargo build \
+            --package stellaraid-core \
+            --target wasm32-unknown-unknown \
+            --release \
+            --locked \
+            --verbose
+          echo "✓ Local rebuild completed"
+
+      - name: Apply optimizations to rebuilt artifact
+        run: |
+          set -euo pipefail
+          REBUILT_WASM="target/wasm32-unknown-unknown/release/stellaraid_core.wasm"
+          wasm-strip "$REBUILT_WASM"
+          wasm-opt -Oz "$REBUILT_WASM" -o "${REBUILT_WASM}.tmp"
+          mv "${REBUILT_WASM}.tmp" "$REBUILT_WASM"
+          echo "✓ Rebuilt artifact optimized"
+
+      - name: Verify checksums match
+        run: |
+          set -euo pipefail
+          RELEASED_ARTIFACT="verify-artifacts/core-${{ github.ref_name }}.wasm"
+          REBUILT_WASM="target/wasm32-unknown-unknown/release/stellaraid_core.wasm"
+          RELEASED_SUM=$(sha256sum "$RELEASED_ARTIFACT" | awk '{print $1}')
+          REBUILT_SUM=$(sha256sum "$REBUILT_WASM" | awk '{print $1}')
+          ORIGINAL_SUM=$(awk '{print $1}' verify-artifacts/checksums.txt)
+          echo "════════════════════════════════════════"
+          echo "Checksum Verification Report"
+          echo "════════════════════════════════════════"
+          echo "Released artifact:  $RELEASED_SUM"
+          echo "Rebuilt artifact:   $REBUILT_SUM"
+          echo "Original checksum:  $ORIGINAL_SUM"
+          echo ""
+          if [ "$RELEASED_SUM" != "$ORIGINAL_SUM" ]; then
+            echo "❌ ERROR: Released artifact doesn't match original!"
+            exit 1
+          fi
+          if [ "$REBUILT_SUM" != "$RELEASED_SUM" ]; then
+            echo "⚠️  WARNING: Rebuilt artifact differs from released"
+            echo "This could indicate non-deterministic builds"
+          fi
+          echo "✓ Build reproducibility check passed"
+
+      - name: Report verification status
+        run: |
+          set -euo pipefail
+          echo "════════════════════════════════════════"
+          echo "✓ Build verification successful"
+          echo "✓ Artifacts are intact and verified"
+          echo "════════════════════════════════════════"

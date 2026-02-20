@@ -1,4 +1,6 @@
 # 🌟 StellarAid  
+[![CI](https://github.com/YOUR_USERNAME/stellaraid-contract/workflows/CI/badge.svg)](https://github.com/YOUR_USERNAME/stellaraid-contract/actions)
+
 A blockchain-based crowdfunding platform built on the **Stellar Network** for transparent, borderless, and secure fundraising.
 
 StellarAid enables project creators to raise funds in **XLM** or any Stellar-based asset (USDC, NGNT, custom tokens), while donors can contribute with full on-chain transparency.

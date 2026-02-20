@@ -1,5 +1,5 @@
-use clap::{Parser, Subcommand};
 use anyhow::Result;
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "stellaraid-cli")]
@@ -33,7 +33,10 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Deploy { network, contract_id } => {
+        Commands::Deploy {
+            network,
+            contract_id,
+        } => {
             println!("Deploying to network: {}", network);
             if let Some(id) = contract_id {
                 println!("Using contract ID: {}", id);

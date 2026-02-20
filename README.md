@@ -31,20 +31,90 @@ stellarAid-contract/
 
 ## 🛠️ Development Setup 
 
+### Quick Start (New Contributors)
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/stellaraid-contract.git
+   cd stellaraid-contract
+   ```
+
+2. **Install Rust toolchain** (automatically configured by `rust-toolchain.toml`)
+   ```bash
+   # Install Rust if not already installed
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   
+   # The project will automatically use the correct Rust version and targets
+   rustup show
+   ```
+
+3. **Install Soroban CLI**
+   ```bash
+   # Method 1: Install via cargo (recommended for development)
+   cargo install soroban-cli
+   
+   # Method 2: Install via npm (alternative)
+   npm install -g soroban-cli
+   
+   # Verify installation
+   soroban --version
+   ```
+
+4. **Build the project**
+   ```bash
+   # Using Make (recommended)
+   make build
+   
+   # Or using cargo directly
+   cargo build -p stellaraid-core --target wasm32-unknown-unknown
+   ```
+
 ### Prerequisites
-- Rust 1.70+ with `wasm32-unknown-unknown` target
-- Soroban CLI tools
+- **Rust stable toolchain** (automatically managed by `rust-toolchain.toml`)
+- **wasm32-unknown-unknown target** (auto-installed by toolchain)
+- **Soroban CLI** for contract deployment and testing
 
-### Installation
-```bash
-# Add WASM target
-rustup target add wasm32-unknown-unknown
+### Toolchain Configuration
 
-# Install Soroban CLI (if not already installed)
-cargo install soroban-cli
+This project uses `rust-toolchain.toml` to ensure consistent development environments:
+
+```toml
+[toolchain]
+channel = "stable"
+targets = ["wasm32-unknown-unknown"]
+components = ["rustfmt", "clippy"]
 ```
 
-### Building
+This ensures:
+- Consistent Rust version across all contributors
+- Required targets are automatically installed
+- Essential components (rustfmt, clippy) are included
+
+### Development Commands
+
+The project includes a Makefile for common development tasks:
+
+```bash
+# Build WASM contract
+make build
+
+# Run all tests
+make test
+
+# Format code
+make fmt
+
+# Run linter
+make lint
+
+# Clean build artifacts
+make clean
+
+# Show all available commands
+make help
+```
+
+### Building (Manual)
 ```bash
 # Build the core contract for WASM
 cargo build -p stellaraid-core --target wasm32-unknown-unknown --release

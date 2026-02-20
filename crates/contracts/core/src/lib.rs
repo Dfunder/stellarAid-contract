@@ -9,7 +9,7 @@ impl StellarAidContract {
     pub fn hello(_env: Env, _to: Symbol) -> Symbol {
         soroban_sdk::symbol_short!("Hello")
     }
-    
+
     pub fn get_greeting(_env: Env) -> Symbol {
         soroban_sdk::symbol_short!("Hi")
     }
@@ -18,7 +18,7 @@ impl StellarAidContract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{symbol, Env, symbol_short};
+    use soroban_sdk::{symbol_short, Env};
 
     #[test]
     fn test_hello() {
@@ -29,7 +29,7 @@ mod tests {
         let result = client.hello(&symbol_short!("World"));
         assert_eq!(result, symbol_short!("Hello"));
     }
-    
+
     #[test]
     fn test_get_greeting() {
         let env = Env::default();

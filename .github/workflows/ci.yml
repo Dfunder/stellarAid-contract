@@ -149,3 +149,20 @@ jobs:
 
       - name: Build WASM contract
         run: cargo build -p stellaraid-core --target wasm32-unknown-unknown
+
+  security:
+    name: Security Scans
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: cargo-audit scan
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: cargo-deny check
+        uses: embarkstudios/cargo-deny-action@v2
+        with:
+          command: check

@@ -48,28 +48,26 @@ fn main() -> Result<()> {
             if let Some(id) = contract_id {
                 println!("Using contract ID: {}", id);
             }
-        }
+        },
         Commands::Config { action } => match action {
             ConfigAction::Check => {
                 println!("Checking configuration...");
-            }
+            },
             ConfigAction::Init => {
                 println!("Initializing configuration...");
-            }
+            },
         },
-        Commands::Network => {
-            match Config::load(None) {
-                Ok(cfg) => {
-                    println!("Active network: {}", cfg.network);
-                    println!("RPC URL: {}", cfg.rpc_url);
-                    println!("Passphrase: {}", cfg.network_passphrase);
-                }
-                Err(e) => {
-                    eprintln!("Failed to load config: {}", e);
-                    std::process::exit(2);
-                }
-            }
-        }
+        Commands::Network => match Config::load(None) {
+            Ok(cfg) => {
+                println!("Active network: {}", cfg.network);
+                println!("RPC URL: {}", cfg.rpc_url);
+                println!("Passphrase: {}", cfg.network_passphrase);
+            },
+            Err(e) => {
+                eprintln!("Failed to load config: {}", e);
+                std::process::exit(2);
+            },
+        },
     }
 
     Ok(())

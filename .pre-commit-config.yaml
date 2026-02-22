@@ -1,0 +1,43 @@
+# Pre-commit hooks configuration for StellarAid project
+# Optional: Enable pre-commit hooks for automatic code quality checks
+#
+# Installation:
+#   1. Install pre-commit: pip install pre-commit
+#   2. Install the git hooks: pre-commit install
+#   3. (Optional) Run against all files: pre-commit run --all-files
+#
+# To disable: pre-commit uninstall
+
+repos:
+  - repo: local
+    hooks:
+      - id: rustfmt
+        name: rustfmt
+        entry: bash -c 'cargo fmt --all -- --check'
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [commit]
+
+      - id: clippy
+        name: clippy
+        entry: bash -c 'cargo clippy --workspace -- -D warnings'
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [commit]
+
+      - id: cargo-test
+        name: cargo test
+        entry: bash -c 'cargo test --workspace'
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [push]
+
+  # Alternative: Using rust-toolchain hooks (if preferred)
+  # - repo: https://github.com/astral-sh/ruff-pre-commit
+  #   rev: v0.1.0
+  #   hooks:
+  #     - id: ruff
+  #       args: [ --fix ]

@@ -1,4 +1,4 @@
-.PHONY: help build test fmt lint clean wasm check-deps install-tools
+.PHONY: help build test fmt lint clean wasm check-deps install-tools audit deny
 
 # Default target
 help:
@@ -13,6 +13,8 @@ help:
 	@echo "  clean        - Clean build artifacts"
 	@echo "  check-deps   - Check if required dependencies are installed"
 	@echo "  install-tools- Install development dependencies"
+	@echo "  audit        - Check for security vulnerabilities in dependencies"
+	@echo "  deny         - Check for license and ban policies"
 	@echo "  help         - Show this help message"
 
 # Build everything
@@ -86,6 +88,10 @@ install-tools:
 	cargo install soroban-cli
 	@echo "Adding wasm32-unknown-unknown target..."
 	rustup target add wasm32-unknown-unknown
+	@echo "Installing cargo-audit..."
+	cargo install cargo-audit --locked
+	@echo "Installing cargo-deny..."
+	cargo install cargo-deny --locked
 	@echo "✅ Development dependencies installed!"
 
 # Quick setup for new contributors
@@ -99,5 +105,17 @@ setup: install-tools build
 	@echo "3. Start developing your feature!"
 
 # Continuous integration target
-ci: fmt lint test
+ci: audit deny fmt lint test
 	@echo "✅ CI checks passed!"
+
+# Run security audit
+audit:
+	@echo "Running cargo-audit..."
+	cargo audit
+	@echo "✅ Security audit passed!"
+
+# Run cargo-deny checks
+deny:
+	@echo "Running cargo-deny..."
+	cargo deny check
+	@echo "✅ cargo-deny checks passed!"

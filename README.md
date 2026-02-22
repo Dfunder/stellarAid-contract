@@ -201,6 +201,39 @@ git push origin feature/add-donation-flow
 ```
 Open a Pull Request from your fork back to the main branch.
 
+## Security Scans
+
+This project uses `cargo-audit` and `cargo-deny` to maintain high security standards and license compliance.
+
+### Local Scans
+
+You can run the security scans locally using the following commands:
+
+- **Check for vulnerabilities**:
+  ```bash
+  make audit
+  ```
+- **Check for license and ban policies**:
+  ```bash
+  make deny
+  ```
+
+### Resolving Failures
+
+#### Vulnerabilities (`cargo audit`)
+If a vulnerability is found, you should:
+1.  **Update dependencies**: Run `cargo update` to see if a newer version of the crate resolves the issue.
+2.  **Ignore (Temporary)**: If a fix is not available and you have audited the vulnerability, you can temporarily ignore it by adding it to `deny.toml` under `[advisories] -> ignore`.
+
+#### License/Ban Policy (`cargo deny`)
+If a license or ban policy violation is found:
+1.  **Check Licenses**: Ensure all dependencies use approved licenses. If a new license needs to be allowed, update the `allow` list in `deny.toml`.
+2.  **Banned Crates**: If a crate is banned, you must find an alternative or justify its use and add it to the `skip` list in `deny.toml`.
+
+### Automated CI
+
+Security scans are automatically run on every push and pull request. CI will fail if any known vulnerabilities or policy violations are detected.
+
 # 📜 License
 MIT License — free to use, modify, and distribute.
 

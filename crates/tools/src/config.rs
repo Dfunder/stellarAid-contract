@@ -51,6 +51,8 @@ pub struct Config {
     pub rpc_url: String,
     /// Resolved network passphrase.
     pub network_passphrase: String,
+    /// Admin key for contract deployment (from environment or generated).
+    pub admin_key: Option<String>,
 }
 
 /// Errors that can occur when loading configuration.
@@ -93,6 +95,7 @@ impl Config {
         let env_network = env::var("SOROBAN_NETWORK").ok();
         let env_rpc = env::var("SOROBAN_RPC_URL").ok();
         let env_pass = env::var("SOROBAN_NETWORK_PASSPHRASE").ok();
+        let env_admin_key = env::var("SOROBAN_ADMIN_KEY").ok();
 
         let toml_contents = fs::read_to_string(&toml_path)?;
         let toml: SorobanToml = toml::from_str(&toml_contents)?;
@@ -147,6 +150,7 @@ impl Config {
             network: network_enum,
             rpc_url,
             network_passphrase,
+            admin_key: env_admin_key,
         })
     }
 }

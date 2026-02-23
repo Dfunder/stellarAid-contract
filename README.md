@@ -142,9 +142,142 @@ cargo test --workspace
 # Check configuration
 cargo run -p stellaraid-tools -- config check
 
-# Deploy contract (placeholder)
+# Initialize configuration (creates .env and contract ID files)
+cargo run -p stellaraid-tools -- config init
+
+# Show network configuration
+cargo run -p stellaraid-tools -- network
+
+# Deploy contract to testnet
+cargo run -p stellaraid-tools -- deploy --network testnet
+
+# Deploy contract to sandbox (local)
+cargo run -p stellaraid-tools -- deploy --network sandbox
+
+# Invoke the ping method on deployed contract
+cargo run -p stellaraid-tools -- invoke ping
+
+# Invoke with custom network
+cargo run -p stellaraid-tools -- invoke ping --network testnet
+
+# Show deployed contract ID
+cargo run -p stellaraid-tools -- contract-id
+cargo run -p stellaraid-tools -- contract-id --network testnet
+```
+
+## 🚀 Quick Start: Deploy Your First Contract
+
+This guide walks you through deploying the core contract to testnet and invoking the `ping` method.
+
+### Prerequisites
+
+1. **Install Soroban CLI**:
+   ```bash
+   cargo install soroban-cli
+   ```
+
+2. **Generate a keypair** (for testnet):
+   ```bash
+   soroban keys generate test_account --network testnet
+   ```
+
+3. **Get testnet XLM** (optional but recommended for testing):
+   - Visit [Stellar Testnet Faucet](https://laboratory.stellar.org/#account-creator?network=testnet)
+
+### Step 1: Build the Contract
+
+```bash
+# Build WASM contract
+make wasm
+
+# Or build everything including CLI tools
+make build
+```
+
+### Step 2: Configure Environment
+
+```bash
+# Copy the example environment file
+cp .env.example .env
+
+# Edit .env and set your admin key:
+# SOROBAN_ADMIN_KEY=YOUR_PUBLIC_KEY
+```
+
+Or generate and configure a new key:
+```bash
+# Generate a new keypair
+soroban keys generate my_admin --network testnet
+
+# Get the public key
+soroban keys list
+
+# Add to .env
+SOROBAN_ADMIN_KEY=GA7...
+```
+
+### Step 3: Deploy to Testnet
+
+```bash
+# Deploy the contract
 cargo run -p stellaraid-tools -- deploy --network testnet
 ```
+
+Expected output:
+```
+🚀 Deploying to network: testnet
+📦 Using WASM: target/wasm32-unknown-unknown/debug/stellaraid_core.wasm
+✅ Contract deployed successfully!
+📝 Contract ID: CB7...ABC
+✅ Contract ID stored in .stellaraid_contract_id
+```
+
+### Step 4: Invoke the ping Method
+
+```bash
+# Invoke ping
+cargo run -p stellaraid-tools -- invoke ping
+```
+
+Expected output:
+```
+🔄 Invoking method 'ping' on network: testnet
+📝 Using contract ID: CB7...ABC
+✅ Invocation successful!
+📤 Result: 1
+```
+
+### Step 5: Check Deployment
+
+```bash
+# View all deployed contract IDs
+cargo run -p stellaraid-tools -- contract-id
+
+# View network configuration
+cargo run -p stellaraid-tools -- network
+```
+
+### Using Sandbox (Local Development)
+
+For local testing without testnet:
+
+```bash
+# Start local sandbox
+soroban sandbox start
+
+# Deploy to sandbox
+cargo run -p stellaraid-tools -- deploy --network sandbox
+
+# Invoke on sandbox
+cargo run -p stellaraid-tools -- invoke ping --network sandbox
+```
+
+### Troubleshooting
+
+- **"WASM file not found"**: Run `make wasm` to build the contract first
+- **"No contract ID found"**: Deploy a contract first with `deploy` command
+- **"Configuration error"**: Run `cargo run -p stellaraid-tools -- config check` to diagnose
+- **"soroban: command not found"**: Install with `cargo install soroban-cli`
 ## 📌 Features
 
 ### 🎯 For Donors

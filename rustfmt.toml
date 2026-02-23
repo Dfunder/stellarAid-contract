@@ -1,0 +1,23 @@
+# rustfmt configuration for StellarAid project
+# Format code consistently across the workspace
+# Configuration uses only stable features compatible with Rust stable channel
+
+# Code layout settings
+max_width = 100
+hard_tabs = false
+tab_spaces = 4
+newline_style = "Unix"
+
+# Imports
+reorder_imports = true
+reorder_modules = true
+use_try_shorthand = true
+use_field_init_shorthand = true
+
+# Formatting
+edition = "2021"
+
+# Function formatting
+match_block_trailing_comma = true
+
+

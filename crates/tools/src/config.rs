@@ -43,6 +43,7 @@ struct SorobanToml {
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Logical profile name chosen from `soroban.toml`.
+    #[allow(dead_code)]
     pub profile: String,
     /// Resolved network enum.
     pub network: Network,
@@ -59,9 +60,9 @@ pub enum ConfigError {
     Io(#[from] std::io::Error),
     #[error("Failed to parse soroban.toml: {0}")]
     Toml(#[from] toml::de::Error),
-    #[error("No profile selected and no default available. Set the SOROBAN_NETWORK env or add a 'testnet' profile to soroban.toml")] 
+    #[error("No profile selected and no default available. Set the SOROBAN_NETWORK env or add a 'testnet' profile to soroban.toml")]
     NoProfileSelected,
-    #[error("Profile '{0}' not found in soroban.toml")] 
+    #[error("Profile '{0}' not found in soroban.toml")]
     ProfileNotFound(String),
     #[error("Missing required value: {0}")]
     MissingValue(&'static str),
@@ -205,7 +206,7 @@ network_passphrase = "Test SDF Network ; September 2015"
         assert_eq!(cfg.rpc_url, "https://soroban-testnet.stellar.org");
         assert_eq!(cfg.network_passphrase, "Test SDF Network ; September 2015");
         match cfg.network {
-            Network::Testnet => {}
+            Network::Testnet => {},
             _ => panic!("expected testnet"),
         }
     }

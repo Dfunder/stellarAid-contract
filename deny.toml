@@ -1,43 +1,34 @@
 # cargo-deny configuration
 
 [advisories]
-version = 2
-vulnerability = "deny"
-unmaintained = "warn"
-unsound = "warn"
-notice = "warn"
+unmaintained = "workspace"
+unsound = "workspace"
 ignore = []
 
 [bans]
-version = 2
+multiple-versions = "warn"
+wildcards = "allow"
 deny = []
 skip = []
 skip-tree = []
 
 [licenses]
-version = 2
-unlicensed = "deny"
 allow = [
     "MIT",
     "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
     "CC0-1.0",
     "Zlib",
     "OpenSSL",
+    "Unicode-3.0",
+    "LGPL-3.0-or-later",
 ]
-deny = [
-    "GPL-1.0",
-    "GPL-2.0",
-    "GPL-3.0",
-    "AGPL-3.0",
-]
-copyleft = "warn"
 confidence-threshold = 0.8
 
 [sources]
-version = 2
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]

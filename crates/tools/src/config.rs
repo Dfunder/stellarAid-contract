@@ -177,6 +177,7 @@ mod tests {
     use super::*;
     use std::fs::File;
     use std::io::Write;
+    use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
 
     fn write_toml(dir: &Path, content: &str) -> PathBuf {
@@ -192,83 +193,99 @@ mod tests {
         env::remove_var("SOROBAN_NETWORK_PASSPHRASE");
     }
 
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn with_isolated_env<F: FnOnce()>(f: F) {
+        let _guard = env_lock().lock().expect("env lock poisoned");
+        clear_env_vars();
+        f();
+        clear_env_vars();
+    }
+
     #[test]
     fn loads_profile_by_name() {
-        let d = tempdir().unwrap();
-        let toml = r#"
+        with_isolated_env(|| {
+            let d = tempdir().unwrap();
+            let toml = r#"
 [profile.testnet]
 network = "testnet"
 rpc_url = "https://soroban-testnet.stellar.org"
 network_passphrase = "Test SDF Network ; September 2015"
 "#;
-        clear_env_vars();
-        let p = write_toml(d.path(), toml);
-        env::set_var("SOROBAN_NETWORK", "testnet");
+            let p = write_toml(d.path(), toml);
+            env::set_var("SOROBAN_NETWORK", "testnet");
 
-        let cfg = Config::load(Some(&p)).expect("should load");
-        assert_eq!(cfg.profile, "testnet");
-        assert_eq!(cfg.rpc_url, "https://soroban-testnet.stellar.org");
-        assert_eq!(cfg.network_passphrase, "Test SDF Network ; September 2015");
-        match cfg.network {
-            Network::Testnet => {},
-            _ => panic!("expected testnet"),
-        }
+            let cfg = Config::load(Some(&p)).expect("should load");
+            assert_eq!(cfg.profile, "testnet");
+            assert_eq!(cfg.rpc_url, "https://soroban-testnet.stellar.org");
+            assert_eq!(cfg.network_passphrase, "Test SDF Network ; September 2015");
+            match cfg.network {
+                Network::Testnet => {},
+                _ => panic!("expected testnet"),
+            }
+        });
     }
 
     #[test]
     fn env_overrides_profile_values() {
-        let d = tempdir().unwrap();
-        let toml = r#"
+        with_isolated_env(|| {
+            let d = tempdir().unwrap();
+            let toml = r#"
 [profile.testnet]
 network = "testnet"
 rpc_url = "https://soroban-testnet.stellar.org"
 network_passphrase = "Test SDF Network ; September 2015"
 "#;
-        clear_env_vars();
-        let p = write_toml(d.path(), toml);
-        env::set_var("SOROBAN_NETWORK", "testnet");
-        env::set_var("SOROBAN_RPC_URL", "https://override.local");
-        env::set_var("SOROBAN_NETWORK_PASSPHRASE", "override pass");
+            let p = write_toml(d.path(), toml);
+            env::set_var("SOROBAN_NETWORK", "testnet");
+            env::set_var("SOROBAN_RPC_URL", "https://override.local");
+            env::set_var("SOROBAN_NETWORK_PASSPHRASE", "override pass");
 
-        let cfg = Config::load(Some(&p)).expect("should load with overrides");
-        assert_eq!(cfg.rpc_url, "https://override.local");
-        assert_eq!(cfg.network_passphrase, "override pass");
+            let cfg = Config::load(Some(&p)).expect("should load with overrides");
+            assert_eq!(cfg.rpc_url, "https://override.local");
+            assert_eq!(cfg.network_passphrase, "override pass");
+        });
     }
 
     #[test]
     fn missing_required_values_returns_error() {
-        let d = tempdir().unwrap();
-        // create a profile with empty values
-        let toml = r#"
+        with_isolated_env(|| {
+            let d = tempdir().unwrap();
+            // create a profile with empty values
+            let toml = r#"
 [profile.empty]
 network = ""
 rpc_url = ""
 network_passphrase = ""
 "#;
-        clear_env_vars();
-        let p = write_toml(d.path(), toml);
+            let p = write_toml(d.path(), toml);
 
-        // ensure defaulting behavior picks testnet is not present -> should error
-        let res = Config::load(Some(&p));
-        assert!(res.is_err());
+            // ensure defaulting behavior picks testnet is not present -> should error
+            let res = Config::load(Some(&p));
+            assert!(res.is_err());
+        });
     }
 
     #[test]
     fn loads_sandbox_profile() {
-        let d = tempdir().unwrap();
-        let toml = r#"
+        with_isolated_env(|| {
+            let d = tempdir().unwrap();
+            let toml = r#"
 [profile.sandbox]
 network = "sandbox"
 rpc_url = "http://localhost:8000"
 network_passphrase = "Standalone Network ; February 2017"
 "#;
-        clear_env_vars();
-        let p = write_toml(d.path(), toml);
+            let p = write_toml(d.path(), toml);
 
-        env::set_var("SOROBAN_NETWORK", "sandbox");
+            env::set_var("SOROBAN_NETWORK", "sandbox");
 
-        let cfg = Config::load(Some(&p)).expect("should load sandbox");
-        assert_eq!(cfg.profile, "sandbox");
-        assert_eq!(cfg.rpc_url, "http://localhost:8000");
+            let cfg = Config::load(Some(&p)).expect("should load sandbox");
+            assert_eq!(cfg.profile, "sandbox");
+            assert_eq!(cfg.rpc_url, "http://localhost:8000");
+        });
     }
 }

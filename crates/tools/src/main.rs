@@ -6,7 +6,9 @@ use std::path::PathBuf;
 use std::process::Command;
 
 mod config;
+mod donation_tx_builder;
 use config::{Config, Network};
+use donation_tx_builder::{build_donation_transaction, BuildDonationTxRequest};
 
 const CONTRACT_ID_FILE: &str = ".stellaraid_contract_id";
 
@@ -57,6 +59,39 @@ enum Commands {
     },
     /// Print resolved network configuration
     Network,
+    /// Build a donation payment transaction XDR for client-side signing
+    BuildDonationTx {
+        /// Donor public key (source account)
+        #[arg(long)]
+        donor: String,
+        /// Current donor account sequence number
+        #[arg(long)]
+        donor_sequence: String,
+        /// Donation amount (up to 7 decimals, e.g. 10.5)
+        #[arg(long)]
+        amount: String,
+        /// Asset code (XLM for native, or token code like USDC)
+        #[arg(long, default_value = "XLM")]
+        asset: String,
+        /// Asset issuer public key (required for non-XLM assets)
+        #[arg(long)]
+        issuer: Option<String>,
+        /// Project ID used in memo as project_<id>
+        #[arg(long)]
+        project_id: String,
+        /// Destination platform public key (overrides env var)
+        #[arg(long)]
+        destination: Option<String>,
+        /// Transaction timeout in seconds
+        #[arg(long, default_value_t = 300)]
+        timeout_seconds: i64,
+        /// Base fee in stroops per operation
+        #[arg(long, default_value_t = 100)]
+        base_fee: u32,
+        /// Explicit network passphrase (defaults to config value)
+        #[arg(long)]
+        network_passphrase: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -75,17 +110,17 @@ fn main() -> Result<()> {
             skip_init,
         } => {
             deploy_contract(&network, wasm.as_deref(), skip_init)?;
-        }
+        },
         Commands::Invoke {
             method,
             args,
             network,
         } => {
             invoke_contract(&method, args.as_deref(), network.as_deref())?;
-        }
+        },
         Commands::ContractId { network } => {
             show_contract_id(network.as_deref())?;
-        }
+        },
         Commands::Config { action } => match action {
             ConfigAction::Check => {
                 println!("Checking configuration...");
@@ -94,18 +129,22 @@ fn main() -> Result<()> {
                         println!("✅ Configuration valid!");
                         println!("  Network: {}", cfg.network);
                         println!("  RPC URL: {}", cfg.rpc_url);
-                        println!("  Admin Key: {}", cfg.admin_key.map_or("Not set".to_string(), |_| "Configured".to_string()));
-                    }
+                        println!(
+                            "  Admin Key: {}",
+                            cfg.admin_key
+                                .map_or("Not set".to_string(), |_| "Configured".to_string())
+                        );
+                    },
                     Err(e) => {
                         eprintln!("❌ Configuration error: {}", e);
                         std::process::exit(1);
-                    }
+                    },
                 }
-            }
+            },
             ConfigAction::Init => {
                 println!("Initializing configuration...");
                 initialize_config()?;
-            }
+            },
         },
         Commands::Network => match Config::load(None) {
             Ok(cfg) => {
@@ -115,15 +154,108 @@ fn main() -> Result<()> {
                 if let Some(key) = cfg.admin_key {
                     println!("Admin Key: {}", key);
                 }
-            }
+            },
             Err(e) => {
                 eprintln!("Failed to load config: {}", e);
                 std::process::exit(2);
-            }
+            },
+        },
+        Commands::BuildDonationTx {
+            donor,
+            donor_sequence,
+            amount,
+            asset,
+            issuer,
+            project_id,
+            destination,
+            timeout_seconds,
+            base_fee,
+            network_passphrase,
+        } => {
+            build_donation_tx(
+                &donor,
+                &donor_sequence,
+                &amount,
+                &asset,
+                issuer.as_deref(),
+                &project_id,
+                destination.as_deref(),
+                timeout_seconds,
+                base_fee,
+                network_passphrase.as_deref(),
+            )?;
         },
     }
 
     Ok(())
+}
+
+fn resolve_platform_public_key(destination_override: Option<&str>) -> Result<String> {
+    if let Some(destination) = destination_override {
+        return Ok(destination.to_string());
+    }
+
+    env::var("STELLARAID_PLATFORM_PUBLIC_KEY")
+        .or_else(|_| env::var("PLATFORM_PUBLIC_KEY"))
+        .context(
+            "Missing destination account. Pass --destination or set STELLARAID_PLATFORM_PUBLIC_KEY",
+        )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_donation_tx(
+    donor: &str,
+    donor_sequence: &str,
+    amount: &str,
+    asset: &str,
+    issuer: Option<&str>,
+    project_id: &str,
+    destination_override: Option<&str>,
+    timeout_seconds: i64,
+    base_fee: u32,
+    network_passphrase_override: Option<&str>,
+) -> Result<()> {
+    let destination = resolve_platform_public_key(destination_override)?;
+
+    let network_passphrase = if let Some(passphrase) = network_passphrase_override {
+        passphrase.to_string()
+    } else {
+        Config::load(None)
+            .map(|cfg| cfg.network_passphrase)
+            .context(
+                "Failed to resolve network passphrase from config. Pass --network-passphrase or configure soroban.toml",
+            )?
+    };
+
+    let request = BuildDonationTxRequest {
+        donor_address: donor.to_string(),
+        donor_sequence: donor_sequence.to_string(),
+        platform_address: destination,
+        donation_amount: amount.to_string(),
+        asset_code: asset.to_string(),
+        asset_issuer: issuer.map(ToString::to_string),
+        project_id: project_id.to_string(),
+        network_passphrase,
+        timeout_seconds,
+        base_fee_stroops: base_fee,
+    };
+
+    match build_donation_transaction(request) {
+        Ok(result) => {
+            println!("✅ Donation transaction built successfully");
+            println!("  Destination: {}", result.destination);
+            println!("  Asset: {}", result.asset);
+            println!("  Amount (stroops): {}", result.amount_stroops);
+            println!("  Memo: {}", result.memo);
+            println!("  Fee (stroops): {}", result.fee);
+            println!("  XDR (ready for signing): {}", result.xdr);
+            Ok(())
+        },
+        Err(err) => {
+            eprintln!("❌ Failed to build donation transaction: {}", err);
+            std::process::exit(1);
+        },
+    }
 }
 
 /// Get the path to the WASM file
@@ -141,7 +273,9 @@ fn get_wasm_path(custom_path: Option<&str>) -> Result<PathBuf> {
         PathBuf::from("target/wasm32-unknown-unknown/debug/stellaraid_core.wasm"),
         PathBuf::from("target/wasm32-unknown-unknown/release/stellaraid_core.wasm"),
         PathBuf::from("contracts/core/target/wasm32-unknown-unknown/debug/stellaraid_core.wasm"),
-        PathBuf::from("crates/contracts/core/target/wasm32-unknown-unknown/debug/stellaraid_core.wasm"),
+        PathBuf::from(
+            "crates/contracts/core/target/wasm32-unknown-unknown/debug/stellaraid_core.wasm",
+        ),
     ];
 
     for p in &default_paths {
@@ -157,19 +291,17 @@ fn get_wasm_path(custom_path: Option<&str>) -> Result<PathBuf> {
         return Ok(wasm_path);
     }
 
-    anyhow::bail!(
-        "WASM file not found. Build with 'make wasm' or specify with --wasm flag"
-    )
+    anyhow::bail!("WASM file not found. Build with 'make wasm' or specify with --wasm flag")
 }
 
 /// Store the contract ID in a local file
 fn store_contract_id(contract_id: &str, network: &str) -> Result<()> {
     let cwd = env::current_dir()?;
     let file_path = cwd.join(CONTRACT_ID_FILE);
-    
+
     let content = if file_path.exists() {
-        let existing: serde_json::Value = serde_json::from_str(&fs::read_to_string(&file_path)?)
-            .unwrap_or(serde_json::json!({}));
+        let existing: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&file_path)?).unwrap_or(serde_json::json!({}));
         let mut map = serde_json::Map::new();
         if let Some(obj) = existing.as_object() {
             for (k, v) in obj {
@@ -191,22 +323,24 @@ fn store_contract_id(contract_id: &str, network: &str) -> Result<()> {
 fn load_contract_id(network: &str) -> Result<String> {
     let cwd = env::current_dir()?;
     let file_path = cwd.join(CONTRACT_ID_FILE);
-    
+
     if !file_path.exists() {
-        anyhow::bail!(
-            "No contract ID found. Deploy a contract first with 'deploy' command"
-        );
+        anyhow::bail!("No contract ID found. Deploy a contract first with 'deploy' command");
     }
 
     let content: serde_json::Value = serde_json::from_str(&fs::read_to_string(&file_path)?)?;
-    
+
     if let Some(id) = content.get(network).and_then(|v| v.as_str()) {
         Ok(id.to_string())
     } else {
+        let available = content
+            .as_object()
+            .map(|obj| obj.keys().cloned().collect::<Vec<_>>().join(", "))
+            .unwrap_or_else(|| "none".to_string());
         anyhow::bail!(
             "No contract ID found for network '{}'. Available: {}",
             network,
-            content.keys().collect::<Vec<_>>().join(", ")
+            available
         );
     }
 }
@@ -214,24 +348,28 @@ fn load_contract_id(network: &str) -> Result<String> {
 /// Deploy the contract to the specified network
 fn deploy_contract(network: &str, wasm_path: Option<&str>, skip_init: bool) -> Result<()> {
     println!("🚀 Deploying to network: {}", network);
-    
+
     // Load configuration
     env::set_var("SOROBAN_NETWORK", network);
     let config = Config::load(None).context("Failed to load configuration")?;
-    
+
     // Get WASM path
     let wasm = get_wasm_path(wasm_path)?;
     println!("📦 Using WASM: {}", wasm.display());
-    
+
     // Build soroban deploy command
     let output = Command::new("soroban")
         .args([
             "contract",
             "deploy",
-            "--wasm", wasm.to_str().unwrap(),
-            "--network", network,
-            "--rpc-url", &config.rpc_url,
-            "--network-passphrase", &config.network_passphrase,
+            "--wasm",
+            wasm.to_str().unwrap(),
+            "--network",
+            network,
+            "--rpc-url",
+            &config.rpc_url,
+            "--network-passphrase",
+            &config.network_passphrase,
         ])
         .output()
         .context("Failed to execute soroban CLI")?;
@@ -244,13 +382,13 @@ fn deploy_contract(network: &str, wasm_path: Option<&str>, skip_init: bool) -> R
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let contract_id = stdout.trim();
-    
+
     println!("✅ Contract deployed successfully!");
     println!("📝 Contract ID: {}", contract_id);
-    
+
     // Store contract ID
     store_contract_id(contract_id, network)?;
-    
+
     // Initialize the contract if needed
     if !skip_init {
         if let Some(admin_key) = &config.admin_key {
@@ -259,13 +397,17 @@ fn deploy_contract(network: &str, wasm_path: Option<&str>, skip_init: bool) -> R
                 .args([
                     "contract",
                     "invoke",
-                    "--network", network,
-                    "--rpc-url", &config.rpc_url,
-                    "--network-passphrase", &config.network_passphrase,
+                    "--network",
+                    network,
+                    "--rpc-url",
+                    &config.rpc_url,
+                    "--network-passphrase",
+                    &config.network_passphrase,
                     contract_id,
                     "--",
                     "init",
-                    "--admin", admin_key,
+                    "--admin",
+                    admin_key,
                 ])
                 .output()
                 .context("Failed to initialize contract")?;
@@ -281,7 +423,7 @@ fn deploy_contract(network: &str, wasm_path: Option<&str>, skip_init: bool) -> R
             println!("   Set SOROBAN_ADMIN_KEY environment variable to initialize the contract.");
         }
     }
-    
+
     Ok(())
 }
 
@@ -303,42 +445,45 @@ fn invoke_contract(method: &str, args: Option<&str>, network_override: Option<&s
             "testnet".to_string()
         }
     };
-    
+
     println!("🔄 Invoking method '{}' on network: {}", method, network);
-    
+
     // Load configuration
     env::set_var("SOROBAN_NETWORK", &network);
     let config = Config::load(None).context("Failed to load configuration")?;
-    
+
     // Load contract ID
     let contract_id = load_contract_id(&network)?;
     println!("📝 Using contract ID: {}", contract_id);
-    
+
     // Build invoke command
     let mut cmd_args = vec![
-        "contract",
-        "invoke",
-        "--network", &network,
-        "--rpc-url", &config.rpc_url,
-        "--network-passphrase", &config.network_passphrase,
-        &contract_id,
-        "--",
-        method,
+        "contract".to_string(),
+        "invoke".to_string(),
+        "--network".to_string(),
+        network.clone(),
+        "--rpc-url".to_string(),
+        config.rpc_url.clone(),
+        "--network-passphrase".to_string(),
+        config.network_passphrase.clone(),
+        contract_id.clone(),
+        "--".to_string(),
+        method.to_string(),
     ];
-    
+
     // Add arguments if provided
     if let Some(arguments) = args {
         // Parse JSON arguments and add them
-        let parsed: serde_json::Value = serde_json::from_str(arguments)
-            .context("Failed to parse arguments as JSON")?;
-        
+        let parsed: serde_json::Value =
+            serde_json::from_str(arguments).context("Failed to parse arguments as JSON")?;
+
         if let Some(arr) = parsed.as_array() {
             for val in arr {
-                cmd_args.push(&val.to_string());
+                cmd_args.push(val.to_string());
             }
         }
     }
-    
+
     let output = Command::new("soroban")
         .args(&cmd_args)
         .output()
@@ -353,7 +498,7 @@ fn invoke_contract(method: &str, args: Option<&str>, network_override: Option<&s
     let stdout = String::from_utf8_lossy(&output.stdout);
     println!("✅ Invocation successful!");
     println!("📤 Result: {}", stdout.trim());
-    
+
     Ok(())
 }
 
@@ -366,14 +511,14 @@ fn show_contract_id(network_override: Option<&str>) -> Result<()> {
         // Show all stored contract IDs
         let cwd = env::current_dir()?;
         let file_path = cwd.join(CONTRACT_ID_FILE);
-        
+
         if !file_path.exists() {
             println!("No contract IDs stored. Deploy a contract first.");
             return Ok(());
         }
-        
+
         let content: serde_json::Value = serde_json::from_str(&fs::read_to_string(&file_path)?)?;
-        
+
         println!("Stored contract IDs:");
         if let Some(obj) = content.as_object() {
             for (network, id) in obj {
@@ -387,14 +532,14 @@ fn show_contract_id(network_override: Option<&str>) -> Result<()> {
 /// Initialize configuration files
 fn initialize_config() -> Result<()> {
     let cwd = env::current_dir()?;
-    
+
     // Check if .env already exists
     let env_path = cwd.join(".env");
     if env_path.exists() {
         println!("⚠️  .env file already exists");
         return Ok(());
     }
-    
+
     // Create .env file with example values
     let env_content = r#"# StellarAid Configuration
 # Network: testnet, mainnet, or sandbox
@@ -410,11 +555,11 @@ SOROBAN_NETWORK=testnet
 # Use 'soroban keys generate' to create a new key
 # SOROBAN_ADMIN_KEY=
 "#;
-    
+
     fs::write(&env_path, env_content)?;
     println!("✅ Created .env file");
     println!("ℹ️  Edit .env to configure your network and admin key");
-    
+
     // Check if contract ID file exists
     let contract_path = cwd.join(CONTRACT_ID_FILE);
     if !contract_path.exists() {
@@ -422,6 +567,6 @@ SOROBAN_NETWORK=testnet
         fs::write(&contract_path, serde_json::to_string_pretty(&empty)?)?;
         println!("✅ Created {} file", CONTRACT_ID_FILE);
     }
-    
+
     Ok(())
 }

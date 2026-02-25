@@ -1,4 +1,5 @@
-# 🌟 StellarAid  
+# 🌟 StellarAid
+
 [![CI](https://github.com/YOUR_USERNAME/stellaraid-contract/workflows/CI/badge.svg)](https://github.com/YOUR_USERNAME/stellaraid-contract/actions)
 
 A blockchain-based crowdfunding platform built on the **Stellar Network** for transparent, borderless, and secure fundraising.
@@ -31,47 +32,52 @@ stellarAid-contract/
 - **`stellaraid-core`**: Main Soroban smart contract implementing the crowdfunding logic
 - **`stellaraid-tools`**: CLI utilities for contract deployment, configuration, and management
 
-## 🛠️ Development Setup 
+## 🛠️ Development Setup
 
 ### Quick Start (New Contributors)
 
 1. **Clone the repository**
+
    ```bash
    git clone https://github.com/YOUR_USERNAME/stellaraid-contract.git
    cd stellaraid-contract
    ```
 
 2. **Install Rust toolchain** (automatically configured by `rust-toolchain.toml`)
+
    ```bash
    # Install Rust if not already installed
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   
+
    # The project will automatically use the correct Rust version and targets
    rustup show
    ```
 
 3. **Install Soroban CLI**
+
    ```bash
    # Method 1: Install via cargo (recommended for development)
    cargo install soroban-cli
-   
+
    # Method 2: Install via npm (alternative)
    npm install -g soroban-cli
-   
+
    # Verify installation
    soroban --version
    ```
 
 4. **Build the project**
+
    ```bash
    # Using Make (recommended)
    make build
-   
+
    # Or using cargo directly
    cargo build -p stellaraid-core --target wasm32-unknown-unknown
    ```
 
 ### Prerequisites
+
 - **Rust stable toolchain** (automatically managed by `rust-toolchain.toml`)
 - **wasm32-unknown-unknown target** (auto-installed by toolchain)
 - **Soroban CLI** for contract deployment and testing
@@ -88,6 +94,7 @@ components = ["rustfmt", "clippy"]
 ```
 
 This ensures:
+
 - Consistent Rust version across all contributors
 - Required targets are automatically installed
 - Essential components (rustfmt, clippy) are included
@@ -117,6 +124,7 @@ make help
 ```
 
 ### Building (Manual)
+
 ```bash
 # Build the core contract for WASM
 cargo build -p stellaraid-core --target wasm32-unknown-unknown --release
@@ -129,6 +137,7 @@ cargo build --workspace
 ```
 
 ### Testing
+
 ```bash
 # Run contract tests
 cargo test -p stellaraid-core
@@ -138,6 +147,7 @@ cargo test --workspace
 ```
 
 ### CLI Usage
+
 ```bash
 # Check configuration
 cargo run -p stellaraid-tools -- config check
@@ -163,6 +173,12 @@ cargo run -p stellaraid-tools -- invoke ping --network testnet
 # Show deployed contract ID
 cargo run -p stellaraid-tools -- contract-id
 cargo run -p stellaraid-tools -- contract-id --network testnet
+
+# Prepare wallet signing flow (freighter/albedo/lobstr)
+cargo run -p stellaraid-tools -- prepare-wallet-signing --wallet freighter --xdr "<UNSIGNED_XDR>"
+
+# Complete wallet signing flow with wallet callback/response payload
+cargo run -p stellaraid-tools -- complete-wallet-signing --wallet freighter --attempt-id "<ATTEMPT_ID>" --response "<WALLET_RESPONSE>" --started-at-unix 1700000000
 ```
 
 ## 🚀 Quick Start: Deploy Your First Contract
@@ -172,11 +188,13 @@ This guide walks you through deploying the core contract to testnet and invoking
 ### Prerequisites
 
 1. **Install Soroban CLI**:
+
    ```bash
    cargo install soroban-cli
    ```
 
 2. **Generate a keypair** (for testnet):
+
    ```bash
    soroban keys generate test_account --network testnet
    ```
@@ -205,6 +223,7 @@ cp .env.example .env
 ```
 
 Or generate and configure a new key:
+
 ```bash
 # Generate a new keypair
 soroban keys generate my_admin --network testnet
@@ -224,6 +243,7 @@ cargo run -p stellaraid-tools -- deploy --network testnet
 ```
 
 Expected output:
+
 ```
 🚀 Deploying to network: testnet
 📦 Using WASM: target/wasm32-unknown-unknown/debug/stellaraid_core.wasm
@@ -240,6 +260,7 @@ cargo run -p stellaraid-tools -- invoke ping
 ```
 
 Expected output:
+
 ```
 🔄 Invoking method 'ping' on network: testnet
 📝 Using contract ID: CB7...ABC
@@ -278,60 +299,74 @@ cargo run -p stellaraid-tools -- invoke ping --network sandbox
 - **"No contract ID found"**: Deploy a contract first with `deploy` command
 - **"Configuration error"**: Run `cargo run -p stellaraid-tools -- config check` to diagnose
 - **"soroban: command not found"**: Install with `cargo install soroban-cli`
+
 ## 📌 Features
 
 ### 🎯 For Donors
-- Discover global fundraising campaigns  
-- Donate in XLM or Stellar assets  
-- Wallet integration (Freighter, Albedo, Lobstr)  
-- On-chain transparency: verify all transactions  
+
+- Discover global fundraising campaigns
+- Donate in XLM or Stellar assets
+- Wallet integration (Freighter, Albedo, Lobstr)
+- On-chain transparency: verify all transactions
 
 ### 🎯 For Creators
-- Create social impact projects  
-- Accept multi-asset contributions  
-- Real-time donation tracking  
-- Withdraw funds directly on-chain  
+
+- Create social impact projects
+- Accept multi-asset contributions
+- Real-time donation tracking
+- Withdraw funds directly on-chain
 
 ### 🎯 For Admins
-- Campaign approval workflow  
-- User & KYC management  
-- Analytics dashboard  
+
+- Campaign approval workflow
+- User & KYC management
+- Analytics dashboard
 
 ## 🏗️ Architecture Overview
 
-StellarAid Blockchain Layer is built with: 
-- Stellar Testnet / Mainnet support  
-- Donation verification  
-- On-chain withdrawal system  
-- Asset‑agnostic design  
-  
+StellarAid Blockchain Layer is built with:
+
+- Stellar Testnet / Mainnet support
+- Donation verification
+- On-chain withdrawal system
+- Asset‑agnostic design
+
 # 📌 How to Contribute
 
 ### 1. Fork the Repository
+
 Click the **“Fork”** button in the top‑right of the GitHub repo and clone your fork:
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/stellaraid-contract.git
 cd stellaraid-contract
-````
+```
+
 ### 2. Create a Branch
-````bash
+
+```bash
 git checkout -b feature/add-donation-flow
-````
+```
 
 ### 3. Commit Messages
+
 Use conventional commits:
-````bash
+
+```bash
 feat: add wallet connection modal
 fix: resolve donation API error
 docs: update project README
 refactor: clean up project creation form
-````
+```
+
 ### 4. Submitting a Pull Request (PR)
+
 Push your branch:
+
 ```bash
 git push origin feature/add-donation-flow
 ```
+
 Open a Pull Request from your fork back to the main branch.
 
 ## Security Scans
@@ -354,12 +389,16 @@ You can run the security scans locally using the following commands:
 ### Resolving Failures
 
 #### Vulnerabilities (`cargo audit`)
+
 If a vulnerability is found, you should:
+
 1.  **Update dependencies**: Run `cargo update` to see if a newer version of the crate resolves the issue.
 2.  **Ignore (Temporary)**: If a fix is not available and you have audited the vulnerability, you can temporarily ignore it by adding it to `deny.toml` under `[advisories] -> ignore`.
 
 #### License/Ban Policy (`cargo deny`)
+
 If a license or ban policy violation is found:
+
 1.  **Check Licenses**: Ensure all dependencies use approved licenses. If a new license needs to be allowed, update the `allow` list in `deny.toml`.
 2.  **Banned Crates**: If a crate is banned, you must find an alternative or justify its use and add it to the `skip` list in `deny.toml`.
 
@@ -368,6 +407,7 @@ If a license or ban policy violation is found:
 Security scans are automatically run on every push and pull request. CI will fail if any known vulnerabilities or policy violations are detected.
 
 # 📜 License
+
 MIT License — free to use, modify, and distribute.
 
 ## Soroban Configuration (networks)

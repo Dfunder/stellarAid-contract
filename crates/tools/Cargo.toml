@@ -19,6 +19,7 @@ serde_json = "1.0"
 toml = "0.7"
 thiserror = "1.0"
 stellar-baselib = "0.5.6"
+url = "2.5"
 
 [dev-dependencies]
 tempfile = "3"

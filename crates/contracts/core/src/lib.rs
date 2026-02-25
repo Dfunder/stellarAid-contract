@@ -16,6 +16,7 @@ impl CoreContract {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::testutils::Address as _;
     use soroban_sdk::Env;
 
     #[test]
@@ -24,7 +25,7 @@ mod tests {
         let contract_id = env.register_contract(None, CoreContract);
         let client = CoreContractClient::new(&env, &contract_id);
 
-        let admin = env.current_contract_address();
+        let admin = Address::generate(&env);
         client.init(&admin);
 
         let result = client.ping();

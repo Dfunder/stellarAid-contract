@@ -1,6 +1,8 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, Address, Env};
 
+pub mod validation;
+
 #[contract]
 pub struct CoreContract;
 
@@ -30,5 +32,21 @@ mod tests {
 
         let result = client.ping();
         assert_eq!(result, 1);
+    }
+
+    #[test]
+    fn test_address_validation_integration() {
+        use crate::validation::*;
+        
+        let env = Env::default();
+        let valid_address = soroban_sdk::String::from_str(&env, "GDQP2KPQGKIHYJGXNUIYOMHARUARCA7DJT5FO2FFOOKY3B2WSQHG4W37");
+        
+        // Test that validation utilities are accessible
+        let result = validate_stellar_address(&env, valid_address);
+        assert!(result.is_ok());
+        
+        // Test boolean validation
+        let valid_address2 = soroban_sdk::String::from_str(&env, "GAYOLLLUIZE4DZMBB2ZBKGBUBZLIOYU6XFLW37GBP2VZD3ABNXCW4BVA");
+        assert!(is_valid_stellar_address(&env, valid_address2));
     }
 }

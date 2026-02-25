@@ -10,6 +10,7 @@ mod events;
 
 use storage::DataKey;
 use errors::ContractError;
+use crate::validation::{validate_stellar_address, ValidationError};
 
 #[contract]
 pub struct MasterAccountContract;
@@ -43,10 +44,16 @@ impl MasterAccountContract {
         events::admin_rotated(&env, new_admin);
     }
 
-    // Add signer (for multisig)
+    // Add signer (for multisig) with validation
     pub fn add_signer(env: Env, signer: Address) {
         let admin: Address = env.storage().get(&DataKey::Admin).unwrap();
         admin.require_auth();
+
+        // Validate the signer address format
+        let signer_str = signer.to_string();
+        if let Err(error) = validate_stellar_address(&env, signer_str) {
+            error.panic(&env);
+        }
 
         let mut signers: Vec<Address> =
             env.storage().get(&DataKey::Signers).unwrap();

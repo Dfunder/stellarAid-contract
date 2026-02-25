@@ -7,8 +7,12 @@ use std::process::Command;
 
 mod config;
 mod donation_tx_builder;
+mod wallet_signing;
 use config::{Config, Network};
 use donation_tx_builder::{build_donation_transaction, BuildDonationTxRequest};
+use wallet_signing::{
+    CompleteSigningRequest, PrepareSigningRequest, SigningStatus, WalletSigningService, WalletType,
+};
 
 const CONTRACT_ID_FILE: &str = ".stellaraid_contract_id";
 
@@ -91,6 +95,51 @@ enum Commands {
         /// Explicit network passphrase (defaults to config value)
         #[arg(long)]
         network_passphrase: Option<String>,
+    },
+    /// Prepare a wallet-specific transaction signing request
+    PrepareWalletSigning {
+        /// Wallet name: freighter, albedo, lobstr
+        #[arg(long)]
+        wallet: String,
+        /// Unsigned transaction envelope XDR (base64)
+        #[arg(long)]
+        xdr: String,
+        /// Network passphrase override
+        #[arg(long)]
+        network_passphrase: Option<String>,
+        /// Optional signer public key/address
+        #[arg(long)]
+        public_key: Option<String>,
+        /// Callback URL for popup/deep-link wallets
+        #[arg(long)]
+        callback_url: Option<String>,
+        /// Signing timeout in seconds
+        #[arg(long, default_value_t = 180)]
+        timeout_seconds: u64,
+        /// Log file path for signing attempts/results
+        #[arg(long, default_value = ".wallet_signing_attempts.jsonl")]
+        log_file: String,
+    },
+    /// Complete a wallet signing attempt with callback/response payload
+    CompleteWalletSigning {
+        /// Wallet name: freighter, albedo, lobstr
+        #[arg(long)]
+        wallet: String,
+        /// Attempt ID returned from prepare-wallet-signing
+        #[arg(long)]
+        attempt_id: String,
+        /// Raw wallet response payload (JSON, callback URL, query string, or signed XDR)
+        #[arg(long)]
+        response: String,
+        /// Attempt start UNIX timestamp in seconds
+        #[arg(long)]
+        started_at_unix: u64,
+        /// Signing timeout in seconds
+        #[arg(long, default_value_t = 180)]
+        timeout_seconds: u64,
+        /// Log file path for signing attempts/results
+        #[arg(long, default_value = ".wallet_signing_attempts.jsonl")]
+        log_file: String,
     },
 }
 
@@ -185,7 +234,142 @@ fn main() -> Result<()> {
                 network_passphrase.as_deref(),
             )?;
         },
+        Commands::PrepareWalletSigning {
+            wallet,
+            xdr,
+            network_passphrase,
+            public_key,
+            callback_url,
+            timeout_seconds,
+            log_file,
+        } => {
+            prepare_wallet_signing(
+                &wallet,
+                &xdr,
+                network_passphrase.as_deref(),
+                public_key.as_deref(),
+                callback_url.as_deref(),
+                timeout_seconds,
+                &log_file,
+            )?;
+        },
+        Commands::CompleteWalletSigning {
+            wallet,
+            attempt_id,
+            response,
+            started_at_unix,
+            timeout_seconds,
+            log_file,
+        } => {
+            complete_wallet_signing(
+                &wallet,
+                &attempt_id,
+                &response,
+                started_at_unix,
+                timeout_seconds,
+                &log_file,
+            )?;
+        },
     }
+
+    Ok(())
+}
+
+fn status_indicator(status: &SigningStatus) -> &'static str {
+    match status {
+        SigningStatus::AwaitingUser => "🟡",
+        SigningStatus::Signed => "✅",
+        SigningStatus::Rejected => "🛑",
+        SigningStatus::TimedOut => "⏱️",
+        SigningStatus::Invalid => "❌",
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_wallet_signing(
+    wallet: &str,
+    xdr: &str,
+    network_passphrase_override: Option<&str>,
+    public_key: Option<&str>,
+    callback_url: Option<&str>,
+    timeout_seconds: u64,
+    log_file: &str,
+) -> Result<()> {
+    let wallet = wallet.parse::<WalletType>()?;
+    let network_passphrase = if let Some(passphrase) = network_passphrase_override {
+        passphrase.to_string()
+    } else {
+        Config::load(None)
+            .map(|cfg| cfg.network_passphrase)
+            .context(
+                "Failed to resolve network passphrase from config. Pass --network-passphrase or configure soroban.toml",
+            )?
+    };
+
+    let service = WalletSigningService::new(PathBuf::from(log_file));
+    let prepared = service.prepare_signing(PrepareSigningRequest {
+        wallet,
+        unsigned_xdr: xdr.to_string(),
+        network_passphrase,
+        public_key: public_key.map(ToString::to_string),
+        callback_url: callback_url.map(ToString::to_string),
+        timeout_seconds,
+    })?;
+
+    println!(
+        "{} Wallet signing request prepared",
+        status_indicator(&prepared.status)
+    );
+    println!("  Wallet: {}", prepared.wallet.as_str());
+    println!("  Attempt ID: {}", prepared.attempt_id);
+    println!("  Status: {:?}", prepared.status);
+    println!("  Message: {}", prepared.message);
+    println!("  Started At: {}", prepared.created_at_unix);
+    println!("  Expires At: {}", prepared.expires_at_unix);
+    if let Some(launch_url) = &prepared.launch_url {
+        println!("  Launch URL: {}", launch_url);
+    }
+    println!("  Request Payload: {}", prepared.request_payload);
+    println!("  Log File: {}", log_file);
+
+    Ok(())
+}
+
+fn complete_wallet_signing(
+    wallet: &str,
+    attempt_id: &str,
+    response: &str,
+    started_at_unix: u64,
+    timeout_seconds: u64,
+    log_file: &str,
+) -> Result<()> {
+    let wallet = wallet.parse::<WalletType>()?;
+    let service = WalletSigningService::new(PathBuf::from(log_file));
+
+    let completion = service.complete_signing(CompleteSigningRequest {
+        attempt_id: attempt_id.to_string(),
+        wallet,
+        wallet_response: response.to_string(),
+        started_at_unix,
+        timeout_seconds,
+    })?;
+
+    println!(
+        "{} Wallet signing completion",
+        status_indicator(&completion.status)
+    );
+    println!("  Wallet: {}", completion.wallet.as_str());
+    println!("  Attempt ID: {}", completion.attempt_id);
+    println!("  Status: {:?}", completion.status);
+    println!("  Message: {}", completion.message);
+
+    if let Some(signed_xdr) = completion.signed_xdr {
+        println!("  Signed XDR: {}", signed_xdr);
+    }
+    if let Some(envelope_xdr) = completion.envelope_xdr {
+        println!("  Envelope XDR: {}", envelope_xdr);
+    }
+    println!("  Log File: {}", log_file);
 
     Ok(())
 }

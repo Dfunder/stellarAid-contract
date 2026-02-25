@@ -5,6 +5,7 @@ mod events;
 mod thresholds;
 
 use soroban_sdk::{contract, contractimpl, Env, Address, u32};
+use crate::validation::{validate_stellar_address, ValidationError};
 
 #[contract]
 pub struct AccountMonitorContract;
@@ -17,6 +18,13 @@ impl AccountMonitorContract {
         if env.storage().has(&storage::DataKey::MasterAccount) {
             panic!("Already initialized");
         }
+        
+        // Validate the master account address
+        let master_str = master.to_string();
+        if let Err(error) = validate_stellar_address(&env, master_str) {
+            error.panic(&env);
+        }
+        
         env.storage().set(&storage::DataKey::MasterAccount, &master);
         env.storage().set(&storage::DataKey::TransactionCount, &0u32);
         thresholds::set_low_balance_threshold(&env, low_balance);

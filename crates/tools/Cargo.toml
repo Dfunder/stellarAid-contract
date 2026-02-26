@@ -20,6 +20,13 @@ toml = "0.7"
 thiserror = "1.0"
 stellar-baselib = "0.5.6"
 url = "2.5"
+reqwest = { version = "0.12", features = ["json"] }
+governor = "0.10"
+moka = { version = "0.12", features = ["future"] }
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+env_logger = "0.11"
+uuid = { version = "1.0", features = ["v4", "serde"] }
 
 [dev-dependencies]
 tempfile = "3"

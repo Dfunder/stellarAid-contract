@@ -9,17 +9,6 @@
 pub mod cache;
 pub mod health;
 
-use crate::horizon_error::{HorizonError, HorizonResult};
-use crate::horizon_rate_limit::{HorizonRateLimiter, RateLimitConfig};
-use crate::horizon_retry::{calculate_backoff, RetryConfig, RetryPolicy};
-use chrono::{DateTime, Utc};
-use log::{debug, error, info, warn};
-use reqwest::{Client, ClientBuilder, StatusCode, Timeout};
-use serde_json::json;
-use std::sync::Arc;
-use std::time::Duration;
-use uuid::Uuid;
-
 /// Configuration for Horizon client
 #[derive(Debug, Clone)]
 pub struct HorizonClientConfig {

@@ -12,6 +12,7 @@ mod horizon_error;
 mod horizon_rate_limit;
 mod horizon_retry;
 mod horizon_client;
+mod fee;
 
 use config::{Config, Network};
 use donation_tx_builder::{build_donation_transaction, BuildDonationTxRequest};

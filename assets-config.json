@@ -1,0 +1,91 @@
+{
+  "assets": [
+    {
+      "code": "XLM",
+      "name": "Stellar Lumens",
+      "organization": "Stellar Development Foundation",
+      "description": "The native asset of the Stellar network, used for transaction fees and network operations",
+      "issuer": null,
+      "isNative": true,
+      "decimals": 7,
+      "website": "https://stellar.org",
+      "visuals": {
+        "iconUrl": "https://assets.coingecko.com/coins/images/new_logos/stellar-lumens-xlm-logo.svg",
+        "logoUrl": "https://assets.coingecko.com/coins/images/stellar-lumens-xlm-logo.png",
+        "color": "#14B8A6"
+      }
+    },
+    {
+      "code": "USDC",
+      "name": "USD Coin",
+      "organization": "Circle",
+      "description": "The leading alternative to USDT. USDC is the bridge between dollars and crypto.",
+      "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4GZ5DA47EL4PMRV4ZU5KHSUCZMVDXEN",
+      "isNative": false,
+      "decimals": 6,
+      "website": "https://www.circle.com/usdc",
+      "visuals": {
+        "iconUrl": "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/stellar/assets/GA5ZSEJYB37JRC5AVCIA5MOP4GZ5DA47EL4PMRV4ZU5KHSUCZMVDXEN/logo.png",
+        "logoUrl": "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/stellar/assets/GA5ZSEJYB37JRC5AVCIA5MOP4GZ5DA47EL4PMRV4ZU5KHSUCZMVDXEN/logo.png",
+        "color": "#2775CA"
+      }
+    },
+    {
+      "code": "NGNT",
+      "name": "Nigerian Naira Token",
+      "organization": "Stellar Foundation",
+      "description": "A stablecoin representing Nigerian Naira, enabling local currency transactions on Stellar",
+      "issuer": "GAUYTZ24ATZTPC35NYSTSIHIVGZSC5THJOsimplicc4B3TDTFSLOMNLDA",
+      "isNative": false,
+      "decimals": 6,
+      "website": "https://stellar.org",
+      "visuals": {
+        "iconUrl": "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/stellar/assets/GAUYTZ24ATZTPC35NYSTSIHIVGZSC5THJOsimplicc4B3TDTFSLOMNLDA/logo.png",
+        "logoUrl": "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/stellar/assets/GAUYTZ24ATZTPC35NYSTSIHIVGZSC5THJOsimplicc4B3TDTFSLOMNLDA/logo.png",
+        "color": "#009E73"
+      }
+    },
+    {
+      "code": "USDT",
+      "name": "Tether",
+      "organization": "Tether Limited",
+      "description": "The original stablecoin, representing US Dollar on blockchain networks",
+      "issuer": "GBBD47UZQ2EOPIB6NYVTG2ND4VS4F7IJDLLUOYRCG76K7JT45XE7VAT",
+      "isNative": false,
+      "decimals": 6,
+      "website": "https://tether.to",
+      "visuals": {
+        "iconUrl": "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/stellar/assets/GBBD47UZQ2EOPIB6NYVTG2ND4VS4F7IJDLLUOYRCG76K7JT45XE7VAT/logo.png",
+        "logoUrl": "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/stellar/assets/GBBD47UZQ2EOPIB6NYVTG2ND4VS4F7IJDLLUOYRCG76K7JT45XE7VAT/logo.png",
+        "color": "#26A17B"
+      }
+    },
+    {
+      "code": "EURT",
+      "name": "Euro Token",
+      "organization": "Wirex",
+      "description": "A stablecoin backed by euros, enabling EUR transactions on Stellar",
+      "issuer": "GAP5LETOV6YIE272RLUBZTV3QQF5JGKZ5FWXVMMP4QSXG7GSTF5GNBE7",
+      "isNative": false,
+      "decimals": 6,
+      "website": "https://wirex.com",
+      "visuals": {
+        "iconUrl": "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/stellar/assets/GAP5LETOV6YIE272RLUBZTV3QQF5JGKZ5FWXVMMP4QSXG7GSTF5GNBE7/logo.png",
+        "logoUrl": "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/stellar/assets/GAP5LETOV6YIE272RLUBZTV3QQF5JGKZ5FWXVMMP4QSXG7GSTF5GNBE7/logo.png",
+        "color": "#003399"
+      }
+    }
+  ],
+  "metadata": {
+    "version": "1.0",
+    "lastUpdated": "2026-02-26",
+    "totalAssets": 5,
+    "description": "StellarAid Supported Assets Configuration",
+    "notes": [
+      "All non-native assets require trust lines to be established",
+      "Decimals indicate the smallest unit of each asset (e.g., XLM has 7 decimals = 0.0000001)",
+      "Icon URLs point to Trust Wallet assets repository for consistency",
+      "Issuer addresses are Stellar account addresses that issue the asset"
+    ]
+  }
+}

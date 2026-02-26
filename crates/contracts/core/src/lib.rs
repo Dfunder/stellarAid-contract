@@ -1,6 +1,7 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, Address, Env};
 
+pub mod assets;
 pub mod validation;
 
 #[contract]

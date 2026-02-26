@@ -1,13 +1,14 @@
-//! Horizon API Client
-//!
-//! A robust client for interacting with Stellar Horizon API with:
-//! - Error handling for network and API errors
-//! - Rate limiting to respect Horizon limits
-//! - Retry logic with exponential backoff
-//! - Request logging and health checks
+//! Main Horizon Client Implementation
 
-pub mod cache;
-pub mod health;
+use crate::horizon_error::{HorizonError, HorizonResult};
+use crate::horizon_rate_limit::{HorizonRateLimiter, RateLimitConfig};
+use crate::horizon_retry::{RetryConfig, RetryPolicy};
+use chrono::{DateTime, Utc};
+use log::{debug, error, info, warn};
+use reqwest::{Client, ClientBuilder, StatusCode, Timeout};
+use std::sync::Arc;
+use std::time::Duration;
+use uuid::Uuid;
 
 /// Configuration for Horizon client
 #[derive(Debug, Clone)]
@@ -114,7 +115,7 @@ pub struct HorizonClient {
     /// Rate limiter
     rate_limiter: HorizonRateLimiter,
     /// Response cache (optional)
-    cache: Option<Arc<cache::ResponseCache>>,
+    cache: Option<Arc<super::cache::ResponseCache>>,
 }
 
 impl HorizonClient {
@@ -134,7 +135,7 @@ impl HorizonClient {
         let rate_limiter = HorizonRateLimiter::new(config.rate_limit_config.clone());
 
         let cache = if config.enable_cache {
-            Some(Arc::new(cache::ResponseCache::new(config.cache_ttl)))
+            Some(Arc::new(super::cache::ResponseCache::new(config.cache_ttl)))
         } else {
             None
         };
@@ -187,17 +188,19 @@ impl HorizonClient {
         let url = format!("{}{}", self.config.server_url, path);
         let context = RequestContext::new();
 
-        self.execute_with_retry(&context, || {
+        let result = self.execute_with_retry(&context, || {
             Box::pin({
                 let url = url.clone();
                 let http_client = Arc::clone(&self.http_client);
                 let context = context.clone();
+                let rate_limiter = self.rate_limiter.clone();
+                let enable_logging = self.config.enable_logging;
 
                 async move {
                     // Respect rate limits
-                    self.rate_limiter.acquire().await;
+                    rate_limiter.acquire().await;
 
-                    if self.config.enable_logging {
+                    if enable_logging {
                         debug!(
                             "[{}] GET {} (attempt {})",
                             context.request_id, url, context.attempt
@@ -254,7 +257,7 @@ impl HorizonClient {
                         .await
                         .map_err(|e| HorizonError::InvalidResponse(e.to_string()))?;
 
-                    if self.config.enable_logging {
+                    if enable_logging {
                         debug!(
                             "[{}] GET {} completed in {:?}",
                             context.request_id,
@@ -316,8 +319,10 @@ impl HorizonClient {
                     }
 
                     // Calculate backoff
-                    let backoff =
-                        calculate_backoff(attempt, &self.config.retry_config);
+                    let backoff = crate::horizon_retry::calculate_backoff(
+                        attempt,
+                        &self.config.retry_config,
+                    );
 
                     warn!(
                         "[{}] Request failed on attempt {}/{}, retrying after {:?}: {}",
@@ -344,7 +349,7 @@ impl HorizonClient {
     }
 
     /// Get cache statistics
-    pub async fn cache_stats(&self) -> Option<cache::CacheStats> {
+    pub async fn cache_stats(&self) -> Option<super::cache::CacheStats> {
         self.cache.as_ref().and_then(|c| c.stats())
     }
 }

@@ -1,5 +1,5 @@
 # Pre-commit hooks configuration for StellarAid project
-# Optional: Enable pre-commit hooks for automatic code quality checks
+# These hooks enforce the 3 CI/CD rules locally before pushing
 #
 # Installation:
 #   1. Install pre-commit: pip install pre-commit
@@ -11,33 +11,56 @@
 repos:
   - repo: local
     hooks:
+      # Rule 1: No Errors - Formatting check
       - id: rustfmt
-        name: rustfmt
+        name: Rule 1 - Code Formatting (rustfmt)
         entry: bash -c 'cargo fmt --all -- --check'
         language: system
         types: [rust]
         pass_filenames: false
         stages: [commit]
 
+      # Rule 1: No Errors - Linting check
       - id: clippy
-        name: clippy
+        name: Rule 1 - Linting (clippy)
         entry: bash -c 'cargo clippy --workspace -- -D warnings'
         language: system
         types: [rust]
         pass_filenames: false
         stages: [commit]
 
-      - id: cargo-test
-        name: cargo test
-        entry: bash -c 'cargo test --workspace'
+      # Rule 1: No Errors - Compilation check
+      - id: cargo-check
+        name: Rule 1 - Compilation Check
+        entry: bash -c 'cargo check --all --locked'
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [commit]
+
+      # Rule 2: Build Success - Full build
+      - id: cargo-build
+        name: Rule 2 - Build Success (cargo build)
+        entry: bash -c 'cargo build --all --locked'
         language: system
         types: [rust]
         pass_filenames: false
         stages: [push]
 
-  # Alternative: Using rust-toolchain hooks (if preferred)
-  # - repo: https://github.com/astral-sh/ruff-pre-commit
-  #   rev: v0.1.0
-  #   hooks:
-  #     - id: ruff
-  #       args: [ --fix ]
+      # Rule 2: Build Success - WASM build
+      - id: cargo-build-wasm
+        name: Rule 2 - WASM Build
+        entry: bash -c 'cargo build -p stellaraid-core --target wasm32-unknown-unknown'
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [push]
+
+      # Rule 3: Tests Pass - All tests
+      - id: cargo-test
+        name: Rule 3 - All Tests Pass
+        entry: bash -c 'cargo test --all --locked'
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [push]

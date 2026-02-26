@@ -1,0 +1,55 @@
+name: PR Rules Enforcement
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [ main, master ]
+
+jobs:
+  # This job posts a comment on PRs reminding contributors of the rules
+  pr-rules-reminder:
+    name: PR Rules Reminder
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post PR Rules Comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `## 🛡️ PR Validation Rules
+
+            Hello @${{ github.actor }}! Thank you for your contribution.
+
+            Before this PR can be merged, it **MUST** pass all 3 CI/CD rules:
+
+            ### Rule 1: No Errors ✅
+            - Code must compile without errors
+            - Code must be properly formatted (\`cargo fmt\`)
+            - No clippy warnings (\`cargo clippy -- -D warnings\`)
+
+            ### Rule 2: Build Success ✅
+            - Project must build successfully (\`cargo build --all\`)
+            - WASM contract must build successfully
+
+            ### Rule 3: Tests Pass ✅
+            - All existing tests must pass (\`cargo test --all\`)
+            - **If you added new test files, they must also pass**
+
+            ---
+
+            **Quick Local Check:**
+            \`\`\`bash
+            # Run these commands before pushing:
+            cargo fmt --all
+            cargo clippy --all -- -D warnings
+            cargo build --all
+            cargo test --all
+            \`\`\`
+
+            The CI will automatically check these rules. If any check fails, please fix the issues and push again.`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

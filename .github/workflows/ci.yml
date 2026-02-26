@@ -10,8 +10,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Rule 1: Check for errors (formatting, linting, compilation)
   check:
-    name: Check
+    name: Check - No Errors
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -36,17 +37,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Run cargo check
-        run: cargo check --all --locked
-
-      - name: Run cargo fmt
+      - name: Check code formatting
         run: cargo fmt --all -- --check
 
-      - name: Run cargo clippy
+      - name: Run clippy linter (treat warnings as errors)
         run: cargo clippy --all -- -D warnings
 
+      - name: Check for compilation errors
+        run: cargo check --all --locked
+
+  # Rule 3: All tests must pass
   test:
-    name: Test Suite
+    name: Test - All Tests Must Pass
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -71,11 +73,33 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Run cargo test
+      - name: Run all tests
         run: cargo test --all --locked
 
+      - name: Check for new test files
+        id: check_new_tests
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "Checking for new test files in this PR..."
+          git fetch origin ${{ github.base_ref }} --depth=1
+          NEW_TEST_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '(test.*\.rs|.*_test\.rs|tests/.*\.rs)$' || true)
+          if [ -n "$NEW_TEST_FILES" ]; then
+            echo "New test files detected:"
+            echo "$NEW_TEST_FILES"
+            echo "new_tests=true" >> $GITHUB_OUTPUT
+          else
+            echo "No new test files detected"
+            echo "new_tests=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate new test files pass
+        if: steps.check_new_tests.outputs.new_tests == 'true'
+        run: |
+          echo "✅ New test files detected and all tests passed!"
+
+  # Rule 2: Build must succeed before PR
   build:
-    name: Build
+    name: Build - Must Build Successfully
     runs-on: ubuntu-latest
     needs: [check, test]
     steps:
@@ -114,8 +138,28 @@ jobs:
           path: target/wasm32-unknown-unknown/release/stellaraid_core.wasm
           retention-days: 30
 
+  # PR Validation - Enforces all 3 rules
+  pr-validation:
+    name: PR Validation - All Rules Passed
+    runs-on: ubuntu-latest
+    needs: [check, test, build]
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Validate all checks passed
+        run: |
+          echo "========================================"
+          echo "   PR Validation Summary"
+          echo "========================================"
+          echo ""
+          echo "Rule 1 - No Errors: ${{ needs.check.result }}"
+          echo "Rule 2 - Build Success: ${{ needs.build.result }}"
+          echo "Rule 3 - Tests Pass: ${{ needs.test.result }}"
+          echo ""
+          echo "✅ ALL 3 RULES PASSED - PR APPROVED FOR MERGE"
+
+  # Cross-platform build verification
   build-matrix:
-    name: Build Matrix
+    name: Build Matrix (Cross-Platform)
     runs-on: ${{ matrix.os }}
     needs: check
     strategy:
@@ -150,6 +194,7 @@ jobs:
       - name: Build WASM contract
         run: cargo build -p stellaraid-core --target wasm32-unknown-unknown
 
+  # Security scans
   security:
     name: Security Scans
     runs-on: ubuntu-latest

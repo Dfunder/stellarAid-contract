@@ -4,6 +4,7 @@ use soroban_sdk::{contract, contractimpl, Address, Env, String};
 pub mod assets;
 pub mod validation;
 pub mod events;
+pub mod donation;
 
 #[contract]
 pub struct CoreContract;
@@ -22,17 +23,46 @@ impl CoreContract {
         donor: Address,
         amount: i128,
         asset: String,
+        project_id: String,
+        tx_hash: String,
     ) -> i128 {
+        // Validate donation data
+        if !donation::validate_donation(&donor, amount, &asset, &project_id) {
+            return 0;
+        }
+
+        // Get timestamp from ledger
+        let timestamp = env.ledger().timestamp();
+
+        // Store the donation on-chain
+        let donation = donation::Donation::new(
+            donor.clone(),
+            amount,
+            asset.clone(),
+            project_id.clone(),
+            timestamp,
+            tx_hash,
+        );
+        
+        // Get the index for this donation
+        let index = donation::increment_donation_count(&env, &project_id) - 1;
+        donation.store(&env, &project_id, index);
+
         // Emit the DonationReceived event
         events::DonationReceived {
             donor: donor.clone(),
             amount,
             asset: asset.clone(),
-            timestamp: env.ledger().timestamp(),
+            timestamp,
         }
         .emit(&env);
 
         amount
+    }
+
+    /// Get all donations for a project
+    pub fn get_donations(env: Env, project_id: String) -> soroban_sdk::Vec<Donation> {
+        donation::get_donations_by_project(&env, &project_id)
     }
 
     /// Process a withdrawal and emit the WithdrawalProcessed event

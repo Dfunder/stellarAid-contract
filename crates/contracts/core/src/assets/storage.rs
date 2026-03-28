@@ -19,6 +19,8 @@ pub enum AssetStorageKey {
     AssetAdmin,
     /// Whether asset management is initialized
     Initialized,
+    /// Store the contract address for an asset code (Symbol)
+    AssetContract(Symbol),
 }
 
 /// Asset configuration manager
@@ -99,9 +101,27 @@ impl AssetConfig {
     pub fn is_asset_supported(env: &Env, asset_code: &str) -> bool {
         Self::is_asset_supported_optimized(env, asset_code)
     }
+
+    /// Get the contract address for an asset code
+    pub fn get_contract_address(env: &Env, asset_code: &str) -> Option<Address> {
+        let asset_symbol = if asset_code.len() <= 9 {
+            Symbol::try_from_small_str(asset_code).ok()?
+        } else {
+            return None;
+        };
+        
+        env.storage()
+            .instance()
+            .get(&AssetStorageKey::AssetContract(asset_symbol))
+    }
     
     /// Add a new supported asset (admin only) - optimized version
-    pub fn add_asset(env: &Env, caller: &Address, asset_code: &str) -> Result<(), &'static str> {
+    pub fn add_asset(
+        env: &Env,
+        caller: &Address,
+        asset_code: &str,
+        contract_address: Address,
+    ) -> Result<(), &'static str> {
         // Verify admin
         Self::verify_admin(env, caller)?;
         
@@ -120,8 +140,12 @@ impl AssetConfig {
             return Err("Asset already supported");
         }
         
-        assets.push_back(asset_symbol);
+        assets.push_back(asset_symbol.clone());
         env.storage().instance().set(&AssetStorageKey::SupportedAssets, &assets);
+        
+        // Store the contract address
+        env.storage().instance().set(&AssetStorageKey::AssetContract(asset_symbol), &contract_address);
+        
         Ok(())
     }
     
@@ -204,11 +228,13 @@ mod tests {
         AssetConfig::init(&env, &admin);
         
         // Add new asset
-        let result = AssetConfig::add_asset(&env, &admin, "BTC");
+        let asset_address = Address::generate(&env);
+        let result = AssetConfig::add_asset(&env, &admin, "BTC", asset_address.clone());
         assert!(result.is_ok());
         
         // Verify it was added
         assert!(AssetConfig::is_asset_supported(&env, "BTC"));
+        assert_eq!(AssetConfig::get_contract_address(&env, "BTC"), Some(asset_address));
     }
     
     #[test]
@@ -235,6 +261,7 @@ mod tests {
         AssetConfig::init(&env, &admin);
         
         // Try to add asset as non-admin - should panic now
-        let _ = AssetConfig::add_asset(&env, &other, "BTC");
+        let asset_address = Address::generate(&env);
+        let _ = AssetConfig::add_asset(&env, &other, "BTC", asset_address);
     }
 }

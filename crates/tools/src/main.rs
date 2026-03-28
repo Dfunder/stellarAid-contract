@@ -12,12 +12,16 @@ mod horizon_client;
 mod horizon_error;
 mod horizon_rate_limit;
 mod horizon_retry;
+mod soroban_tx_builder;
 mod transaction_submission;
 mod transaction_verification;
 mod wallet_signing;
 
 use config::{Config, Network};
 use donation_tx_builder::{build_donation_transaction, BuildDonationTxRequest};
+use soroban_tx_builder::{
+    build_soroban_invoke_transaction, json_to_sc_vals, BuildSorobanInvokeRequest,
+};
 use horizon_client::health::{HealthStatus, HorizonHealthChecker};
 use horizon_client::{HorizonClient, HorizonClientConfig};
 use transaction_submission::{
@@ -110,6 +114,36 @@ enum Commands {
         /// Explicit network passphrase (defaults to config value)
         #[arg(long)]
         network_passphrase: Option<String>,
+    },
+    /// Build an unsigned Soroban contract-invoke transaction (base64 XDR) for signing
+    BuildInvokeTx {
+        /// Source account public key (G…)
+        #[arg(long)]
+        source: String,
+        /// Current account sequence (sequence number to use for this tx)
+        #[arg(long)]
+        sequence: String,
+        /// Contract id (C…)
+        #[arg(long)]
+        contract: String,
+        /// Contract function / method name (Soroban symbol)
+        #[arg(long)]
+        function: String,
+        /// JSON array of arguments (see soroban_tx_builder::json_to_sc_vals)
+        #[arg(long)]
+        args: Option<String>,
+        /// Transaction validity window (seconds from now); 0 = no time bound
+        #[arg(long, default_value_t = 300)]
+        timeout_seconds: i64,
+        /// Base fee in stroops per operation
+        #[arg(long, default_value_t = 100)]
+        base_fee: u32,
+        /// Network passphrase override (defaults to config)
+        #[arg(long)]
+        network_passphrase: Option<String>,
+        /// SorobanTransactionData XDR (base64) from RPC simulation — recommended for submission
+        #[arg(long)]
+        soroban_data_xdr: Option<String>,
     },
     /// Prepare a wallet-specific transaction signing request
     PrepareWalletSigning {
@@ -323,6 +357,29 @@ fn main() -> Result<()> {
                 timeout_seconds,
                 base_fee,
                 network_passphrase.as_deref(),
+            )?;
+        },
+        Commands::BuildInvokeTx {
+            source,
+            sequence,
+            contract,
+            function,
+            args,
+            timeout_seconds,
+            base_fee,
+            network_passphrase,
+            soroban_data_xdr,
+        } => {
+            build_invoke_tx(
+                &source,
+                &sequence,
+                &contract,
+                &function,
+                args.as_deref(),
+                timeout_seconds,
+                base_fee,
+                network_passphrase.as_deref(),
+                soroban_data_xdr.as_deref(),
             )?;
         },
         Commands::PrepareWalletSigning {
@@ -559,6 +616,62 @@ fn build_donation_tx(
         },
         Err(err) => {
             eprintln!("❌ Failed to build donation transaction: {}", err);
+            std::process::exit(1);
+        },
+    }
+}
+
+fn build_invoke_tx(
+    source: &str,
+    sequence: &str,
+    contract: &str,
+    function: &str,
+    args_json: Option<&str>,
+    timeout_seconds: i64,
+    base_fee: u32,
+    network_passphrase_override: Option<&str>,
+    soroban_data_xdr: Option<&str>,
+) -> Result<()> {
+    let network_passphrase = if let Some(passphrase) = network_passphrase_override {
+        passphrase.to_string()
+    } else {
+        Config::load(None)
+            .map(|cfg| cfg.network_passphrase)
+            .context(
+                "Failed to resolve network passphrase. Pass --network-passphrase or configure soroban.toml",
+            )?
+    };
+
+    let arg_vals: Vec<serde_json::Value> = match args_json {
+        None | Some("") => Vec::new(),
+        Some(raw) => serde_json::from_str(raw).context("Failed to parse --args as JSON array")?,
+    };
+    let sc_args = json_to_sc_vals(&arg_vals).map_err(|e| anyhow::anyhow!(e))?;
+
+    let request = BuildSorobanInvokeRequest {
+        source_account: source.to_string(),
+        sequence: sequence.to_string(),
+        contract_id: contract.to_string(),
+        function_name: function.to_string(),
+        args: sc_args,
+        network_passphrase,
+        timeout_seconds,
+        base_fee_stroops: base_fee,
+        soroban_data_xdr: soroban_data_xdr.map(String::from),
+    };
+
+    match build_soroban_invoke_transaction(request) {
+        Ok(result) => {
+            println!("✅ Soroban invoke transaction built (unsigned)");
+            println!("  Contract: {}", contract);
+            println!("  Function: {}", function);
+            println!("  Total fee (stroops): {}", result.fee_stroops);
+            println!("  Operations: {}", result.operation_count);
+            println!("  XDR (sign this envelope): {}", result.xdr);
+            Ok(())
+        },
+        Err(err) => {
+            eprintln!("❌ Failed to build Soroban invoke transaction: {}", err);
             std::process::exit(1);
         },
     }

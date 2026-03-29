@@ -7,11 +7,13 @@ use std::process::Command;
 
 mod config;
 mod donation_tx_builder;
+mod environment_config;
 mod fee;
 mod horizon_client;
 mod horizon_error;
 mod horizon_rate_limit;
 mod horizon_retry;
+mod secure_vault;
 mod soroban_tx_builder;
 mod transaction_submission;
 mod transaction_verification;

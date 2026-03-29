@@ -94,7 +94,96 @@ pub enum HorizonError {
     Other(String),
 }
 
+/// Horizon error severity levels for prioritizing responses
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorSeverity {
+    /// Critical errors requiring immediate attention
+    Critical,
+    /// High severity errors that block operations
+    High,
+    /// Medium severity transient failures
+    Medium,
+    /// Low severity informational errors
+    Low,
+}
+
 impl HorizonError {
+    /// Get the severity level of this error
+    pub fn severity(&self) -> ErrorSeverity {
+        match self {
+            // Critical - security or data integrity issues
+            HorizonError::TlsError(_) | HorizonError::InvalidResponse(_) => ErrorSeverity::Critical,
+            
+            // High - service unavailable
+            HorizonError::ServiceUnavailable(_) 
+            | HorizonError::ServerError { status: 503, .. } => ErrorSeverity::High,
+            
+            // Medium - transient failures
+            HorizonError::NetworkError(_)
+            | HorizonError::Timeout { .. }
+            | HorizonError::ConnectionRefused(_)
+            | HorizonError::ConnectionReset(_)
+            | HorizonError::DnsError(_)
+            | HorizonError::RateLimited { .. }
+            | HorizonError::ServerError { .. } => ErrorSeverity::Medium,
+            
+            // Low - client errors or expected failures
+            HorizonError::InvalidRequest(_)
+            | HorizonError::BadRequest(_)
+            | HorizonError::Unauthorized(_)
+            | HorizonError::Forbidden(_)
+            | HorizonError::NotFound(_)
+            | HorizonError::CacheError(_)
+            | HorizonError::InvalidConfig(_)
+            | HorizonError::Other(_) => ErrorSeverity::Low,
+            
+            // Default to medium for HTTP errors
+            HorizonError::HttpError { status, .. } if *status >= 500 => ErrorSeverity::Medium,
+            HorizonError::HttpError { .. } => ErrorSeverity::Low,
+            
+            // URL/JSON parsing errors are low severity
+            HorizonError::UrlError(_) | HorizonError::JsonError(_) => ErrorSeverity::Low,
+        }
+    }
+
+    /// Categorize error for better handling
+    pub fn category(&self) -> &'static str {
+        match self {
+            HorizonError::NetworkError(_) 
+            | HorizonError::ConnectionRefused(_)
+            | HorizonError::ConnectionReset(_)
+            | HorizonError::DnsError(_) => "network",
+            
+            HorizonError::Timeout { .. } => "timeout",
+            
+            HorizonError::RateLimited { .. } => "rate_limit",
+            
+            HorizonError::HttpError { .. }
+            | HorizonError::BadRequest(_)
+            | HorizonError::Unauthorized(_)
+            | HorizonError::Forbidden(_)
+            | HorizonError::NotFound(_) => "http_client",
+            
+            HorizonError::ServerError { .. }
+            | HorizonError::ServiceUnavailable(_) => "server",
+            
+            HorizonError::InvalidRequest(_) => "validation",
+            
+            HorizonError::InvalidResponse(_) => "response",
+            
+            HorizonError::TlsError(_) => "security",
+            
+            HorizonError::CacheError(_) => "cache",
+            
+            HorizonError::InvalidConfig(_) => "configuration",
+            
+            HorizonError::UrlError(_) => "url",
+            
+            HorizonError::JsonError(_) => "parsing",
+            
+            HorizonError::Other(_) => "other",
+        }
+    }
     /// Check if this error is retryable
     pub fn is_retryable(&self) -> bool {
         matches!(
@@ -135,7 +224,30 @@ impl HorizonError {
         )
     }
 
-    /// Get suggested retry duration if available
+    /// Get detailed context about the error for logging
+    pub fn error_context(&self) -> String {
+        match self {
+            HorizonError::RateLimited { retry_after } => {
+                format!("Rate limited by Horizon API, retry after {}s", retry_after.as_secs())
+            },
+            HorizonError::Timeout { duration } => {
+                format!("Request timed out after {}s", duration.as_secs())
+            },
+            HorizonError::ServerError { status, message } => {
+                format!("Horizon server error ({}): {}", status, message)
+            },
+            HorizonError::NetworkError(msg) => {
+                format!("Network connectivity issue: {}", msg)
+            },
+            HorizonError::ConnectionRefused(msg) => {
+                format!("Connection refused by Horizon: {}", msg)
+            },
+            HorizonError::DnsError(msg) => {
+                format!("DNS resolution failed: {}", msg)
+            },
+            _ => self.to_string(),
+        }
+    }
     pub fn suggested_retry_duration(&self) -> Option<Duration> {
         match self {
             HorizonError::RateLimited { retry_after } => Some(*retry_after),

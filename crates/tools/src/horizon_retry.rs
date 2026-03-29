@@ -127,9 +127,31 @@ pub struct RetryContext {
     pub delay: Duration,
     /// Errors encountered so far
     pub errors: Vec<HorizonError>,
+    /// Request ID for tracing
+    pub request_id: Option<String>,
+    /// Start time for tracking total duration
+    pub started_at: std::time::Instant,
 }
 
 impl RetryContext {
+    /// Create a new retry context
+    pub fn new(max_attempts: u32) -> Self {
+        Self {
+            attempt: 1,
+            max_attempts,
+            delay: Duration::from_secs(0),
+            errors: Vec::new(),
+            request_id: None,
+            started_at: std::time::Instant::now(),
+        }
+    }
+
+    /// Set the request ID for tracing
+    pub fn with_request_id(mut self, request_id: String) -> Self {
+        self.request_id = Some(request_id);
+        self
+    }
+
     /// Check if we can retry
     pub fn can_retry(&self) -> bool {
         self.attempt < self.max_attempts
@@ -145,6 +167,28 @@ impl RetryContext {
         self.max_attempts.saturating_sub(self.attempt)
     }
 
+    /// Get total elapsed time since start
+    pub fn elapsed_time(&self) -> Duration {
+        self.started_at.elapsed()
+    }
+
+    /// Record an error and prepare for next attempt
+    pub fn record_error(&mut self, error: HorizonError, next_delay: Duration) {
+        self.errors.push(error);
+        self.delay = next_delay;
+        self.attempt += 1;
+    }
+
+    /// Get summary of retry attempts for logging
+    pub fn get_retry_summary(&self) -> String {
+        format!(
+            "Total attempts: {}, Errors: {}, Elapsed: {:?}",
+            self.attempt,
+            self.errors.len(),
+            self.elapsed_time()
+        )
+    }
+}
     /// Get last error
     pub fn last_error(&self) -> Option<&HorizonError> {
         self.errors.last()
@@ -183,7 +227,7 @@ pub fn calculate_backoff(attempt: u32, config: &RetryConfig) -> Duration {
     backoff
 }
 
-/// Retry a function with exponential backoff
+/// Retry a function with exponential backoff and enhanced logging
 pub async fn retry_with_backoff<F, T>(
     config: &RetryConfig,
     policy: &RetryPolicy,
@@ -192,31 +236,70 @@ pub async fn retry_with_backoff<F, T>(
 where
     F: FnMut() -> futures::future::BoxFuture<'static, HorizonResult<T>>,
 {
+    let mut context = RetryContext::new(config.max_attempts);
+    
     for attempt in 1..=config.max_attempts {
+        context.attempt = attempt;
+        
         match f().await {
-            Ok(result) => return Ok(result),
+            Ok(result) => {
+                // Log success, especially if it required retries
+                if attempt > 1 {
+                    log::info!(
+                        "Request succeeded after {} attempts (total time: {:?})",
+                        attempt,
+                        context.elapsed_time()
+                    );
+                }
+                return Ok(result);
+            },
             Err(error) => {
+                // Get error details for logging
+                let error_category = error.category();
+                let error_severity = format!("{:?}", error.severity());
+                let error_context = error.error_context();
+                
                 // Check if we should retry
                 if !policy.should_retry(&error) {
-                    // Don't retry non-retryable errors
+                    log::warn!(
+                        "[Attempt {}/{}] Non-retryable error ({}): {} - {}",
+                        attempt,
+                        config.max_attempts,
+                        error_category,
+                        error_severity,
+                        error_context
+                    );
                     return Err(error);
                 }
 
                 // Check if we have more attempts
                 if attempt >= config.max_attempts {
+                    log::error!(
+                        "[Attempt {}/{}] Final attempt failed. Total time: {:?}. Error: {}",
+                        attempt,
+                        config.max_attempts,
+                        context.elapsed_time(),
+                        error_context
+                    );
                     return Err(error);
                 }
 
                 // Calculate backoff
                 let backoff = calculate_backoff(attempt, config);
-
+                
+                // Log retry attempt with detailed information
                 log::warn!(
-                    "Request failed (attempt {}/{}), retrying after {:?}: {}",
+                    "[Attempt {}/{}] Retryable error ({}): {} | Backoff: {:?} | Elapsed: {:?}",
                     attempt,
                     config.max_attempts,
+                    error_category,
+                    error_context,
                     backoff,
-                    error
+                    context.elapsed_time()
                 );
+
+                // Record error for tracking
+                context.record_error(error, backoff);
 
                 tokio::time::sleep(backoff).await;
             },

@@ -411,4 +411,22 @@ mod tests {
         let not_found = HorizonError::NotFound("not found".to_string());
         assert_eq!(not_found.suggested_retry_duration(), None);
     }
+
+    #[test]
+    fn test_error_code_and_response_format() {
+        let err = HorizonError::Timeout {
+            duration: Duration::from_secs(30),
+        };
+        assert_eq!(err.error_code(), "timeout");
+        assert_eq!(err.category(), "timeout");
+        assert_eq!(err.severity(), ErrorSeverity::Medium);
+
+        let response = err.to_response();
+        assert_eq!(response.code, "timeout");
+        assert_eq!(response.category, "timeout");
+        assert_eq!(response.severity, "Medium");
+        assert_eq!(response.retry_after_seconds, Some(30));
+        assert!(response.details.contains("Request timed out"));
+    }
 }
+

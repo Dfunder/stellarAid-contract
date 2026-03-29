@@ -330,12 +330,13 @@ impl HorizonClient {
                         crate::horizon_retry::calculate_backoff(attempt, &self.config.retry_config);
 
                     warn!(
-                        "[{}] Request failed on attempt {}/{}, retrying after {:?}: {}",
+                        "[{}] Request failed on attempt {}/{}, retrying after {:?}: {} | response = {:?}",
                         ctx.request_id,
                         attempt,
                         self.config.retry_config.max_attempts,
                         backoff,
-                        error
+                        error.error_context(),
+                        error_response
                     );
 
                     tokio::time::sleep(backoff).await;

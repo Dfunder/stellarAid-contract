@@ -108,6 +108,23 @@ pub enum ErrorSeverity {
     Low,
 }
 
+/// Standardized error structure used by services for status mapping and debugging
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HorizonErrorResponse {
+    /// Machine-readable canonical code.
+    pub code: String,
+    /// Semantic category for routing and metrics.
+    pub category: String,
+    /// Severity level for alerts.
+    pub severity: String,
+    /// Human-readable message.
+    pub message: String,
+    /// Detailed debugging context.
+    pub details: Option<String>,
+    /// Optional retry suggestion in seconds.
+    pub retry_after_seconds: Option<u64>,
+}
+
 impl HorizonError {
     /// Get the severity level of this error
     pub fn severity(&self) -> ErrorSeverity {
@@ -217,7 +234,7 @@ impl HorizonError {
     pub fn retry_after_seconds(&self) -> Option<u64> {
         match self {
             HorizonError::RateLimited { retry_after } => Some(retry_after.as_secs()),
-            OutlookError::ServerError { .. } => Some(5),
+            HorizonError::ServerError { .. } => Some(5),
             HorizonError::ServiceUnavailable(_) => Some(10),
             HorizonError::Timeout { duration } => Some(duration.as_secs()),
             _ => None,

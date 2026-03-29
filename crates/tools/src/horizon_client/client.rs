@@ -238,20 +238,30 @@ impl HorizonClient {
                                 .await
                                 .unwrap_or_else(|_| "Unknown error".to_string());
 
-                            return match status {
-                                StatusCode::NOT_FOUND => Err(HorizonError::NotFound(body)),
-                                StatusCode::BAD_REQUEST => Err(HorizonError::BadRequest(body)),
-                                StatusCode::UNAUTHORIZED => Err(HorizonError::Unauthorized(body)),
-                                StatusCode::FORBIDDEN => Err(HorizonError::Forbidden(body)),
-                                s if s.is_server_error() => Err(HorizonError::ServerError {
+                            let error = match status {
+                                StatusCode::NOT_FOUND => HorizonError::NotFound(body.clone()),
+                                StatusCode::BAD_REQUEST => HorizonError::BadRequest(body.clone()),
+                                StatusCode::UNAUTHORIZED => HorizonError::Unauthorized(body.clone()),
+                                StatusCode::FORBIDDEN => HorizonError::Forbidden(body.clone()),
+                                s if s.is_server_error() => HorizonError::ServerError {
                                     status: s.as_u16(),
-                                    message: body,
-                                }),
-                                s => Err(HorizonError::HttpError {
+                                    message: body.clone(),
+                                },
+                                s => HorizonError::HttpError {
                                     status: s.as_u16(),
-                                    message: body,
-                                }),
+                                    message: body.clone(),
+                                },
                             };
+
+                            let err_response = error.to_response();
+                            error!(
+                                "[{}] Horizon request failed: {} | response = {:?}",
+                                context.request_id,
+                                error.error_context(),
+                                err_response
+                            );
+
+                            return Err(error);
                         }
 
                         let json = response
@@ -295,10 +305,13 @@ impl HorizonClient {
                 Ok(result) => return Ok(result),
                 Err(error) => {
                     // Check retry policy
+                    let error_response = error.to_response();
                     if !self.config.retry_policy.should_retry(&error) {
                         error!(
-                            "[{}] Request failed with non-retryable error: {}",
-                            ctx.request_id, error
+                            "[{}] Request failed with non-retryable error: {} | response = {:?}",
+                            ctx.request_id,
+                            error.error_context(),
+                            error_response
                         );
                         return Err(error);
                     }

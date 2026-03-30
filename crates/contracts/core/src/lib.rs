@@ -10,6 +10,9 @@ pub mod donation_optimized;
 pub mod storage_tests;
 pub mod rbac;
 
+#[cfg(test)]
+mod integration_tests;
+
 #[contract]
 pub struct CoreContract;
 

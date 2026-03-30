@@ -274,6 +274,21 @@ impl CoreContract {
         campaign::CampaignManager::get_campaign_stats(&env, &project_id)
     }
 
+    pub fn is_campaign_refund_enabled(env: Env, project_id: String) -> bool {
+        campaign::CampaignManager::is_refund_enabled(&env, &project_id)
+    }
+
+    pub fn get_refundable_donations(
+        env: Env,
+        project_id: String,
+    ) -> soroban_sdk::Vec<donation::Donation> {
+        if campaign::CampaignManager::is_refund_enabled(&env, &project_id) {
+            donation::get_donations_by_project(&env, &project_id)
+        } else {
+            soroban_sdk::Vec::new(&env)
+        }
+    }
+
     // ===== Asset Management Functions (Admin Only) =====
 
     /// Add a new supported asset (admin only)
@@ -536,6 +551,39 @@ mod tests {
         // Second donation with same tx_hash should be rejected
         let result2 = client.donate(&donor, &2000i128, &String::from_str(&env, "XLM"), &project_id, &tx_hash);
         assert_eq!(result2, 0);
+    }
+
+    #[test]
+    fn test_cancelled_campaign_enables_refunds() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, CoreContract);
+        let client = CoreContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.init(&admin);
+
+        let donor = Address::generate(&env);
+        let project_id = String::from_str(&env, "refund-project");
+        create_test_campaign(&env, &client, &admin, &project_id);
+
+        let donation_result = client.donate(
+            &donor,
+            &1000i128,
+            &String::from_str(&env, "XLM"),
+            &project_id,
+            &String::from_str(&env, "refund-tx"),
+        );
+        assert_eq!(donation_result, 1000);
+
+        let cancel_result = client.cancel_campaign(&admin, &project_id);
+        assert!(cancel_result.is_ok());
+
+        let enabled = client.is_campaign_refund_enabled(&project_id);
+        assert!(enabled);
+
+        let refundable = client.get_refundable_donations(&project_id);
+        assert_eq!(refundable.len(), 1);
     }
 
     // ===== Admin & Asset Management Tests =====

@@ -255,6 +255,14 @@ impl CampaignManager {
         })
     }
 
+    pub fn is_refund_enabled(env: &Env, project_id: &String) -> bool {
+        if let Some(campaign) = Self::get_campaign(env, project_id) {
+            campaign.status == CampaignStatus::Cancelled
+        } else {
+            false
+        }
+    }
+
     pub fn validate_donation_allowed(
         env: &Env,
         project_id: &String,
@@ -626,5 +634,18 @@ mod tests {
 
         let campaign = CampaignManager::get_campaign(&env, &project_id).unwrap();
         assert_eq!(campaign.status, CampaignStatus::Completed);
+    }
+
+    #[test]
+    fn test_refund_enabled_after_cancel() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 120);
+        let admin = Address::generate(&env);
+        Rbac::set_admin(&env, &admin);
+        let project_id = create_base_campaign(&env, &admin);
+
+        let _ = CampaignManager::cancel_campaign(&env, &admin, project_id.clone()).unwrap();
+        assert!(CampaignManager::is_refund_enabled(&env, &project_id));
     }
 }

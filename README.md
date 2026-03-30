@@ -107,8 +107,20 @@ The project includes a Makefile for common development tasks:
 # Build WASM contract
 make build
 
-# Run all tests
+# Run all tests (unit + integration)
 make test
+
+# Run unit tests only
+make test-unit
+
+# Run integration tests only
+make test-integration
+
+# Run tests with coverage report
+make test-coverage
+
+# Run performance tests
+make performance-test
 
 # Format code
 make fmt
@@ -122,6 +134,66 @@ make clean
 # Show all available commands
 make help
 ```
+
+### Testing Strategy
+
+StellarAid implements a comprehensive testing strategy with multiple test layers:
+
+#### Test Categories
+
+1. **Unit Tests** (`make test-unit`)
+   - Test individual functions and modules in isolation
+   - Located in `src/lib.rs` and module-specific test files
+   - Focus on logic validation and edge cases
+
+2. **Integration Tests** (`make test-integration`)
+   - Test real-world scenarios and user flows
+   - Cover contract interactions and state changes
+   - Validate security boundaries and access controls
+   - Located in `src/integration_tests.rs`
+   - **50+ integration tests** covering all critical functionality
+
+3. **Performance Tests** (`make performance-test`)
+   - Test storage optimizations and gas efficiency
+   - Validate scalability with large datasets
+   - Measure execution time and resource usage
+
+#### Test Coverage
+
+- **Target**: Minimum 50+ integration tests
+- **Coverage**: All critical flows and edge cases documented
+- **Execution Time**: < 2 minutes for full test suite
+- **CI/CD**: Automated testing with coverage reports
+
+#### Running Tests
+
+```bash
+# Run all tests
+make test
+
+# Run integration tests with timing validation
+make test-integration
+
+# Generate coverage report
+make test-coverage
+
+# Run CI checks locally
+make ci-check
+```
+
+#### Test Organization
+
+Tests are organized by functionality:
+
+- **Basic Functionality**: Contract initialization, ping, basic donations
+- **Donation Validation**: Amount validation, duplicate prevention, project ID validation
+- **Multi-Donation Scenarios**: Same donor multiple donations, multiple donors
+- **Asset Management**: Adding/removing assets, admin functions
+- **Withdrawal Operations**: Admin withdrawals, balance validation
+- **Security & RBAC**: Access control, contract isolation
+- **Performance & Scaling**: Large datasets, concurrent operations
+- **Edge Cases**: Unicode handling, special characters, boundary conditions
+- **Integration Scenarios**: Full campaign workflows, multi-asset support
 
 ### Building (Manual)
 

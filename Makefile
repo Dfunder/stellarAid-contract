@@ -1,21 +1,27 @@
-.PHONY: help build test fmt lint clean wasm check-deps install-tools audit deny
+.PHONY: help build test test-unit test-integration test-coverage fmt lint clean wasm check-deps install-tools audit deny coverage ci-check performance-test
 
 # Default target
 help:
 	@echo "StellarAid Development Commands"
 	@echo ""
 	@echo "Available targets:"
-	@echo "  build        - Build the WASM contract and CLI tools"
-	@echo "  wasm         - Build only the WASM contract"
-	@echo "  test         - Run all tests"
-	@echo "  fmt          - Format code with rustfmt"
-	@echo "  lint         - Run clippy linter"
-	@echo "  clean        - Clean build artifacts"
-	@echo "  check-deps   - Check if required dependencies are installed"
-	@echo "  install-tools- Install development dependencies"
-	@echo "  audit        - Check for security vulnerabilities in dependencies"
-	@echo "  deny         - Check for license and ban policies"
-	@echo "  help         - Show this help message"
+	@echo "  build              - Build the WASM contract and CLI tools"
+	@echo "  wasm               - Build only the WASM contract"
+	@echo "  test               - Run all tests (unit + integration)"
+	@echo "  test-unit          - Run only unit tests"
+	@echo "  test-integration   - Run only integration tests"
+	@echo "  test-coverage      - Run tests with coverage report"
+	@echo "  performance-test   - Run performance-focused tests"
+	@echo "  fmt                - Format code with rustfmt"
+	@echo "  lint               - Run clippy linter"
+	@echo "  clean              - Clean build artifacts"
+	@echo "  check-deps         - Check if required dependencies are installed"
+	@echo "  install-tools      - Install development dependencies"
+	@echo "  audit              - Check for security vulnerabilities in dependencies"
+	@echo "  deny               - Check for license and ban policies"
+	@echo "  coverage           - Generate coverage report"
+	@echo "  ci-check           - Run all CI checks locally"
+	@echo "  help               - Show this help message"
 
 # Build everything
 build: wasm
@@ -36,10 +42,45 @@ wasm-release:
 	@echo "✅ Release WASM contract built: target/wasm32-unknown-unknown/release/stellaraid_core.wasm"
 
 # Run tests
-test:
-	@echo "Running tests..."
-	cargo test --workspace
+test: test-unit test-integration
 	@echo "✅ All tests passed!"
+
+# Run unit tests only
+test-unit:
+	@echo "Running unit tests..."
+	cargo test --workspace --lib
+	@echo "✅ Unit tests passed!"
+
+# Run integration tests only
+test-integration:
+	@echo "Running integration tests..."
+	@start_time=$$(date +%s); \
+	cargo test --workspace --test integration_tests -- --nocapture; \
+	end_time=$$(date +%s); \
+	duration=$$((end_time - start_time)); \
+	echo "Integration tests completed in $${duration} seconds"; \
+	if [ $${duration} -gt 120 ]; then \
+		echo "❌ Integration tests took longer than 2 minutes ($${duration}s)"; \
+		exit 1; \
+	fi
+	@echo "✅ Integration tests passed within time limit!"
+
+# Run tests with coverage
+test-coverage:
+	@echo "Running tests with coverage..."
+	@if ! command -v cargo-tarpaulin >/dev/null 2>&1; then \
+		echo "Installing cargo-tarpaulin..."; \
+		cargo install cargo-tarpaulin; \
+	fi
+	cargo tarpaulin --workspace --out Html --output-dir coverage --exclude-files "*/tests/*" --exclude-files "*/test_snapshots/*"
+	@echo "Coverage report generated in coverage/ directory"
+	@echo "Open coverage/tarpaulin-report.html in your browser"
+
+# Run performance tests
+performance-test:
+	@echo "Running performance tests..."
+	cargo test --workspace --release -- --nocapture performance
+	@echo "✅ Performance tests completed!"
 
 # Format code
 fmt:
@@ -92,12 +133,41 @@ install-tools:
 	cargo install cargo-audit --locked
 	@echo "Installing cargo-deny..."
 	cargo install cargo-deny --locked
+	@echo "Installing cargo-tarpaulin for coverage..."
+	cargo install cargo-tarpaulin
 	@echo "✅ Development dependencies installed!"
 
 # Quick setup for new contributors
 setup: install-tools build
 	@echo ""
 	@echo "🎉 StellarAid development environment setup complete!"
+
+# Generate coverage report
+coverage: test-coverage
+
+# Run all CI checks locally
+ci-check: fmt lint test security-audit performance-test
+	@echo "✅ All CI checks passed!"
+
+# Security audit
+audit:
+	@echo "Running security audit..."
+	@if ! command -v cargo-audit >/dev/null 2>&1; then \
+		echo "Installing cargo-audit..."; \
+		cargo install cargo-audit --locked; \
+	fi
+	cargo audit
+	@echo "✅ Security audit passed!"
+
+# License and dependency check
+deny:
+	@echo "Running cargo-deny checks..."
+	@if ! command -v cargo-deny >/dev/null 2>&1; then \
+		echo "Installing cargo-deny..."; \
+		cargo install cargo-deny --locked; \
+	fi
+	cargo deny check
+	@echo "✅ Dependency checks passed!"
 	@echo ""
 	@echo "Next steps:"
 	@echo "1. Run 'make test' to verify everything works"

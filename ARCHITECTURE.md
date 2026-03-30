@@ -456,3 +456,193 @@ This architecture provides:
 - ✅ Comprehensive error handling
 - ✅ Clear extension points
 - ✅ Security at every layer
+
+---
+
+## Testing Architecture
+
+### Comprehensive Test Suite
+
+The StellarAid contract implements a multi-layered testing strategy:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                 Testing Architecture                        │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │            Integration Tests (50+)                  │   │
+│  │  ┌─────────────────────────────────────────────────┐ │   │
+│  │  │  Unit Tests (lib.rs + modules)                 │ │   │
+│  │  │  ┌────────────────────────────────────────────┐ │ │   │
+│  │  │  │  Performance Tests (storage_tests.rs)     │ │ │   │
+│  │  │  └────────────────────────────────────────────┘ │ │   │
+│  │  └─────────────────────────────────────────────────┘ │   │
+│  └─────────────────────────────────────────────────────┘   │
+│           │                                                 │
+│           ▼                                                 │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │            CI/CD Pipeline                           │   │
+│  │  ┌─────────────────────────────────────────────────┐ │   │
+│  │  │  Coverage Reports (tarpaulin)                 │ │   │
+│  │  │  ┌────────────────────────────────────────────┐ │ │   │
+│  │  │  │  Security Audit (cargo-audit)            │ │ │   │
+│  │  │  └────────────────────────────────────────────┘ │ │   │
+│  │  └─────────────────────────────────────────────────┘ │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Test Categories
+
+#### 1. Unit Tests (`src/lib.rs`, `src/*/tests.rs`)
+- Individual function validation
+- Module isolation testing
+- Error condition handling
+- Edge case validation
+
+#### 2. Integration Tests (`src/integration_tests.rs`)
+- **50+ comprehensive tests** covering:
+  - Real-world donation flows
+  - Multi-user scenarios
+  - Asset management workflows
+  - Security boundary validation
+  - Performance under load
+  - Edge cases and error conditions
+
+#### 3. Performance Tests (`src/storage_tests.rs`)
+- Storage optimization validation
+- Gas efficiency measurement
+- Scalability testing
+- Read/write pattern analysis
+
+### Test Execution Strategy
+
+#### Local Development
+```bash
+make test              # All tests
+make test-unit         # Unit tests only
+make test-integration  # Integration tests only
+make test-coverage     # With coverage report
+make performance-test  # Performance validation
+```
+
+#### CI/CD Pipeline
+- Automated testing on push/PR
+- Coverage reporting (>80% target)
+- Security vulnerability scanning
+- Performance regression detection
+- 2-minute execution time limit
+
+### Test Organization
+
+#### File Structure
+```
+src/
+├── lib.rs                    # Unit tests for core functions
+├── integration_tests.rs      # Comprehensive integration suite
+├── storage_tests.rs          # Performance and storage tests
+├── validation/
+│   └── tests.rs             # Address validation tests
+└── assets/
+    └── [module]_tests.rs    # Asset management tests
+```
+
+#### Test Naming Convention
+- `test_[category]_[scenario]_[condition]`
+- Examples:
+  - `test_donation_basic_flow`
+  - `test_duplicate_transaction_rejection`
+  - `test_admin_withdrawal_insufficient_balance`
+  - `test_large_number_of_donations`
+
+### Coverage Requirements
+
+#### Functional Coverage
+- ✅ Contract initialization and setup
+- ✅ Donation creation and validation
+- ✅ Asset management (add/remove/list)
+- ✅ Withdrawal operations
+- ✅ Admin functions and RBAC
+- ✅ Event emission and logging
+- ✅ Error handling and edge cases
+
+#### Security Coverage
+- ✅ Access control validation
+- ✅ Input sanitization
+- ✅ Reentrancy protection
+- ✅ Transaction deduplication
+- ✅ Asset validation and verification
+
+#### Performance Coverage
+- ✅ Storage efficiency (hashing, symbols)
+- ✅ Gas optimization
+- ✅ Scalability (100-1000 donations)
+- ✅ Concurrent operation handling
+
+### Test Data Management
+
+#### Deterministic Test Data
+- Generated addresses for each test
+- Unique transaction hashes
+- Varied amounts and assets
+- Edge case inputs (empty, long, unicode)
+
+#### State Isolation
+- Fresh contract instance per test
+- Clean storage state
+- Independent token contracts
+- No cross-test interference
+
+### Validation Framework
+
+#### Assertions
+- Return value validation
+- Event emission verification
+- State change confirmation
+- Error condition handling
+- Performance metric checking
+
+#### Test Helpers
+- `setup_contract()` - Contract initialization
+- `setup_token()` - Token contract creation
+- `create_test_donation_data()` - Standard test data
+- Time-based validation
+- Balance verification
+
+### CI/CD Integration
+
+#### Automated Checks
+- Code formatting (`cargo fmt`)
+- Linting (`cargo clippy`)
+- Security audit (`cargo audit`)
+- Dependency verification (`cargo deny`)
+- Test execution with coverage
+- Performance benchmarking
+
+#### Quality Gates
+- All tests pass
+- Coverage > 80%
+- No security vulnerabilities
+- Performance within limits
+- Clean code standards
+
+### Maintenance Guidelines
+
+#### Adding New Tests
+1. Identify appropriate test category
+2. Follow naming conventions
+3. Include comprehensive assertions
+4. Document edge cases covered
+5. Update coverage metrics
+
+#### Test Data Updates
+- Keep test data realistic
+- Include boundary conditions
+- Document data generation patterns
+- Ensure deterministic behavior
+
+#### Performance Monitoring
+- Track test execution time
+- Monitor gas usage patterns
+- Validate scalability assumptions
+- Update benchmarks as needed

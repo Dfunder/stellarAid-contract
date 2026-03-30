@@ -30,7 +30,47 @@ stellarAid-contract/
 ### Crates Overview
 
 - **`stellaraid-core`**: Main Soroban smart contract implementing the crowdfunding logic
-- **`stellaraid-tools`**: CLI utilities for contract deployment, configuration, and management
+- **`stellaraid-tools`**: Advanced CLI utilities for contract deployment, configuration, transaction management, and debugging
+
+## 🚀 CLI Features
+
+The StellarAid CLI provides comprehensive tools for contract management, transaction handling, and debugging:
+
+### Core Commands
+- `deploy` - Deploy contracts to Stellar networks
+- `invoke` - Call contract methods
+- `build-donation-tx` - Build donation transactions
+- `submit-tx` - Submit signed transactions
+- `verify-tx` - Verify transaction status
+
+### Advanced Features ✨ NEW
+- **Transaction History**: Track and analyze account transactions with filtering and export
+- **Batch Operations**: Execute multiple transactions efficiently with CSV templates
+- **Debugging Utilities**: Comprehensive network and account diagnostics
+- **Contract Interaction**: Query contracts, generate templates, and inspect state
+- **Account Management**: Create, import, and manage Stellar accounts securely
+
+### Quick Examples
+
+```bash
+# Get transaction history with summary
+stellaraid-cli tx-history --account GABJ2... --summary --export-csv transactions.csv
+
+# Execute batch payments
+stellaraid-cli batch execute --file payments.csv --parallel --continue-on-error
+
+# Debug network issues
+stellaraid-cli debug network-status --network testnet --detailed
+
+# Query contract method
+stellaraid-cli contract query --contract CA3D... --method get_balance --simulate
+
+# Create and fund new account
+stellaraid-cli account create --generate-mnemonic
+stellaraid-cli account fund --account GABJ2... --network testnet
+```
+
+For detailed documentation, see [CLI Advanced Guide](CLI_ADVANCED_GUIDE.md).
 
 ## 🛠️ Development Setup
 

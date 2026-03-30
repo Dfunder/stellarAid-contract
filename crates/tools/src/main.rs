@@ -5,7 +5,11 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+mod account_management;
+mod batch_operations;
 mod config;
+mod contract_interaction;
+mod debug_utils;
 mod donation_tx_builder;
 mod environment_config;
 mod fee;
@@ -15,15 +19,23 @@ mod horizon_rate_limit;
 mod horizon_retry;
 mod secure_vault;
 mod soroban_tx_builder;
+mod transaction_history;
 mod transaction_submission;
 mod transaction_verification;
+mod validation;
 mod wallet_signing;
 
+use account_management::{AccountManagementRequest, AccountAction, AccountManagementService};
+use batch_operations::{BatchOperationService, BatchRequest, BatchOperation, BatchOperationType};
 use config::{Config, Network};
+use contract_interaction::{ContractInteractionService, ContractQueryRequest, ExportFormat};
+use debug_utils::DebugService;
 use donation_tx_builder::{build_donation_transaction, BuildDonationTxRequest};
 use soroban_tx_builder::{
     build_soroban_invoke_transaction, json_to_sc_vals, BuildSorobanInvokeRequest,
 };
+use transaction_history::{TransactionHistoryService, TransactionHistoryRequest, Order, TransactionType};
+use validation::{InputValidator, ErrorHandler};
 use horizon_client::health::{HealthStatus, HorizonHealthChecker};
 use horizon_client::{HorizonClient, HorizonClientConfig};
 use transaction_submission::{
@@ -236,6 +248,50 @@ enum Commands {
         /// Verification timeout in seconds
         #[arg(long, default_value_t = 30)]
         timeout_seconds: u64,
+    },
+    /// Get transaction history for an account
+    TxHistory {
+        /// Account ID to query
+        #[arg(long)]
+        account: String,
+        /// Limit number of transactions (max 200)
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+        /// Transaction type filter
+        #[arg(long)]
+        tx_type: Option<String>,
+        /// Order: asc or desc
+        #[arg(long, default_value = "desc")]
+        order: String,
+        /// Export to CSV file
+        #[arg(long)]
+        export_csv: Option<String>,
+        /// Show summary statistics
+        #[arg(long)]
+        summary: bool,
+        /// Network to query
+        #[arg(short, long, default_value = "testnet")]
+        network: String,
+    },
+    /// Execute batch operations
+    Batch {
+        #[command(subcommand)]
+        action: BatchAction,
+    },
+    /// Advanced debugging utilities
+    Debug {
+        #[command(subcommand)]
+        action: DebugAction,
+    },
+    /// Contract interaction utilities
+    Contract {
+        #[command(subcommand)]
+        action: ContractAction,
+    },
+    /// Account management utilities
+    Account {
+        #[command(subcommand)]
+        action: AccountAction,
     },
 }
 

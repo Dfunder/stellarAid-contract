@@ -2,4 +2,9 @@
 target = "wasm32-unknown-unknown"
 
 [target.wasm32-unknown-unknown]
-rustflags = ["-C", "link-arg=-s"]
+rustflags = [
+    "-C", "opt-level=z",
+    "-C", "lto=fat",
+    "-C", "codegen-units=1",
+    "-C", "strip=symbols",
+]

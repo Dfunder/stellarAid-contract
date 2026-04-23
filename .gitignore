@@ -1,7 +1,12 @@
-# Rust
-/target/
-**/*.rs.bk
-Cargo.lock
+# Dependencies
+/target
+/Cargo.lock
+
+# Environment
+.env
+.env.local
+.env.testnet
+.env.mainnet
 
 # IDE
 .vscode/
@@ -12,29 +17,12 @@ Cargo.lock
 
 # OS
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
 
-# Environment
-.env
-.env.local
-.env.*.local
-
-# WASM
+# Build artifacts
 *.wasm
-*.wat
+*.d
 
 # Soroban
-soroban-token-cli
-
-# Logs
-*.log
-logs/
-
-# Temporary files
-tmp/
-temp/
+.stellar/
+soroban.toml

@@ -1,17 +1,15 @@
-[profile.testnet]
-network = "testnet"
-rpc_url = "https://soroban-testnet.stellar.org"
-horizon_url = "https://horizon-testnet.stellar.org"
+[contract]
+name = "stellaraid-core"
+version = "0.1.0"
+
+[networks.testnet]
+rpc_url = "https://soroban-testnet.stellar.org:443"
 network_passphrase = "Test SDF Network ; September 2015"
 
-[profile.mainnet]
-network = "mainnet"
-rpc_url = "https://mainnet.sorobanrpc.com"
-horizon_url = "https://horizon.stellar.org"
+[networks.mainnet]
+rpc_url = "https://soroban-rpc.mainnet.stellar.gateway.fm"
 network_passphrase = "Public Global Stellar Network ; September 2015"
 
-[profile.sandbox]
-network = "sandbox"
+[networks.sandbox]
 rpc_url = "http://localhost:8000"
-horizon_url = "http://localhost:8000"
-network_passphrase = "Standalone Network ; February 2017"
+network_passphrase = "Stellar Sandbox Network"

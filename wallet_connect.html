@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StellarAid – Wallet Connection</title>
+  <style>
+    body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f0f4ff; }
+    .card { background: #fff; border-radius: 12px; padding: 2rem 2.5rem; box-shadow: 0 4px 20px rgba(0,0,0,.1); text-align: center; min-width: 320px; }
+    h1 { margin: 0 0 1.5rem; font-size: 1.4rem; color: #1a1a2e; }
+    #connect-btn { background: #5b6af0; color: #fff; border: none; border-radius: 8px; padding: .75rem 1.75rem; font-size: 1rem; cursor: pointer; transition: background .2s; }
+    #connect-btn:hover { background: #4451d4; }
+    #connect-btn:disabled { background: #a0a8f8; cursor: default; }
+    #wallet-info { margin-top: 1.25rem; display: none; }
+    #wallet-info p { margin: .4rem 0; color: #444; font-size: .9rem; }
+    #wallet-address { font-family: monospace; font-size: .85rem; word-break: break-all; background: #f5f5f5; padding: .5rem .75rem; border-radius: 6px; color: #222; }
+    #status { margin-top: .75rem; font-size: .85rem; color: #888; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #4caf50; margin-right: 6px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>🌟 StellarAid</h1>
+    <button id="connect-btn" onclick="connectWallet()">Connect Wallet</button>
+
+    <div id="wallet-info">
+      <p><span class="dot"></span><strong>Wallet Connected</strong></p>
+      <p>Address:</p>
+      <div id="wallet-address"></div>
+    </div>
+
+    <p id="status"></p>
+  </div>
+
+  <script>
+    const btn = document.getElementById('connect-btn');
+    const walletInfo = document.getElementById('wallet-info');
+    const walletAddress = document.getElementById('wallet-address');
+    const status = document.getElementById('status');
+
+    async function connectWallet() {
+      status.textContent = 'Connecting…';
+      btn.disabled = true;
+
+      try {
+        // Freighter wallet API (https://docs.freighter.app)
+        if (typeof window.freighter !== 'undefined') {
+          const connected = await window.freighter.isConnected();
+          if (!connected) await window.freighter.connect();
+          const { address } = await window.freighter.getAddress();
+          showConnected(address);
+        } else {
+          // Fallback: prompt for manual address entry (dev/demo mode)
+          const addr = prompt('Freighter not detected.\nEnter your Stellar public key to continue:');
+          if (addr && addr.startsWith('G') && addr.length === 56) {
+            showConnected(addr);
+          } else {
+            throw new Error('Invalid or cancelled address input.');
+          }
+        }
+      } catch (err) {
+        status.textContent = '❌ ' + err.message;
+        btn.disabled = false;
+      }
+    }
+
+    function showConnected(address) {
+      walletAddress.textContent = address;
+      walletInfo.style.display = 'block';
+      btn.textContent = 'Disconnect';
+      btn.onclick = disconnectWallet;
+      btn.disabled = false;
+      status.textContent = '';
+    }
+
+    function disconnectWallet() {
+      walletInfo.style.display = 'none';
+      walletAddress.textContent = '';
+      btn.textContent = 'Connect Wallet';
+      btn.onclick = connectWallet;
+      status.textContent = 'Disconnected.';
+    }
+  </script>
+</body>
+</html>

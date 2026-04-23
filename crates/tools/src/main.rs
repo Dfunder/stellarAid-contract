@@ -1,6 +1,9 @@
 use anyhow::Result;
 use std::env;
 
+mod environment_config;
+use environment_config::{EnvironmentConfig, check_testnet_connection};
+
 fn main() -> Result<()> {
     dotenv::dotenv().ok();
 
@@ -33,52 +36,59 @@ fn main() -> Result<()> {
 }
 
 fn handle_config() -> Result<()> {
+    let config = EnvironmentConfig::from_env()?;
+    
     println!("📋 Configuration Check");
     println!("━━━━━━━━━━━━━━━━━━━━━");
+    println!("Active Network: {}", config.network);
 
-    let network = env::var("SOROBAN_NETWORK").unwrap_or_else(|_| "testnet".to_string());
-    println!("Network: {}", network);
-
-    match network.as_str() {
+    match config.network.as_str() {
         "testnet" => {
-            let rpc_url = env::var("SOROBAN_TESTNET_RPC_URL")
-                .unwrap_or_else(|_| "https://soroban-testnet.stellar.org:443".to_string());
-            let horizon_url = env::var("SOROBAN_TESTNET_HORIZON_URL")
-                .unwrap_or_else(|_| "https://horizon-testnet.stellar.org".to_string());
-            println!("RPC URL: {}", rpc_url);
-            println!("Horizon URL: {}", horizon_url);
+            println!("RPC URL: {}", config.testnet.rpc_url);
+            println!("Horizon URL: {}", config.testnet.horizon_url);
+            println!("Passphrase: {}", config.testnet.network_passphrase);
         }
         "mainnet" => {
-            let rpc_url = env::var("SOROBAN_MAINNET_RPC_URL")
-                .unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
-            let horizon_url = env::var("SOROBAN_MAINNET_HORIZON_URL")
-                .unwrap_or_else(|_| "https://horizon.stellar.org".to_string());
-            println!("RPC URL: {}", rpc_url);
-            println!("Horizon URL: {}", horizon_url);
+            println!("RPC URL: {}", config.mainnet.rpc_url);
+            println!("Horizon URL: {}", config.mainnet.horizon_url);
+            println!("Passphrase: {}", config.mainnet.network_passphrase);
         }
-        _ => println!("Unknown network: {}", network),
+        _ => println!("Unknown network: {}", config.network),
+    }
+
+    if let Some(admin_key) = config.admin_public_key {
+        println!("Admin Public Key: {}", admin_key);
+    } else {
+        println!("⚠️  Admin public key not set");
+    }
+
+    // Validate configuration
+    if let Err(e) = config.validate() {
+        println!("❌ Configuration validation failed: {}", e);
+    } else {
+        println!("✅ Configuration is valid");
     }
 
     Ok(())
 }
 
 fn handle_network() -> Result<()> {
-    let network = env::var("SOROBAN_NETWORK").unwrap_or_else(|_| "testnet".to_string());
+    let config = EnvironmentConfig::from_env()?;
     
     println!("🌐 Network Configuration");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("Active Network: {}", network);
+    println!("Active Network: {}", config.network);
 
-    match network.as_str() {
+    match config.network.as_str() {
         "testnet" => {
-            println!("RPC URL: https://soroban-testnet.stellar.org:443");
-            println!("Horizon URL: https://horizon-testnet.stellar.org");
-            println!("Passphrase: Test SDF Network ; September 2015");
+            println!("RPC URL: {}", config.testnet.rpc_url);
+            println!("Horizon URL: {}", config.testnet.horizon_url);
+            println!("Passphrase: {}", config.testnet.network_passphrase);
         }
         "mainnet" => {
-            println!("RPC URL: https://soroban-rpc.mainnet.stellar.gateway.fm");
-            println!("Horizon URL: https://horizon.stellar.org");
-            println!("Passphrase: Public Global Stellar Network ; September 2015");
+            println!("RPC URL: {}", config.mainnet.rpc_url);
+            println!("Horizon URL: {}", config.mainnet.horizon_url);
+            println!("Passphrase: {}", config.mainnet.network_passphrase);
         }
         _ => println!("Unknown network configuration"),
     }

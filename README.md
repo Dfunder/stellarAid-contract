@@ -49,6 +49,8 @@ The StellarAid CLI provides comprehensive tools for contract management, transac
 - **Debugging Utilities**: Comprehensive network and account diagnostics
 - **Contract Interaction**: Query contracts, generate templates, and inspect state
 - **Account Management**: Create, import, and manage Stellar accounts securely
+- **Signing Requests**: Build transaction signing requests for wallet integration
+- **Response Handler**: Process and validate signed transactions from wallets
 
 ### Quick Examples
 
@@ -68,9 +70,15 @@ stellaraid-cli contract query --contract CA3D... --method get_balance --simulate
 # Create and fund new account
 stellaraid-cli account create --generate-mnemonic
 stellaraid-cli account fund --account GABJ2... --network testnet
+
+# Build transaction signing request
+stellaraid-cli signing build-donation GBJCHU... 1 5000000 XLM "Supporting education"
+
+# Process wallet response
+stellaraid-cli response process '{"requestId":"req_123","xdr":"AAAA...","signer":"GBJCHU...","signedAt":1234567890}'
 ```
 
-For detailed documentation, see [CLI Advanced Guide](CLI_ADVANCED_GUIDE.md).
+For detailed documentation, see [CLI Advanced Guide](CLI_ADVANCED_GUIDE.md) and [Signing Request Guide](SIGNING_REQUEST_GUIDE.md).
 
 ## 🛠️ Development Setup
 

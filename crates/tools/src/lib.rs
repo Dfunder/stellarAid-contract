@@ -4,3 +4,5 @@ pub mod environment_config;
 pub mod secure_vault;
 pub mod asset_issuing;
 pub mod keypair_manager;
+pub mod signing_request;
+pub mod response_handler;

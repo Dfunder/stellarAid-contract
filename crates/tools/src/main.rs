@@ -480,3 +480,343 @@ fn handle_keypair(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn handle_signing(args: &[String]) -> Result<()> {
+    if args.is_empty() {
+        println!("🔐 Signing Request Commands");
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("Usage: stellaraid-cli signing <command>");
+        println!();
+        println!("Commands:");
+        println!("  build-donation     - Build donation signing request");
+        println!("  build-campaign     - Build campaign creation request");
+        println!("  build-custom       - Build custom signing request");
+        println!("  validate           - Validate signing request");
+        println!("  export             - Export signing request to JSON");
+        return Ok(());
+    }
+
+    match args[0].as_str() {
+        "build-donation" => {
+            if args.len() < 4 {
+                println!("Usage: stellaraid-cli signing build-donation <donor_address> <campaign_id> <amount> [asset] [memo]");
+                return Ok(());
+            }
+
+            let donor = args[1].clone();
+            let campaign_id: u64 = args[2].parse()
+                .context("Invalid campaign ID")?;
+            let amount: i128 = args[3].parse()
+                .context("Invalid amount")?;
+            let asset = if args.len() > 4 {
+                args[4].clone()
+            } else {
+                "XLM".to_string()
+            };
+            let memo = if args.len() > 5 {
+                Some(args[5].clone())
+            } else {
+                None
+            };
+
+            match TransactionBuilder::build_donation_request(donor, campaign_id, amount, asset, memo) {
+                Ok(req) => {
+                    req.display();
+                    println!();
+                    println!("💡 To submit to wallet:");
+                    if let Ok(json) = req.to_json() {
+                        println!("JSON: {}", json);
+                    }
+                }
+                Err(e) => {
+                    println!("❌ Failed to build donation request: {}", e);
+                }
+            }
+        }
+        "build-campaign" => {
+            if args.len() < 4 {
+                println!("Usage: stellaraid-cli signing build-campaign <creator_address> <title> <goal> <deadline_timestamp>");
+                return Ok(());
+            }
+
+            let creator = args[1].clone();
+            let title = args[2].clone();
+            let goal: i128 = args[3].parse()
+                .context("Invalid goal")?;
+            let deadline: u64 = args[4].parse()
+                .context("Invalid deadline")?;
+
+            match TransactionBuilder::build_campaign_request(creator, title, goal, deadline) {
+                Ok(req) => {
+                    req.display();
+                    println!();
+                    println!("💡 To submit to wallet:");
+                    if let Ok(json) = req.to_json() {
+                        println!("JSON: {}", json);
+                    }
+                }
+                Err(e) => {
+                    println!("❌ Failed to build campaign request: {}", e);
+                }
+            }
+        }
+        "build-custom" => {
+            if args.len() < 2 {
+                println!("Usage: stellaraid-cli signing build-custom <xdr> [description]");
+                return Ok(());
+            }
+
+            let xdr = args[1].clone();
+            let description = if args.len() > 2 {
+                args[2].clone()
+            } else {
+                "Custom transaction".to_string()
+            };
+
+            match SigningRequestBuilder::new(xdr, None) {
+                Ok(builder) => {
+                    match builder.with_description(description).build() {
+                        Ok(req) => {
+                            req.display();
+                            println!();
+                            println!("✅ Signing request created successfully");
+                        }
+                        Err(e) => {
+                            println!("❌ Failed to build request: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("❌ Failed to create builder: {}", e);
+                }
+            }
+        }
+        "validate" => {
+            if args.len() < 2 {
+                println!("Usage: stellaraid-cli signing validate <json_file>");
+                return Ok(());
+            }
+
+            let path = &args[1];
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    match SigningRequest::from_json(&content) {
+                        Ok(req) => {
+                            match req.validate() {
+                                Ok(_) => {
+                                    println!("✅ Signing request is valid");
+                                    req.display();
+                                }
+                                Err(e) => {
+                                    println!("❌ Validation failed: {}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("❌ Failed to parse request: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("❌ Failed to read file: {}", e);
+                }
+            }
+        }
+        "export" => {
+            if args.len() < 2 {
+                println!("Usage: stellaraid-cli signing export <json_file>");
+                println!();
+                println!("Exports a signing request in wallet-compatible format");
+                return Ok(());
+            }
+
+            let path = &args[1];
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    match SigningRequest::from_json(&content) {
+                        Ok(req) => {
+                            match req.to_wallet_format() {
+                                Ok(wallet_format) => {
+                                    println!("📤 Wallet Format:");
+                                    println!("{}", wallet_format);
+                                }
+                                Err(e) => {
+                                    println!("❌ Failed to export: {}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("❌ Failed to parse request: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("❌ Failed to read file: {}", e);
+                }
+            }
+        }
+        _ => {
+            println!("Unknown signing command: {}", args[0]);
+            handle_signing(&[])?;
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_response(args: &[String]) -> Result<()> {
+    if args.is_empty() {
+        println!("✅ Response Handler Commands");
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("Usage: stellaraid-cli response <command>");
+        println!();
+        println!("Commands:");
+        println!("  process       - Process wallet response JSON");
+        println!("  validate      - Validate signed transaction");
+        println!("  save          - Save signed transaction to file");
+        println!("  load          - Load signed transaction from file");
+        println!("  submit        - Submit signed transaction (placeholder)");
+        return Ok(());
+    }
+
+    match args[0].as_str() {
+        "process" => {
+            if args.len() < 2 {
+                println!("Usage: stellaraid-cli response process <json_response>");
+                return Ok(());
+            }
+
+            let response = args[1].clone();
+            match ResponseHandler::process_response(&response) {
+                Ok(processed) => {
+                    processed.display();
+                    println!();
+                    if processed.is_valid() {
+                        println!("Ready for submission");
+                    }
+                }
+                Err(e) => {
+                    println!("❌ Failed to process response: {}", e);
+                }
+            }
+        }
+        "validate" => {
+            if args.len() < 2 {
+                println!("Usage: stellaraid-cli response validate <json_file>");
+                return Ok(());
+            }
+
+            let path = &args[1];
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    match ResponseHandler::parse_response(&content) {
+                        Ok(tx) => {
+                            match ResponseHandler::validate(&tx) {
+                                Ok(_) => {
+                                    println!("✅ Transaction is valid");
+                                    println!("Request ID:    {}", tx.request_id);
+                                    println!("Signer:        {}", tx.signer);
+                                    println!("Status:        {}", tx.status);
+                                    println!("XDR Length:    {} bytes", tx.transaction_xdr.len());
+                                }
+                                Err(e) => {
+                                    println!("❌ Validation failed: {}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("❌ Failed to parse response: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("❌ Failed to read file: {}", e);
+                }
+            }
+        }
+        "save" => {
+            if args.len() < 3 {
+                println!("Usage: stellaraid-cli response save <json_response> <output_file>");
+                return Ok(());
+            }
+
+            let response = args[1].clone();
+            let output_path = &args[2];
+
+            match ResponseHandler::parse_response(&response) {
+                Ok(tx) => {
+                    match ResponseHandler::save_to_file(&tx, output_path) {
+                        Ok(_) => {
+                            println!("✅ Transaction saved to {}", output_path);
+                            println!("Request ID: {}", tx.request_id);
+                        }
+                        Err(e) => {
+                            println!("❌ Failed to save transaction: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("❌ Failed to parse response: {}", e);
+                }
+            }
+        }
+        "load" => {
+            if args.len() < 2 {
+                println!("Usage: stellaraid-cli response load <json_file>");
+                return Ok(());
+            }
+
+            let path = &args[1];
+            match ResponseHandler::load_from_file(path) {
+                Ok(tx) => {
+                    println!("✅ Transaction loaded from {}", path);
+                    println!();
+                    println!("Request ID:    {}", tx.request_id);
+                    println!("Signer:        {}", tx.signer);
+                    println!("Status:        {}", tx.status);
+                    println!("Signed At:     {}", tx.signed_at);
+                    println!();
+                    println!("Transaction XDR:");
+                    println!("{}", tx.transaction_xdr);
+                }
+                Err(e) => {
+                    println!("❌ Failed to load transaction: {}", e);
+                }
+            }
+        }
+        "submit" => {
+            if args.len() < 2 {
+                println!("Usage: stellaraid-cli response submit <json_file>");
+                return Ok(());
+            }
+
+            let path = &args[1];
+            match ResponseHandler::load_from_file(path) {
+                Ok(tx) => {
+                    println!("📤 Submitting Transaction");
+                    println!("━━━━━━━━━━━━━━━━━━━━━━━");
+                    println!("Request ID: {}", tx.request_id);
+                    println!("Signer:     {}", tx.signer);
+                    println!();
+                    println!("🔄 Sending to Stellar network...");
+                    println!();
+                    println!("💡 Full submission implementation coming soon");
+                    println!("   This would submit the signed transaction to:");
+                    println!("   - Validate transaction format");
+                    println!("   - Check sequence numbers");
+                    println!("   - Post to Stellar network");
+                    println!("   - Monitor for confirmation");
+                }
+                Err(e) => {
+                    println!("❌ Failed to load transaction: {}", e);
+                }
+            }
+        }
+        _ => {
+            println!("Unknown response command: {}", args[0]);
+            handle_response(&[])?;
+        }
+    }
+
+    Ok(())
+}
+

@@ -25,6 +25,10 @@ use signing_request::{SigningRequest, SigningRequestBuilder, TransactionBuilder}
 mod response_handler;
 use response_handler::{ResponseHandler, SignedTransaction};
 
+// Issue #128 – worker health monitoring modules
+mod worker_logger;
+mod polling_scheduler;
+
 fn main() -> Result<()> {
     dotenv::dotenv().ok();
 

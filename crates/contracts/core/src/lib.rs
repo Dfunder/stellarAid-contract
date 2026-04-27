@@ -36,6 +36,11 @@ fn donation_key(campaign_id: u64, donor: &Address) -> (Symbol, u64, Address) {
     (symbol_short!("don"), campaign_id, donor.clone())
 }
 
+/// Issue #142 – global transaction counter key
+fn total_tx_key() -> Symbol {
+    symbol_short!("totaltx")
+}
+
 // ── Events ───────────────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -49,6 +54,16 @@ pub enum Event {
 
 // ── Withdrawal types ─────────────────────────────────────────────────────────
 
+/// Issue #137 – withdrawal lifecycle status
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WithdrawalStatus {
+    Pending = 0,
+    Approved = 1,
+    /// Issue #136 – transaction submitted to Horizon and confirmed
+    Submitted = 2,
+}
+
 /// Issue #131 – pending withdrawal awaiting admin approval
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -56,7 +71,8 @@ pub struct WithdrawalRequest {
     pub campaign_id: u64,
     pub recipient: Address,
     pub amount: i128,
-    pub approved: bool,
+    /// Issue #137 – replaces the old `approved: bool` with a proper status enum
+    pub status: WithdrawalStatus,
 }
 
 // ── Data types ───────────────────────────────────────────────────────────────
@@ -242,6 +258,14 @@ impl StellarAidContract {
             (Symbol::new(&env, "DonationReceived"), donor, campaign_id),
             (amount, asset, memo),
         );
+
+        // Issue #142 – increment global transaction counter
+        let tx_count: u64 = env
+            .storage()
+            .instance()
+            .get(&total_tx_key())
+            .unwrap_or(0);
+        env.storage().instance().set(&total_tx_key(), &(tx_count + 1));
     }
 
     /// Get campaign details
@@ -347,16 +371,36 @@ impl StellarAidContract {
         assert!(campaign.creator == creator, "Only campaign creator can withdraw");
         assert!(campaign.raised >= amount, "Insufficient raised funds");
 
+        // Issue #138 – prevent double withdrawals: reject if a pending request already exists
+        if let Some(existing) = env
+            .storage()
+            .persistent()
+            .get::<_, WithdrawalRequest>(&pending_withdrawal_key(campaign_id))
+        {
+            assert!(
+                existing.status == WithdrawalStatus::Submitted,
+                "A withdrawal request is already pending or approved for this campaign"
+            );
+        }
+
         // Issue #131 – store pending withdrawal for admin approval
         let request = WithdrawalRequest {
             campaign_id,
             recipient: recipient.clone(),
             amount,
-            approved: false,
+            status: WithdrawalStatus::Pending,
         };
         env.storage()
             .persistent()
             .set(&pending_withdrawal_key(campaign_id), &request);
+
+        // Issue #142 – increment global transaction counter
+        let tx_count: u64 = env
+            .storage()
+            .instance()
+            .get(&total_tx_key())
+            .unwrap_or(0);
+        env.storage().instance().set(&total_tx_key(), &(tx_count + 1));
 
         env.events().publish(
             (Symbol::new(&env, "WithdrawalRequested"), creator, campaign_id),
@@ -381,7 +425,7 @@ impl StellarAidContract {
             .get(&pending_withdrawal_key(campaign_id))
             .expect("No pending withdrawal for this campaign");
 
-        assert!(!request.approved, "Withdrawal already approved");
+        assert!(request.status == WithdrawalStatus::Pending, "Withdrawal is not in pending state");
 
         // Deduct from campaign raised balance
         let mut campaign: Campaign = env
@@ -393,7 +437,7 @@ impl StellarAidContract {
         campaign.raised -= request.amount;
         env.storage().persistent().set(&campaign_key(campaign_id), &campaign);
 
-        request.approved = true;
+        request.status = WithdrawalStatus::Approved;
         env.storage()
             .persistent()
             .set(&pending_withdrawal_key(campaign_id), &request);
@@ -406,11 +450,57 @@ impl StellarAidContract {
         request
     }
 
+    /// Issue #136 – submit an approved withdrawal transaction to the network.
+    /// In a Soroban contract the actual Horizon submission happens off-chain; this method
+    /// records the on-chain confirmation that the transaction was submitted and accepted.
+    pub fn submit_transaction(env: Env, admin: Address, campaign_id: u64) -> WithdrawalRequest {
+        admin.require_auth();
+
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("admin"))
+            .expect("Contract not initialized");
+        assert!(admin == stored_admin, "Only admin can submit transactions");
+
+        let mut request: WithdrawalRequest = env
+            .storage()
+            .persistent()
+            .get(&pending_withdrawal_key(campaign_id))
+            .expect("No withdrawal request for this campaign");
+
+        assert!(
+            request.status == WithdrawalStatus::Approved,
+            "Withdrawal must be approved before submission"
+        );
+
+        // Issue #137 – update status to Submitted (confirmed on network)
+        request.status = WithdrawalStatus::Submitted;
+        env.storage()
+            .persistent()
+            .set(&pending_withdrawal_key(campaign_id), &request);
+
+        env.events().publish(
+            (Symbol::new(&env, "TransactionSubmitted"), admin, campaign_id),
+            request.amount,
+        );
+
+        request
+    }
+
     /// Get a pending withdrawal request for a campaign
     pub fn get_withdrawal_request(env: Env, campaign_id: u64) -> Option<WithdrawalRequest> {
         env.storage()
             .persistent()
             .get(&pending_withdrawal_key(campaign_id))
+    }
+
+    /// Issue #142 – expose total transaction count (donations + withdrawal requests)
+    pub fn get_total_tx_count(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&total_tx_key())
+            .unwrap_or(0)
     }
 }
 
@@ -512,15 +602,95 @@ mod tests {
         // #129 – request withdrawal
         client.withdraw(&creator, &cid, &recipient, &500);
         let req = client.get_withdrawal_request(&cid).unwrap();
-        assert!(!req.approved);
+        assert_eq!(req.status, WithdrawalStatus::Pending);
         assert_eq!(req.amount, 500);
 
         // #131 – admin approves
         let approved = client.approve_withdrawal(&admin, &cid);
-        assert!(approved.approved);
+        assert_eq!(approved.status, WithdrawalStatus::Approved);
 
         // Campaign raised should be reduced
         let campaign = client.get_campaign(&cid).unwrap();
         assert_eq!(campaign.raised, 400); // 900 - 500
+    }
+
+    /// Issue #136 – submit_transaction marks withdrawal as Submitted
+    #[test]
+    fn test_submit_transaction() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, StellarAidContract);
+        let client = StellarAidContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let creator = Address::generate(&env);
+        let cid = client.create_campaign(&creator, &symbol_short!("test"), &10000, &9999999);
+
+        let donor = Address::generate(&env);
+        let xlm = symbol_short!("XLM");
+        let memo = String::from_str(&env, "memo");
+        client.donate(&donor, &cid, &1000, &xlm, &memo);
+
+        let recipient = Address::generate(&env);
+        client.withdraw(&creator, &cid, &recipient, &500);
+        client.approve_withdrawal(&admin, &cid);
+
+        let submitted = client.submit_transaction(&admin, &cid);
+        assert_eq!(submitted.status, WithdrawalStatus::Submitted);
+    }
+
+    /// Issue #138 – prevent double withdrawals
+    #[test]
+    #[should_panic(expected = "A withdrawal request is already pending or approved")]
+    fn test_prevent_double_withdrawal() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, StellarAidContract);
+        let client = StellarAidContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let creator = Address::generate(&env);
+        let cid = client.create_campaign(&creator, &symbol_short!("test"), &10000, &9999999);
+
+        let donor = Address::generate(&env);
+        let xlm = symbol_short!("XLM");
+        let memo = String::from_str(&env, "memo");
+        client.donate(&donor, &cid, &2000, &xlm, &memo); // raised = 1900
+
+        let recipient = Address::generate(&env);
+        client.withdraw(&creator, &cid, &recipient, &500);
+        // Second withdraw should panic
+        client.withdraw(&creator, &cid, &recipient, &500);
+    }
+
+    /// Issue #142 – total transaction count
+    #[test]
+    fn test_total_tx_count() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, StellarAidContract);
+        let client = StellarAidContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let creator = Address::generate(&env);
+        let cid = client.create_campaign(&creator, &symbol_short!("test"), &10000, &9999999);
+
+        assert_eq!(client.get_total_tx_count(), 0);
+
+        let donor = Address::generate(&env);
+        let xlm = symbol_short!("XLM");
+        let memo = String::from_str(&env, "memo");
+        client.donate(&donor, &cid, &1000, &xlm, &memo);
+        assert_eq!(client.get_total_tx_count(), 1);
+
+        let recipient = Address::generate(&env);
+        client.withdraw(&creator, &cid, &recipient, &500);
+        assert_eq!(client.get_total_tx_count(), 2);
     }
 }

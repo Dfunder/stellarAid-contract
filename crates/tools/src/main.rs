@@ -29,6 +29,13 @@ use response_handler::{ResponseHandler, SignedTransaction};
 mod worker_logger;
 mod polling_scheduler;
 
+// Issue #141 – per-asset campaign totals
+mod campaign_totals;
+// Issue #140 – withdrawal audit log
+mod withdrawal_audit;
+// Issue #139 – withdrawal limits
+mod withdrawal_limits;
+
 fn main() -> Result<()> {
     dotenv::dotenv().ok();
 

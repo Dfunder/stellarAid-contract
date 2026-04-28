@@ -6,3 +6,6 @@ pub mod asset_issuing;
 pub mod keypair_manager;
 pub mod signing_request;
 pub mod response_handler;
+pub mod campaign_totals;
+pub mod withdrawal_audit;
+pub mod withdrawal_limits;

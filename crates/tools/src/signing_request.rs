@@ -1,6 +1,8 @@
 use anyhow::{Result, Context, anyhow};
+use anyhow::{Result, Context, anyhow};
 use serde::{Serialize, Deserialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::env;
 
 /// Represents a signing request for a Stellar transaction
@@ -183,6 +185,48 @@ impl SigningRequest {
     }
 }
 
+/// Issue #132 – A transaction that has been signed server-side.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerSignedTransaction {
+    pub request_id: String,
+    pub transaction_xdr: String,
+    /// Hex-encoded SHA-256(secret_key || transaction_xdr) used as the server signature.
+    pub signature: String,
+    pub signed_at: i64,
+}
+
+impl SigningRequest {
+    /// Issue #132 – Sign this transaction server-side using the provided secret key.
+    ///
+    /// Produces a deterministic signature: SHA-256(secret_key_bytes || xdr_bytes),
+    /// which proves the server holding the secret key authorised this XDR.
+    pub fn sign_server_side(&self, secret_key: &str) -> Result<ServerSignedTransaction> {
+        if secret_key.is_empty() {
+            return Err(anyhow!("Secret key must not be empty"));
+        }
+        crate::key_manager::KeyManager::validate_secret_key(secret_key)?;
+
+        let mut hasher = Sha256::new();
+        hasher.update(secret_key.as_bytes());
+        hasher.update(self.transaction_xdr.as_bytes());
+        let signature = hex::encode(hasher.finalize());
+
+        Ok(ServerSignedTransaction {
+            request_id: self.id.clone(),
+            transaction_xdr: self.transaction_xdr.clone(),
+            signature,
+            signed_at: chrono::Local::now().timestamp(),
+        })
+    }
+
+    /// Issue #132 – Sign using the secret key stored in the SOROBAN_SECRET_KEY env var.
+    pub fn sign_from_env(&self) -> Result<ServerSignedTransaction> {
+        let secret_key = env::var("SOROBAN_SECRET_KEY")
+            .context("SOROBAN_SECRET_KEY not set in environment")?;
+        self.sign_server_side(&secret_key)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,5 +272,63 @@ mod tests {
         let json = req.to_json().unwrap();
         let restored = SigningRequest::from_json(&json).unwrap();
         assert_eq!(restored.id, req.id);
+    }
+
+    #[test]
+    fn test_sign_server_side_produces_signature() {
+        let req = SigningRequest {
+            id: "req_123".to_string(),
+            network: "testnet".to_string(),
+            transaction_xdr: "AAAAAA==test_xdr".to_string(),
+            description: "Test".to_string(),
+            created_at: 0,
+        };
+        let secret = "SBZXVMIRWXL5VZVKXWV2FGKYTQ5VV5VRNJYQVZKYWW3XYVYP3IXGKDU";
+        let signed = req.sign_server_side(secret).unwrap();
+        assert_eq!(signed.request_id, "req_123");
+        assert!(!signed.signature.is_empty());
+        assert_eq!(signed.transaction_xdr, req.transaction_xdr);
+    }
+
+    #[test]
+    fn test_sign_server_side_is_deterministic() {
+        let req = SigningRequest {
+            id: "req_123".to_string(),
+            network: "testnet".to_string(),
+            transaction_xdr: "AAAAAA==test_xdr".to_string(),
+            description: "Test".to_string(),
+            created_at: 0,
+        };
+        let secret = "SBZXVMIRWXL5VZVKXWV2FGKYTQ5VV5VRNJYQVZKYWW3XYVYP3IXGKDU";
+        let sig1 = req.sign_server_side(secret).unwrap().signature;
+        let sig2 = req.sign_server_side(secret).unwrap().signature;
+        assert_eq!(sig1, sig2);
+    }
+
+    #[test]
+    fn test_sign_server_side_different_keys_differ() {
+        let req = SigningRequest {
+            id: "req_123".to_string(),
+            network: "testnet".to_string(),
+            transaction_xdr: "AAAAAA==test_xdr".to_string(),
+            description: "Test".to_string(),
+            created_at: 0,
+        };
+        let sig1 = req.sign_server_side("SBZXVMIRWXL5VZVKXWV2FGKYTQ5VV5VRNJYQVZKYWW3XYVYP3IXGKDU").unwrap().signature;
+        let sig2 = req.sign_server_side("SCZANGBA5QDPSBM5QOTSXSI7JKEFYABMUQRPTGMWNJKFA5ENDNSQSTE").unwrap().signature;
+        assert_ne!(sig1, sig2);
+    }
+
+    #[test]
+    fn test_sign_server_side_rejects_invalid_key() {
+        let req = SigningRequest {
+            id: "req_123".to_string(),
+            network: "testnet".to_string(),
+            transaction_xdr: "AAAAAA==".to_string(),
+            description: "Test".to_string(),
+            created_at: 0,
+        };
+        assert!(req.sign_server_side("not_a_valid_key").is_err());
+        assert!(req.sign_server_side("").is_err());
     }
 }

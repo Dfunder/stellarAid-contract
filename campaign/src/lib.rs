@@ -1,4 +1,8 @@
 #![no_std]
+
+pub mod storage;
+pub mod types;
+
 use soroban_sdk::{contract, contractimpl, Env};
 
 #[contract]

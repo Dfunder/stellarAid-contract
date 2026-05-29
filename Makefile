@@ -1,4 +1,4 @@
-.PHONY: build build-wasm build-tools test fmt lint clean help \
+.PHONY: build build-wasm build-tools test fmt lint clean optimize help \
         setup deploy-testnet deploy-sandbox sandbox-start
 
 # Default target
@@ -71,6 +71,13 @@ deploy-testnet: build-wasm
 	@echo "🚀 Deploying to testnet..."
 	bash scripts/deploy.sh testnet
 
+
+# Optimize WASM binaries using wasm-opt (-Oz)
+optimize: build
+	@echo "🔧 Optimizing WASM binaries with wasm-opt..."
+	@for wasm in target/wasm32v1-none/release/*.wasm; do 		before=$$(wc -c < "$$wasm"); 		wasm-opt -Oz "$$wasm" -o "$$wasm.opt" && mv "$$wasm.opt" "$$wasm"; 		after=$$(wc -c < "$$wasm"); 		echo "  $$(basename $$wasm): $${before}B -> $${after}B"; 	done
+	@echo "✅ Optimization complete"
+
 # Show help
 help:
 	@echo "Available commands:"
@@ -85,4 +92,5 @@ help:
 	@echo "  make sandbox-start  - Start local Stellar sandbox (requires Docker)"
 	@echo "  make deploy-sandbox - Deploy contract to local sandbox"
 	@echo "  make deploy-testnet - Deploy contract to Stellar testnet"
+	@echo "  make optimize       - Optimize WASM with wasm-opt -Oz"
 	@echo "  make help           - Show this help message"

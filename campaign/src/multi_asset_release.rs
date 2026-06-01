@@ -1,4 +1,4 @@
-// src/milestone.rs  (replace the existing release_milestone_multi_asset function)
+
 
 use soroban_sdk::{panic_with_error, symbol_short, token, Address, Env, Vec};
 use crate::types::{Error, MilestoneStatus, StellarAsset};
@@ -13,19 +13,11 @@ use crate::storage::{
 /// Minimum transfer amount — prevents dust transfers that waste fees.
 const MIN_TRANSFER_AMOUNT: i128 = 1;
 
-/// Precision multiplier for integer proportional math (avoids fp division errors).
-/// Using 1_000_000 gives us 6 decimal places of accuracy before truncation.
-const PRECISION: i128 = 1_000_000;
-
 // ─── Helper: proportional release ────────────────────────────────────────────
 
 /// Computes the proportional release for a single asset using integer arithmetic.
 ///
-/// Formula:  floor((asset_raised * milestone_release * PRECISION) / (total_raised * PRECISION))
-///         = floor((asset_raised * milestone_release) / total_raised)
-///
-/// Multiplying by PRECISION before dividing preserves sub-unit accuracy and
-/// avoids the truncation bias that arises from dividing small integers first.
+/// Formula:  floor((asset_raised * milestone_release) / total_raised)
 ///
 /// Returns `None` if the result would be zero or if total_raised is zero.
 fn compute_asset_release(
@@ -37,14 +29,8 @@ fn compute_asset_release(
         return None;
     }
 
-    // Checked arithmetic — avoids silent overflow on large campaign amounts
-    let numerator = asset_raised
-        .checked_mul(milestone_release)
-        .and_then(|n| n.checked_mul(PRECISION))?;
-
-    let denominator = total_raised.checked_mul(PRECISION)?;
-
-    let release = numerator / denominator; // integer floor division
+    let numerator = asset_raised.checked_mul(milestone_release)?;
+    let release = numerator / total_raised; // integer floor division
 
     if release >= MIN_TRANSFER_AMOUNT {
         Some(release)

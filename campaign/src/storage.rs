@@ -24,7 +24,7 @@ pub const TEMPORARY_TTL: u32 = 120_960;
 /// ~1 day — bump threshold for temporary entries.
 pub const TEMPORARY_BUMP_THRESHOLD: u32 = 17_280;
 
-// ─── Internal bump helpers ────────────────────────────────────────────────────
+// ─── Internal bump helper ─────────────────────────────────────────────────────
 
 /// Bump a persistent key's TTL if it is below the threshold.
 #[inline]
@@ -32,14 +32,6 @@ fn bump_persistent(env: &Env, key: &DataKey) {
     env.storage()
         .persistent()
         .extend_ttl(key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
-}
-
-/// Bump a temporary key's TTL if it is below the threshold.
-#[inline]
-fn bump_temporary(env: &Env, key: &DataKey) {
-    env.storage()
-        .temporary()
-        .extend_ttl(key, TEMPORARY_BUMP_THRESHOLD, TEMPORARY_TTL);
 }
 
 // ─── Campaign ─────────────────────────────────────────────────────────────────
@@ -124,14 +116,6 @@ pub fn get_donor_or_default(env: &Env, donor: &Address) -> DonorRecord {
     })
 }
 
-/// Returns true when a donor record already exists in storage.
-/// Cheaper than `get_donor` when you only need existence, not the value.
-pub fn donor_exists(env: &Env, donor: &Address) -> bool {
-    env.storage()
-        .persistent()
-        .has(&DataKey::DonorData(donor.clone()))
-}
-
 // ─── Total raised ─────────────────────────────────────────────────────────────
 
 /// Load the global total-raised counter. Returns 0 before any donations.
@@ -167,21 +151,6 @@ pub fn storage_increment_total_raised(env: &Env, delta: i128) -> i128 {
     let new_total = current
         .checked_add(delta)
         .unwrap_or_else(|| panic_with_error!(env, Error::ArithmeticOverflow));
-    storage_set_total_raised(env, new_total);
-    new_total
-}
-
-/// Atomically subtract `delta` from total raised using checked arithmetic.
-/// Returns the new total.
-pub fn storage_decrement_total_raised(env: &Env, delta: i128) -> i128 {
-    if delta <= 0 {
-        panic_with_error!(env, Error::InvalidAmount);
-    }
-    let current = storage_get_total_raised(env);
-    let new_total = current
-        .checked_sub(delta)
-        .unwrap_or(0) // clamp to zero — never negative
-        .max(0);
     storage_set_total_raised(env, new_total);
     new_total
 }
@@ -228,21 +197,6 @@ pub fn storage_increment_asset_raised(env: &Env, token: &Address, delta: i128) -
     new_total
 }
 
-/// Atomically subtract `delta` from the per-asset raised counter.
-/// Returns the new per-asset total.
-pub fn storage_decrement_asset_raised(env: &Env, token: &Address, delta: i128) -> i128 {
-    if delta <= 0 {
-        panic_with_error!(env, Error::InvalidAmount);
-    }
-    let current = storage_get_asset_raised(env, token);
-    let new_total = current
-        .checked_sub(delta)
-        .unwrap_or(0)
-        .max(0);
-    storage_set_asset_raised(env, token, new_total);
-    new_total
-}
-
 // ─── Contract status (temporary) ─────────────────────────────────────────────
 
 /// Load the transient contract status flag.
@@ -250,7 +204,9 @@ pub fn storage_decrement_asset_raised(env: &Env, token: &Address, delta: i128) -
 pub fn get_contract_status(env: &Env) -> Option<u32> {
     let key = DataKey::ContractStatus;
     let value = env.storage().temporary().get(&key)?;
-    bump_temporary(env, &key);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, TEMPORARY_BUMP_THRESHOLD, TEMPORARY_TTL);
     Some(value)
 }
 

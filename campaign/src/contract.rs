@@ -33,4 +33,8 @@ pub fn get_campaign_status(
 pub fn extend_deadline(
     env: Env,
     new_end_time: u64,
-) {
+) 
+
+pub fn cancel_campaign(
+    env: Env,
+) 

@@ -529,3 +529,13 @@ pub struct Campaign {
 
     pub original_deadline: u64,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub enum CampaignStatus {
+    Active,
+    GoalReached,
+    Successful,
+    Failed,
+    Cancelled,
+}

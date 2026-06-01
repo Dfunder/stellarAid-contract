@@ -15,3 +15,16 @@ pub fn deadline_extended(
         ),
     );
 }
+
+use soroban_sdk::{Address, Env};
+
+pub fn campaign_cancelled(
+    env: &Env,
+    creator: &Address,
+) {
+    env.events().publish(
+        ("campaign", "campaign_cancelled"),
+        creator,
+    );
+}
+

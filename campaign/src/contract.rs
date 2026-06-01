@@ -29,3 +29,8 @@ pub fn get_campaign_status(
         days_remaining,
     }
 }
+
+pub fn extend_deadline(
+    env: Env,
+    new_end_time: u64,
+) {

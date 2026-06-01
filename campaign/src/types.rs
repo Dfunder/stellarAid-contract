@@ -508,3 +508,24 @@ pub struct CampaignStatusResponse {
     pub status: CampaignStatus,
     pub days_remaining: i64,
 }
+
+pub struct Campaign {
+    pub creator: Address,
+    pub goal_amount: i128,
+    pub raised_amount: i128,
+    pub deadline: u64,
+}
+
+#[derive(Clone)]
+#[contracttype]
+pub struct Campaign {
+    pub creator: Address,
+
+    pub goal_amount: i128,
+
+    pub raised_amount: i128,
+
+    pub deadline: u64,
+
+    pub original_deadline: u64,
+}

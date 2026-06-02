@@ -6,7 +6,7 @@ pub mod types;
 
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 use types::{CampaignData, CampaignInitializedEvent, CampaignStatus, DonorRecord, Error, MilestoneData, MilestoneStatus, StellarAsset, AssetInfo};
-use storage::{get_campaign, set_campaign, get_milestone, set_milestone, get_donor, set_donor, get_total_raised as storage_get_total_raised, storage_set_total_raised, increment_donor_asset_donation, get_donor_asset_donation};
+use storage::{get_campaign, set_campaign, get_milestone, set_milestone, get_donor, set_donor, storage_get_total_raised, storage_set_total_raised, increment_donor_asset_donation, get_donor_asset_donation};
 
 pub const VERSION: u32 = 1;
 
@@ -444,7 +444,9 @@ fn get_token_address_for_asset(
 
 fn validate_assets(env: &Env, assets: &Vec<StellarAsset>) -> Result<(), Error> {
     for asset in assets.iter() {
-        if asset.asset_code.len() == 0 {
+        let code_len = asset.asset_code.len();
+        // Stellar asset codes must be 1-12 characters
+        if code_len == 0 || code_len > 12 {
             panic_with_error(env, Error::InvalidAssetCode);
         }
     }
@@ -481,6 +483,8 @@ mod test {
     pub mod refund_eligibility_tests;
     pub mod claim_refund_tests;
     pub mod integration_tests;
+    pub mod initialize_tests;
+    pub mod donate_tests;
 }
 
 /// Resolves the asset code string for an AssetInfo.

@@ -76,8 +76,6 @@ pub enum Error {
     MissingIssuerAddress        = 31,
     /// Computed release amount is zero after proportional rounding.
     ZeroReleaseAmount           = 32,
-    /// Release amount exceeds the contract's actual token balance.
-    InsufficientContractBalance = 16,
     /// `released_amount` already equals `target_amount`; nothing left to release.
     NothingToRelease            = 33,
     /// `released_amount` would exceed `target_amount` after this operation.
@@ -97,8 +95,6 @@ pub enum Error {
     NoDonorRecord               = 51,
     /// Donor has already claimed a refund for this campaign.
     RefundAlreadyClaimed        = 52,
-    /// Refund window has closed (> 30 days after campaign end or cancellation).
-    RefundWindowClosed          = 53,
 
     // ── Re-entrancy / concurrency ──────────────────────────────────────── 6x
     /// A re-entrant call was detected; operation aborted.

@@ -1,10 +1,16 @@
 #![no_std]
 
+pub mod contract;
 pub mod event;
+pub mod get_all_milestones;
+pub mod get_milestone;
+pub mod multi_asset_release;
+pub mod release_milestone;
 pub mod storage;
 pub mod types;
 pub mod release_milestone;
 pub mod multi_asset_release;
+pub mod views;
 
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec, BytesN};
 use types::{CampaignData, CampaignInitializedEvent, CampaignStatus, DonorRecord, Error, MilestoneData, MilestoneStatus, StellarAsset, AssetInfo};
@@ -110,13 +116,19 @@ impl CampaignContract {
 
     /// Issue #194 – Donate to the campaign, enforcing campaign status.
     ///
+    /// Issue #242 – Reentrancy protection: acquires lock at entry, releases at exit.
+    /// Issue #243 – Authorization: `donor.require_auth()`.
+    ///
     /// Panics with `Error::CampaignNotActive` unless status is `Active` or `GoalReached`.
-    /// The status check is atomic with the state update to prevent race conditions.
     ///
     /// Issue #195 – After updating raised_amount, loops over milestones and unlocks
     ///              any whose target_amount <= raised_amount and status == Locked.
     /// Issue #198 – After donation, transitions to GoalReached if raised_amount >= goal_amount.
     pub fn donate(env: Env, donor: Address, amount: i128, asset: AssetInfo) {
+        // Issue #242 – Reentrancy protection: acquire lock
+        acquire_lock(&env);
+
+        // Issue #243 – Authorization check
         donor.require_auth();
 
         // Freeze check — reject all mutating operations while frozen
@@ -156,7 +168,7 @@ impl CampaignContract {
 
         set_campaign(&env, &campaign);
 
-        // Issue #195 – update TotalRaised storage
+        // Update TotalRaised storage
         let new_total = storage_get_total_raised(&env)
             .checked_add(amount)
             .unwrap_or_else(|| panic_with_error(&env, Error::Overflow));
@@ -166,7 +178,7 @@ impl CampaignContract {
         let asset_address = get_token_address_for_asset(&env, &asset, &campaign);
         increment_donor_asset_donation(&env, &donor, &asset_address, amount);
 
-        // Issue #195 – update donor record
+        // Update donor record
         let mut donor_record = get_donor(&env, &donor).unwrap_or(DonorRecord {
             donor: donor.clone(),
             total_donated: 0,
@@ -194,15 +206,18 @@ impl CampaignContract {
                 {
                     milestone.status = MilestoneStatus::Unlocked;
                     set_milestone(&env, i, &milestone);
-                    // Issue #229 – emit milestone_unlocked event
+                    // Emit milestone_unlocked event
                     event::milestone_unlocked(&env, i, milestone.target_amount, campaign.raised_amount);
                 }
             }
         }
 
-        // Issue #228 – emit donation_received event with required schema
+        // Emit donation_received event
         let asset_code = resolve_asset_code(&env, &asset, &campaign);
         event::donation_received(&env, &donor, amount, asset_code, campaign.raised_amount, env.ledger().timestamp());
+
+        // Issue #242 – Release reentrancy lock
+        release_lock(&env);
     }
 
     /// Issue #197 – Returns the total amount raised by the campaign.
@@ -229,9 +244,7 @@ impl CampaignContract {
     ///
     /// A donor is refund-eligible if ALL of the following are true:
     /// 1. Campaign is in terminal state (Ended or Cancelled)
-    /// 2. Refunds are allowed per campaign status:
-    ///    - `Cancelled`: always allow refunds
-    ///    - `Ended`: only if NO milestones have been Released yet
+    /// 2. Refunds are allowed per campaign status
     /// 3. Current time is within the refund window (≤ 30 days after end_time)
     /// 4. Donor has never claimed a refund before
     /// 5. Donor has made at least one donation
@@ -288,19 +301,9 @@ impl CampaignContract {
 
     /// Claim a refund for a donation.
     ///
-    /// Eligibility Rules (enforced in order):
-    /// 1. Campaign must be in a terminal state (Ended or Cancelled)
-    /// 2. For Cancelled campaigns: refund always available (if within window)
-    /// 3. For Ended campaigns: NO milestones must have been Released yet
-    /// 4. Current time must be within the 30-day refund window after end_time
-    /// 5. Donor must not have already claimed a refund
-    ///
-    /// Refund Calculation (Pro-rata):
-    /// - Total released = sum of released_amount across all milestones
-    /// - Refund % = (raised_amount - total_released) / raised_amount
-    /// - Per-asset refund = donor_asset_amount × refund%
-    ///
-    /// Each asset is transferred separately to the donor.
+    /// Issue #242 – Reentrancy protection: acquires lock at entry, releases at exit.
+    /// Issue #243 – Authorization: `donor.require_auth()`.
+    /// Issue #244 – Balance verification: checks contract balance before each transfer.
     ///
     /// # Panics
     /// - `Error::NotInitialized` if campaign not initialized
@@ -308,7 +311,12 @@ impl CampaignContract {
     /// - `Error::RefundNotPermitted` if milestone already released
     /// - `Error::RefundWindowClosed` if current time > end_time + REFUND_WINDOW
     /// - `Error::RefundAlreadyClaimed` if donor already claimed refund
+    /// - `Error::InsufficientContractBalance` if contract lacks funds for a transfer
     pub fn claim_refund(env: Env, donor: Address) {
+        // Issue #242 – Reentrancy protection: acquire lock
+        acquire_lock(&env);
+
+        // Issue #243 – Authorization check
         donor.require_auth();
 
         // Freeze check — reject all mutating operations while frozen
@@ -365,7 +373,6 @@ impl CampaignContract {
         }
 
         // Calculate refund multiplier: (raised - released) / raised
-        // This gives the fraction of the donation that should be refunded
         let refund_numerator = campaign.raised_amount - total_released;
         let refund_denominator = campaign.raised_amount;
 
@@ -375,26 +382,34 @@ impl CampaignContract {
 
         // For each asset the donor contributed to, calculate and transfer refund
         for asset in campaign.accepted_assets.iter() {
-            let asset_address = asset.issuer.as_ref()
-                .unwrap_or_else(|| panic_with_error(&env, Error::MissingIssuerAddress));
-            
+            let asset_address = match &asset.issuer {
+                Some(addr) => addr.clone(),
+                None => continue, // Skip assets without an issuer (native XLM handled separately)
+            };
+
             // Get amount donor contributed in this asset
-            let donor_asset_amount = get_donor_asset_donation(&env, &donor, asset_address);
-            
+            let donor_asset_amount = get_donor_asset_donation(&env, &donor, &asset_address);
+
             if donor_asset_amount > 0 {
                 // Calculate pro-rata refund: (donor_amount * refund_numerator) / refund_denominator
                 let refund_amount = (donor_asset_amount * refund_numerator) / refund_denominator;
-                
+
                 if refund_amount > 0 {
-                    // Transfer refund to donor
+                    // Issue #244 – Verify contract balance before transfer
                     use soroban_sdk::token;
-                    let token_client = token::Client::new(&env, asset_address);
+                    let token_client = token::Client::new(&env, &asset_address);
+                    let contract_balance = token_client.balance(&env.current_contract_address());
+                    if contract_balance < refund_amount {
+                        panic_with_error(&env, Error::InsufficientContractBalance);
+                    }
+
+                    // Transfer refund to donor
                     token_client.transfer(&env.current_contract_address(), &donor, &refund_amount);
 
                     // Emit event for this asset's refund
                     env.events().publish(
                         ("campaign", "asset_refund"),
-                        (donor.clone(), asset_address.clone(), refund_amount),
+                        (donor.clone(), asset_address, refund_amount),
                     );
                 }
             }
@@ -405,6 +420,69 @@ impl CampaignContract {
             ("campaign", "refund_claimed"),
             (&donor, donor_record.total_donated),
         );
+
+        // Issue #242 – Release reentrancy lock
+        release_lock(&env);
+    }
+
+    /// Issue #212 – End the campaign early.
+    ///
+    /// Issue #243 – Authorization: `creator.require_auth()`.
+    /// Transitions to `Ended` status. No refunds after milestones are released.
+    pub fn end_campaign(env: Env) {
+        contract::end_campaign(&env);
+    }
+
+    /// Issue #214 – Cancel the campaign.
+    ///
+    /// Issue #243 – Authorization: `creator.require_auth()`.
+    /// Transitions to `Cancelled` status. All donors become refund-eligible.
+    pub fn cancel_campaign(env: Env) {
+        contract::cancel_campaign(&env);
+    }
+
+    /// Issue #215 – Extend the campaign deadline.
+    ///
+    /// Issue #243 – Authorization: `creator.require_auth()`.
+    /// Only callable while campaign is Active or GoalReached.
+    pub fn extend_deadline(env: Env, new_end_time: u64) {
+        contract::extend_deadline(&env, new_end_time);
+    }
+
+    /// Issue #235 – Get campaign status with computed fields.
+    /// No auth required (read-only view).
+    pub fn get_campaign_status(env: Env) -> CampaignStatusResponse {
+        contract::get_campaign_status(&env)
+    }
+
+    /// Issue #207 – Release a single milestone (all assets proportionally).
+    ///
+    /// Issue #242 – Reentrancy protection: acquires lock at entry, releases at exit.
+    /// Issue #243 – Authorization: `creator.require_auth()`.
+    /// Issue #244 – Balance verification: checks contract balance before each transfer.
+    pub fn release_milestone(env: Env, milestone_index: u32, recipient: Address) {
+        release_milestone::release_milestone(&env, milestone_index, recipient);
+    }
+
+    /// Issue #208 – Multi-asset milestone release with proportional distribution.
+    ///
+    /// Issue #242 – Reentrancy protection: acquires lock at entry, releases at exit.
+    /// Issue #243 – Authorization: `creator.require_auth()`.
+    /// Issue #244 – Balance verification: checks contract balance before each transfer.
+    pub fn release_milestone_multi_asset(env: Env, milestone_index: u32, recipient: Address) {
+        multi_asset_release::release_milestone_multi_asset(&env, milestone_index, recipient);
+    }
+
+    /// Issue #199 – Get milestone view (raw data).
+    /// No auth required (read-only view).
+    pub fn get_milestone_view(env: Env, index: u32) -> MilestoneData {
+        get_milestone::get_milestone_view(&env, index)
+    }
+
+    /// Issue #200 – Get all milestones (enriched views).
+    /// No auth required (read-only view).
+    pub fn get_all_milestones(env: Env) -> Vec<views::MilestoneView> {
+        get_all_milestones::get_all_milestones_view(&env)
     }
 
     /// Issue #246 – Upgrade the contract's WASM hash.
@@ -481,9 +559,6 @@ fn require_creator(env: &Env) {
 
 /// Validates that `asset` is in the campaign's accepted list and returns the
 /// token contract address needed to construct a `token::Client`.
-///
-/// - `AssetInfo::Stellar(addr)` → `addr` must match an accepted asset's issuer.
-/// - `AssetInfo::Native` (XLM) → finds the XLM entry by asset_code and uses its issuer.
 fn get_token_address_for_asset(
     env: &Env,
     asset: &AssetInfo,
@@ -502,7 +577,6 @@ fn get_token_address_for_asset(
         }
         AssetInfo::Native => {
             // Find the XLM entry in accepted_assets by asset_code == "XLM".
-            // Its issuer must hold the wrapped native token contract address.
             let xlm_code = soroban_sdk::String::from_str(env, "XLM");
             campaign
                 .accepted_assets
@@ -573,18 +647,11 @@ fn resolve_asset_code(env: &Env, asset: &AssetInfo, campaign: &CampaignData) -> 
 }
 
 /// Panics the contract execution with the given error code.
-/// With `contracterror`, `Error` implements `Into<soroban_sdk::Error>` directly.
 fn panic_with_error(env: &Env, error: Error) -> ! {
     env.panic_with_error(error)
 }
 
 /// Validates campaign status transitions; panics if invalid.
-///
-/// Valid transitions:
-///   Active -> GoalReached (goal reached)
-///   Active -> Ended (deadline passes)
-///   GoalReached -> Ended (deadline passes)
-///   Active/GoalReached/Ended -> Cancelled (by creator)
 pub fn validate_campaign_transition(
     env: &Env,
     current_status: &CampaignStatus,
@@ -607,11 +674,6 @@ pub fn validate_campaign_transition(
 }
 
 /// Validates milestone status transitions; panics if invalid.
-///
-/// Valid transitions:
-///   Locked -> Unlocked (target_amount reached)
-///   Unlocked -> Released (explicitly released)
-///   Locked -> Released (direct release)
 pub fn validate_milestone_transition(
     env: &Env,
     current_status: &MilestoneStatus,
@@ -631,4 +693,10 @@ pub fn validate_milestone_transition(
             panic_with_error(env, Error::InvalidMilestoneTransition);
         }
     }
+}
+
+#[cfg(test)]
+mod test {
+    pub mod refund_eligibility_tests;
+    pub mod negative_path_tests;
 }

@@ -1,10 +1,8 @@
-
-
 use soroban_sdk::{panic_with_error, symbol_short, token, Address, Env, Vec};
 use crate::event;
 use crate::types::{Error, MilestoneStatus, StellarAsset};
 use crate::storage::{
-    get_campaign, get_milestone, set_milestone,
+    acquire_lock, get_campaign, get_milestone, release_lock, set_milestone,
     storage_get_asset_raised, storage_get_total_raised,
     storage_set_total_raised, storage_set_asset_raised,
 };
@@ -46,6 +44,10 @@ fn compute_asset_release(
 ///
 /// Releases milestone funds proportionally across every accepted asset.
 ///
+/// Issue #242 – Reentrancy protection: acquires lock at entry, releases at exit.
+/// Issue #243 – Authorization: `creator.require_auth()`.
+/// Issue #244 – Balance verification: checks contract balance before each transfer.
+///
 /// Security properties:
 /// - Requires creator auth.
 /// - Milestone must be in `Unlocked` state (exactly once).
@@ -57,29 +59,24 @@ fn compute_asset_release(
 ///   contract can never release more than it actually holds.
 /// - Dust amounts below MIN_TRANSFER_AMOUNT are skipped rather than
 ///   causing the whole release to fail.
-///
-/// Atomicity:
-/// - Soroban's transaction model guarantees all-or-nothing at the host level.
-///   Any `panic_with_error!` after the milestone status write will revert the
-///   entire transaction including the status update.
 pub fn release_milestone_multi_asset(
     env: &Env,
     milestone_index: u32,
     recipient: Address,
 ) {
+    // Issue #242 – Reentrancy protection: acquire lock
+    acquire_lock(env);
+
     // ── 1. Load campaign ────────────────────────────────────────────────────
     let campaign = get_campaign(env).unwrap_or_else(|| {
         panic_with_error!(env, Error::NotInitialized)
     });
 
     // ── 2. Authorisation ────────────────────────────────────────────────────
+    // Issue #243 – Authorization check
     campaign.creator.require_auth();
 
     // ── 3. Validate recipient ────────────────────────────────────────────────
-    // Prevent accidental burns — a zero address check is idiomatic in Soroban
-    // by requiring the recipient to sign a no-op (or by the caller supplying
-    // the address from a known-good source). At minimum we ensure the address
-    // is not the contract itself, which would be a no-op transfer.
     if recipient == env.current_contract_address() {
         panic_with_error!(env, Error::InvalidRecipient);
     }
@@ -111,10 +108,6 @@ pub fn release_milestone_multi_asset(
     }
 
     // ── 6. Write status BEFORE transfers (Checks-Effects-Interactions) ──────
-    //
-    // Marking Released here means any re-entrant invocation of this function
-    // with the same milestone_index will fail the status guard in step 4,
-    // making double-spend via re-entrancy impossible.
     milestone.released_amount = milestone
         .released_amount
         .checked_add(milestone_release)
@@ -131,7 +124,6 @@ pub fn release_milestone_multi_asset(
             Some(addr) => addr.clone(),
             None => {
                 // Native asset or asset without issuer — skip gracefully
-                // (log a diagnostic event so operators can detect misconfiguration)
                 env.events().publish(
                     (symbol_short!("ms_skip"), symbol_short!("no_issuer")),
                     (milestone_index, asset.asset_code.clone()),
@@ -142,12 +134,10 @@ pub fn release_milestone_multi_asset(
 
         let token_client = token::Client::new(env, &token_address);
 
-        // Use the actual on-contract balance — never trust a stored estimate
+        // Issue #244 – Use actual on-contract balance for verification
         let contract_balance = token_client.balance(&env.current_contract_address());
 
-        // Also retrieve the per-asset raised amount from storage for proportional math
-        // (contract_balance may be lower than asset_raised if funds were partially
-        //  released in earlier milestones — use the stored raised figure for the ratio)
+        // Retrieve the per-asset raised amount from storage for proportional math
         let asset_raised = storage_get_asset_raised(env, &token_address);
 
         let asset_release = match compute_asset_release(
@@ -162,8 +152,12 @@ pub fn release_milestone_multi_asset(
             }
         };
 
+        // Issue #244 – Verify contract balance is sufficient
+        if contract_balance < asset_release {
+            panic_with_error!(env, Error::InsufficientContractBalance);
+        }
+
         // Clamp to actual available balance to prevent over-spending
-        // (guards against rounding up across multiple assets)
         let clamped_release = asset_release.min(contract_balance);
 
         if clamped_release < MIN_TRANSFER_AMOUNT {
@@ -206,6 +200,8 @@ pub fn release_milestone_multi_asset(
         .max(0);
     storage_set_total_raised(env, new_total_raised);
 
+    // Issue #242 – Release reentrancy lock
+    release_lock(env);
 }
 
 // ─── Unit tests ───────────────────────────────────────────────────────────────
@@ -216,21 +212,18 @@ mod tests {
 
     #[test]
     fn proportional_release_equal_split() {
-        // 50% of funds in one asset, 1000 to release → 500
         let result = compute_asset_release(500, 1000, 1000);
         assert_eq!(result, Some(500));
     }
 
     #[test]
     fn proportional_release_unequal_split() {
-        // 300 of 1000 total raised in asset A, release 400 → 120
         let result = compute_asset_release(300, 400, 1000);
         assert_eq!(result, Some(120));
     }
 
     #[test]
     fn proportional_release_rounds_down() {
-        // 1 of 3 total, release 100 → floor(33.33) = 33
         let result = compute_asset_release(1, 100, 3);
         assert_eq!(result, Some(33));
     }
@@ -249,14 +242,12 @@ mod tests {
 
     #[test]
     fn proportional_release_dust_below_minimum() {
-        // Very small asset amount → release rounds to 0
         let result = compute_asset_release(1, 1, 1_000_000);
         assert_eq!(result, None);
     }
 
     #[test]
     fn proportional_release_full_amount() {
-        // All funds in one asset
         let result = compute_asset_release(5000, 5000, 5000);
         assert_eq!(result, Some(5000));
     }

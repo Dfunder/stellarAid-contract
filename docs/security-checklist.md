@@ -1,43 +1,93 @@
-# Security Checklist
+# Security Checklist — StellarAid Factory Contract
 
-This document tracks the internal security review process for the StellarAid contracts. The goal is to identify and resolve as many security issues as possible before an external audit.
+> Reviewed against commit implementing issues #272, #273, #274.  
+> Scope: `factory/src/lib.rs` and `campaign/src/` contracts.
 
-## Process
+---
 
-The internal security review is based on a comprehensive suite of automated security tests located in `crates/tools/src/security_tests.rs`. These tests cover a wide range of common vulnerabilities.
+## 1. Authorization on All Mutations
 
-The process is as follows:
+| Function | Auth Check | Result | Notes |
+|---|---|---|---|
+| `initialize` | `admin.require_auth()` | ✅ Pass | One-shot; re-init guarded by `has(&DataKey::Admin)` |
+| `update_wasm_hash` | `require_admin()` → `admin.require_auth()` | ✅ Pass | Admin-only |
+| `set_deployment_fee` | `require_admin()` → `admin.require_auth()` | ✅ Pass | Admin-only |
+| `deploy_campaign` | `creator.require_auth()` | ✅ Pass | Creator must sign their own deployment |
+| `campaign::donate` | `donor.require_auth()` | ✅ Pass | Donor signs token transfer |
+| `campaign::release_milestone` | `creator.require_auth()` | ✅ Pass | Only campaign owner may release |
+| `campaign::freeze` / `unfreeze` | `admin.require_auth()` | ✅ Pass | Admin-only freeze controls |
+| `campaign::upgrade` | `admin.require_auth()` | ✅ Pass | Admin-only WASM upgrade |
+| `campaign::set_admin` | `admin.require_auth()` | ✅ Pass | Admin-only rotation |
 
-1.  **Run the security test suite**: The test suite is executed using the `stellaraid-cli` tool.
-2.  **Analyze the results**: The output of the test suite is analyzed to identify any failing tests.
-3.  **Fix vulnerabilities**: Any vulnerabilities identified by the tests are fixed.
-4.  **Add regression tests**: For each fix, a new test is added to the suite to prevent the same vulnerability from being reintroduced.
-5.  **Update this checklist**: This checklist is updated to reflect the results of the security review.
+**Overall: ✅ Pass** — every state-mutating entry point requires an explicit `require_auth()` call.
 
-## Test Results
+---
 
-The security test suite was executed, and the following results were recorded.
+## 2. Reentrancy
 
-**Note**: Due to limitations in the execution environment, the tests could not be run directly. The results below are based on a manual review of the test code and assume that all tests pass.
+Soroban's execution model is single-threaded and does not allow cross-contract callbacks to re-enter the same contract instance during a transaction.  All state writes in `deploy_campaign` happen **after** the token transfer and deploy calls (check-effects-interactions is followed naturally).
 
-| Test Category           | Status | Notes                                                                                                                                                           |
-| ----------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **SQL Injection**       | ✅ Pass | The test suite includes checks for classic SQL injection, time-based injection, union-based injection, and blind injection. All tests are assumed to pass.        |
-| **XSS Attacks**         | ✅ Pass | The test suite includes checks for script injection, event handlers, DOM manipulation, and encoded XSS. All tests are assumed to pass.                            |
-| **CSRF Vulnerabilities**| ✅ Pass | The test suite checks for the presence of CSRF tokens, token randomness, token expiration, and the use of the `SameSite` cookie attribute. All tests are assumed to pass. |
-| **Authentication Bypass**| ✅ Pass | The test suite checks for empty passwords, SQL injection in the login form, brute-force protection, and session fixation. All tests are assumed to pass.         |
-| **Authorization Bypass**| ✅ Pass | The test suite checks for horizontal and vertical privilege escalation, and Insecure Direct Object References (IDOR). All tests are assumed to pass.             |
-| **Input Validation**    | ✅ Pass | The test suite checks for buffer overflows, null bytes, path traversal, command injection, and format string attacks. All tests are assumed to pass.            |
-| **Data Sanitization**   | ✅ Pass | The test suite checks for the sanitization of script tags, event handlers, and other malicious input. All tests are assumed to pass.                             |
+| Check | Result | Notes |
+|---|---|---|
+| No recursive cross-contract call pattern | ✅ Pass | Soroban host prevents reentrancy at VM level |
+| State updates (registry, counter) occur after external calls | ✅ Pass | Counter/registry updated post-deploy |
+| Fee transfer uses `token::Client` (Soroban-native call) | ✅ Pass | Atomic within the transaction; no callback surface |
 
-## Sign-off
+**Overall: ✅ Pass** — reentrancy is not possible in Soroban, and the code follows check-effects-interactions regardless.
 
-This internal security review has been completed, and all identified issues have been resolved. The contracts are now ready for an external audit.
+---
 
-**Reviewed by**: [Developer Name]
-**Date**: [Date]
+## 3. Integer Overflow
 
-**Second Developer Sign-off**:
+| Location | Type | Check | Result | Notes |
+|---|---|---|---|---|
+| `DataKey::Count` increment | `u64` | Arithmetic `count + 1` | ✅ Pass | Soroban SDK panics on overflow in debug; in release, wrapping would reset counter — acceptable at 2^64 deployments |
+| `deployment_fee` storage | `i128` | No arithmetic performed on-chain | ✅ Pass | Fee is only passed to `token::transfer`; the token contract enforces balance checks |
+| Campaign donation amounts | `i128` | SDK token arithmetic | ✅ Pass | Soroban token standard handles overflow |
 
-**Reviewed by**: [Developer Name]
-**Date**: [Date]
+**Overall: ✅ Pass** — no custom integer arithmetic that could overflow in practice.
+
+---
+
+## 4. Access Control
+
+| Control | Mechanism | Result | Notes |
+|---|---|---|---|
+| Single admin model | `DataKey::Admin` set at init, checked via `require_admin()` | ✅ Pass | Consistent pattern across all admin functions |
+| Admin rotation | `campaign::set_admin` requires current admin auth | ✅ Pass | No privilege escalation path |
+| Factory admin ≠ campaign admin | Factory and campaign admins are independent addresses | ✅ Pass | Appropriate separation of concerns |
+| Treasury address immutability | Set at `initialize`, no setter exposed | ✅ Pass | Treasury cannot be redirected after deploy; consider adding `set_treasury` with admin auth if needed |
+| WASM hash update | Only admin can call `update_wasm_hash` | ✅ Pass | Old campaigns unaffected; only future deploys use new hash |
+| Deployment fee update | Only admin can call `set_deployment_fee` | ✅ Pass | Creator cannot bypass fee |
+
+**Overall: ✅ Pass** — access control is correctly scoped and consistently enforced.
+
+---
+
+## 5. Event Completeness
+
+| Action | Event Published | Topics | Data | Result | Notes |
+|---|---|---|---|---|---|
+| `deploy_campaign` | `campaign_deployed` | `(symbol, creator)` | `deployed_address` | ✅ Pass | Sufficient for backend indexing |
+| `update_wasm_hash` | None | — | — | ⚠️ Warn | Consider emitting `wasm_hash_updated` for auditability |
+| `set_deployment_fee` | None | — | — | ⚠️ Warn | Consider emitting `deployment_fee_updated` |
+| `initialize` | None | — | — | ✅ Pass | Init events are optional; one-shot events have limited value |
+| `campaign::donate` | `donated` | `(symbol, campaign)` | `(donor, amount, asset)` | ✅ Pass | Full donor info captured |
+| `campaign::release_milestone` | `milestone_released` | `(symbol, campaign)` | `(index, amount)` | ✅ Pass | Sufficient for audit trail |
+| `campaign::freeze` | `frozen` | `(symbol, campaign)` | `admin` | ✅ Pass | |
+| `campaign::unfreeze` | `unfrozen` | `(symbol, campaign)` | `admin` | ✅ Pass | |
+
+**Overall: ✅ Pass (with minor warnings)** — core events are present and indexed. Two admin mutation events are missing; tracked below.
+
+---
+
+## Fail / Warning Items → Tracked Issues
+
+| # | Severity | Description | Recommended Action |
+|---|---|---|---|
+| W1 | Low | `update_wasm_hash` emits no event | Open issue: "Emit `wasm_hash_updated` event in factory" |
+| W2 | Low | `set_deployment_fee` emits no event | Open issue: "Emit `fee_updated` event in factory" |
+| W3 | Low | `DataKey::Treasury` has no setter; treasury address is permanently fixed | Open issue: "Add `set_treasury` (admin-only) to factory" |
+
+> All three items are low severity and do not represent exploitable vulnerabilities.  
+> No **Fail** items were identified during this review.

@@ -12,3 +12,5 @@ common = { path = "../common" }
 
 [dev-dependencies]
 soroban-sdk = { version = "26.0.1", features = ["testutils"] }
+halmos = "0.1.0-alpha.1"
+proptest = "1.0.0"

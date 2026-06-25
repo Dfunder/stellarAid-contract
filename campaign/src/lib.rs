@@ -583,4 +583,5 @@ mod test {
     pub mod refund_eligibility_tests;
     pub mod release_milestone_tests;
     pub mod admin_tests;
+    pub mod formal_verification_tests;
 }

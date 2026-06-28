@@ -2,6 +2,7 @@ pub mod config;
 pub mod errors;
 pub mod horizon;
 pub mod logging;
+pub mod retry;
 pub mod setup;
 pub mod soroban;
 pub mod transaction_builder;

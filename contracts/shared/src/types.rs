@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
-use soroban_sdk::{contracttype, Address};
+use soroban_sdk::{contracttype, Address, String};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
@@ -20,6 +20,9 @@ pub struct Donation {
     pub campaign_id: u64,
     pub amount: i128,
     pub timestamp: u64,
+    pub memo: Option<String>,
+    pub anonymous: bool,
+    pub token_address: Option<Address>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -38,4 +41,20 @@ pub enum CampaignStatus {
     Completed = 1,
     Suspended = 2,
     Rejected = 3,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct DonationRefundedEvent {
+    pub campaign_id: u64,
+    pub donor: Address,
+    pub amount: i128,
+    pub caller: Address,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct AnonymousDonationEvent {
+    pub campaign_id: u64,
+    pub amount: i128,
 }

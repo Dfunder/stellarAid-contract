@@ -1,9 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{contract, contractclient, contractimpl, contracttype, Address, BytesN, Env, Symbol, Vec};
-use shared::types::{Campaign, CampaignStatus, Donation};
 use shared::pause;
-use shared::types::Donation;
+use shared::types::{Campaign, CampaignStatus, Donation};
 
 #[contractclient(name = "CampaignContractClient")]
 trait CampaignContractTrait {
@@ -44,6 +43,8 @@ pub struct DonationContract;
 
 #[contractimpl]
 impl DonationContract {
+    /// Initialize the donation contract with an admin and campaign contract address.
+    /// Must be called once before any other operations.
     pub fn initialize(env: Env, admin: Address, campaign_contract: Address) {
         admin.require_auth();
         if env.storage().instance().has(&DataKey::Initialized) {
@@ -54,18 +55,24 @@ impl DonationContract {
         env.storage().instance().set(&DataKey::Initialized, &true);
     }
 
+    /// Pause the contract, blocking all state-changing operations.
     pub fn pause(env: Env, admin: Address) {
         admin.require_auth();
         Self::ensure_admin(&env, &admin);
         pause::pause(&env, &admin);
     }
 
+    /// Unpause the contract, restoring normal operations.
     pub fn unpause(env: Env, admin: Address) {
         admin.require_auth();
         Self::ensure_admin(&env, &admin);
         pause::unpause(&env, &admin);
     }
 
+    /// Make a donation to a campaign.
+    /// Verifies the campaign exists and is active, records the donation,
+    /// updates the raised total, and calls the campaign contract to
+    /// increment its raised amount via cross-contract call.
     pub fn donate(env: Env, donor: Address, campaign_id: u64, amount: i128) {
         pause::require_not_paused(&env);
         donor.require_auth();
@@ -108,6 +115,8 @@ impl DonationContract {
         });
     }
 
+    /// Issue a refund to a donor for a specific campaign.
+    /// Only the admin or the campaign owner can authorize refunds.
     pub fn refund(env: Env, caller: Address, campaign_id: u64, donor: Address, amount: i128) {
         caller.require_auth();
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
@@ -127,18 +136,22 @@ impl DonationContract {
         });
     }
 
+    /// Return all donations made to a given campaign.
     pub fn get_donations_for_campaign(env: Env, campaign_id: u64) -> Vec<Donation> {
         env.storage().persistent().get(&DataKey::CampaignDonations(campaign_id)).unwrap_or(Vec::new(&env))
     }
 
+    /// Return the total amount raised for a given campaign (tracked locally).
     pub fn get_total_raised(env: Env, campaign_id: u64) -> i128 {
         env.storage().persistent().get(&DataKey::CampaignRaised(campaign_id)).unwrap_or(0_i128)
     }
 
+    /// Return the donation history for a specific donor.
     pub fn get_donor_history(env: Env, donor: Address) -> Vec<Donation> {
         env.storage().persistent().get(&DataKey::DonationHistory(donor)).unwrap_or(Vec::new(&env))
     }
 
+    /// Upgrade the contract to a new WASM implementation.
     pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) {
         admin.require_auth();
         Self::ensure_admin(&env, &admin);

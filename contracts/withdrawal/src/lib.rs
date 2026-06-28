@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractclient, contractimpl, contracttype, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{contract, contractclient, contractimpl, contracttype, Address, BytesN, Env, String, Symbol, Vec};
 use shared::pause;
 use shared::types::Withdrawal;
 
@@ -23,6 +23,7 @@ pub enum DataKey {
 #[contracttype]
 #[derive(Clone)]
 pub struct WithdrawalRequestedEvent {
+    pub withdrawal_id: u64,
     pub campaign_id: u64,
     pub recipient: Address,
     pub amount: i128,
@@ -32,6 +33,7 @@ pub struct WithdrawalRequestedEvent {
 #[derive(Clone)]
 pub struct WithdrawalApprovedEvent {
     pub withdrawal_id: u64,
+    pub tx_hash: BytesN<32>,
 }
 
 #[contracttype]
@@ -46,6 +48,8 @@ pub struct WithdrawalContract;
 
 #[contractimpl]
 impl WithdrawalContract {
+    /// Initialize the withdrawal contract with an admin and donation contract address.
+    /// Must be called once before any other operations.
     pub fn initialize(env: Env, admin: Address, donation_contract: Address) {
         admin.require_auth();
         if env.storage().instance().has(&DataKey::Initialized) {
@@ -56,18 +60,22 @@ impl WithdrawalContract {
         env.storage().instance().set(&DataKey::DonationContract, &donation_contract);
     }
 
+    /// Pause the contract, blocking all state-changing operations.
     pub fn pause(env: Env, admin: Address) {
         admin.require_auth();
         Self::ensure_admin(&env, &admin);
         pause::pause(&env, &admin);
     }
 
+    /// Unpause the contract, restoring normal operations.
     pub fn unpause(env: Env, admin: Address) {
         admin.require_auth();
         Self::ensure_admin(&env, &admin);
         pause::unpause(&env, &admin);
     }
 
+    /// Request a withdrawal from a campaign's raised funds.
+    /// The campaign owner initiates this; an admin must approve it.
     pub fn request_withdrawal(env: Env, campaign_id: u64, owner: Address, amount: i128, recipient: Address) -> u64 {
         pause::require_not_paused(&env);
         owner.require_auth();
@@ -83,6 +91,7 @@ impl WithdrawalContract {
         withdrawals.push_back(withdrawal.clone());
         env.storage().persistent().set(&DataKey::WithdrawalsByCampaign(campaign_id), &withdrawals);
         env.events().publish((Symbol::new(&env, "withdrawal_requested"),), WithdrawalRequestedEvent {
+            withdrawal_id: id,
             campaign_id,
             recipient,
             amount,
@@ -90,6 +99,8 @@ impl WithdrawalContract {
         id
     }
 
+    /// Approve a withdrawal request. Checks that the available balance
+    /// (total raised minus already withdrawn) covers the requested amount.
     pub fn approve_withdrawal(env: Env, withdrawal_id: u64, admin: Address) {
         pause::require_not_paused(&env);
         admin.require_auth();
@@ -115,9 +126,11 @@ impl WithdrawalContract {
 
         env.storage().persistent().set(&DataKey::WithdrawnAmount(campaign_id), &(already_withdrawn + withdrawal.amount));
 
-        env.events().publish((Symbol::new(&env, "withdrawal_approved"),), WithdrawalApprovedEvent { withdrawal_id });
+        let tx_hash = BytesN::from_array(&env, &[0u8; 32]);
+        env.events().publish((Symbol::new(&env, "withdrawal_approved"),), WithdrawalApprovedEvent { withdrawal_id, tx_hash });
     }
 
+    /// Reject a withdrawal request with a reason.
     pub fn reject_withdrawal(env: Env, withdrawal_id: u64, admin: Address, reason: String) {
         pause::require_not_paused(&env);
         admin.require_auth();
@@ -127,18 +140,24 @@ impl WithdrawalContract {
         env.events().publish((Symbol::new(&env, "withdrawal_rejected"),), WithdrawalRejectedEvent { withdrawal_id, reason });
     }
 
+    /// Get a withdrawal request by ID.
     pub fn get_withdrawal(env: Env, withdrawal_id: u64) -> Option<Withdrawal> {
         env.storage().persistent().get(&DataKey::Withdrawal(withdrawal_id))
     }
 
+    /// Get all withdrawal requests for a given campaign.
     pub fn get_withdrawals_by_campaign(env: Env, campaign_id: u64) -> Vec<Withdrawal> {
         env.storage().persistent().get(&DataKey::WithdrawalsByCampaign(campaign_id)).unwrap_or(Vec::new(&env))
     }
 
+    /// Upgrade the contract to a new WASM implementation.
     pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) {
         admin.require_auth();
         Self::ensure_admin(&env, &admin);
         env.deployer().update_current_contract_wasm(&new_wasm_hash);
+    }
+
+    /// Get the total amount already withdrawn from a campaign.
     pub fn get_withdrawn_amount(env: Env, campaign_id: u64) -> i128 {
         env.storage().persistent().get(&DataKey::WithdrawnAmount(campaign_id)).unwrap_or(0_i128)
     }

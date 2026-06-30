@@ -375,3 +375,43 @@ mod test {
         assert_eq!(client.get_total_raised(&7_u64), 100_i128);
     }
 }
+
+#![no_std]
+use soroban_sdk::{contract, contractimpl, token, Address, Env};
+
+#[contract]
+pub struct DonationContract;
+
+#[contractimpl]
+impl DonationContract {
+    /// Accepts a donation from a user and verifies the native balance matrix.
+    pub fn donate(env: Env, donor: Address, token_id: Address, amount: i128) -> i128 {
+        // Ensure the donor authorized this transaction payload
+        donor.require_auth();
+
+        assert!(amount > 0, "Donation amount must be greater than zero");
+
+        // Initialize the client interface for the Native XLM token (or passed SAC token)
+        let token_client = token::Client::new(&env, &token_id);
+
+        // 1. Task Requirement: Fetch or verify the connected wallet's balance on-chain
+        let balance_before = token_client.balance(&donor);
+        assert!(balance_before >= amount, "Insufficient XLM balance for donation");
+
+        // Perform the transfer from the donor wallet directly to this contract instance account
+        let contract_address = env.current_contract_address();
+        token_client.transfer(&donor, &contract_address, &amount);
+
+        // 2. Task Requirement: Refresh/Read updated balance post-submission to return to the caller
+        let balance_after = token_client.balance(&donor);
+
+        // Return the final balance token as an on-chain output transaction metric
+        balance_after
+    }
+
+    /// Explicit query function allowing external actors or clients to inspect balances
+    pub fn get_wallet_balance(env: Env, wallet: Address, token_id: Address) -> i128 {
+        let token_client = token::Client::new(&env, &token_id);
+        token_client.balance(&wallet)
+    }
+}

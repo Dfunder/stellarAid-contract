@@ -1,0 +1,10 @@
+[package]
+name = "wallet_integration_tests"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+soroban-sdk = "20.0.0"
+stellar-rpc-client = "20.0.0" # Standard ecosystem RPC network client
+tokio = { version = "1.0", features = ["full"] } # Handles async RPC operations
+reqwest = { version = "0.11", features = ["json"] } # Queries Friendbot API

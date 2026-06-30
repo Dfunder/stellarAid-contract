@@ -415,3 +415,32 @@ impl DonationContract {
         token_client.balance(&wallet)
     }
 }
+
+#![no_std]
+use soroban_sdk::{contract, contractimpl, token, Address, Env};
+
+// 1 XLM represented in Stroops (10^7 mapping) to cover base fee + reserve
+const MIN_DONATION: i128 = 10_000_000;
+
+#[contract]
+pub struct DonationContract;
+
+#[contractimpl]
+impl DonationContract {
+    pub fn donate(env: Env, donor: Address, token_id: Address, amount: i128) -> i128 {
+        donor.require_auth();
+
+        // Task Requirement: Add assert!(amount >= MIN_DONATION, "Amount too low")
+        assert!(amount >= MIN_DONATION, "Amount too low");
+
+        let token_client = token::Client::new(&env, &token_id);
+        
+        let balance_before = token_client.balance(&donor);
+        assert!(balance_before >= amount, "Insufficient XLM balance for donation");
+
+        let contract_address = env.current_contract_address();
+        token_client.transfer(&donor, &contract_address, &amount);
+
+        token_client.balance(&donor)
+    }
+}

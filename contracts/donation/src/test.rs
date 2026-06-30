@@ -33,3 +33,24 @@ fn test_donation_and_balance_refresh_lifecycle() {
     // Task Requirement: Verify balance drops exactly by donation parameters (Should be 400.00 XLM remaining)
     assert_eq!(post_donation_balance, 4_000_000_000);
 }
+
+#![cfg(test)]
+use super::*;
+use soroban_sdk::{testutils::Address as _, Address, Env};
+
+#[test]
+#[should_panic(expected = "Amount too low")]
+fn test_donation_below_minimum_fails_assertion() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register_contract(None, DonationContract);
+    let client = DonationContractClient::new(&env, &contract_id);
+
+    let donor = Address::generate(&env);
+    let native_token_id = env.register_stellar_asset_contract(Address::generate(&env));
+    
+    // Submitting 0.5 XLM (5_000_000 Stroops) — should fail the validation gate
+    let sub_minimum_amount: i128 = 5_000_000;
+    client.donate(&donor, &native_token_id, &sub_minimum_amount);
+}

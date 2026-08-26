@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Bytes, String};
+use soroban_sdk::{contracttype, Address, Bytes, String, Vec};
 
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,6 +41,97 @@ pub struct MilestoneRecord {
     pub status: MilestoneStatus,
 }
 
+// ---------------------------------------------------------------------------
+// Revision types — closes #600
+// ---------------------------------------------------------------------------
+
+/// Lifecycle of a revision request.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RevisionStatus {
+    /// Submitted, awaiting the other party's response.
+    Pending = 0,
+    /// Accepted by the counterparty.
+    Accepted = 1,
+    /// Rejected by the counterparty.
+    Rejected = 2,
+    /// Timed out (deadline_ledger passed without response).
+    Expired = 3,
+}
+
+/// Who proposed the revision — artist or client.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RevisionProposer {
+    Artist = 0,
+    Client = 1,
+}
+
+/// A single revision request record.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RevisionRecord {
+    pub revision_id: Bytes,
+    pub commission_id: Bytes,
+    pub proposer: RevisionProposer,
+    /// Human-readable description of the requested change.
+    pub description: String,
+    /// Optional cost adjustment in USDC cents (positive = extra cost, negative = discount).
+    pub cost_adjustment_usdc: i128,
+    /// Ledger by which the counterparty must respond.
+    pub deadline_ledger: u32,
+    pub status: RevisionStatus,
+    pub created_ledger: u32,
+}
+
+/// Per-agreement revision configuration and counter.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RevisionConfig {
+    /// Maximum number of revisions allowed (0 = unlimited).
+    pub max_revisions: u32,
+    /// Number of revisions used so far.
+    pub used_revisions: u32,
+}
+
+// ---------------------------------------------------------------------------
+// Team collaboration types — closes #603
+// ---------------------------------------------------------------------------
+
+/// Role a team member holds on a collaborative commission.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TeamRole {
+    /// Full control — only one per agreement (the original artist).
+    Lead = 0,
+    /// Can contribute work; cannot modify agreement settings.
+    Contributor = 1,
+    /// Read-only access to progress updates.
+    Viewer = 2,
+}
+
+/// A single team member record.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TeamMember {
+    pub member: Address,
+    pub role: TeamRole,
+    /// Short label for attribution (e.g. "illustration", "animation").
+    pub attribution: String,
+    /// Ledger at which this member was added.
+    pub added_ledger: u32,
+}
+
+/// Payment split entry: what share (in basis-points, 0–10_000) each member
+/// receives from the artist's payout.  All entries must sum to exactly 10_000.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PaymentSplitEntry {
+    pub member: Address,
+    /// Share in basis points (0–10_000).  Sum of all entries must equal 10_000.
+    pub share_bps: u32,
+}
+
 #[contracttype]
 pub enum DataKey {
     Agreement(Bytes),
@@ -59,4 +150,11 @@ pub enum DataKey {
     RosterEntry(Address, Address),
     ArtistAgency(Address),
     AgencyAnalytics(Address),
+    // Revision keys — closes #600
+    Revision(Bytes, Bytes),              // (commission_id, revision_id)
+    RevisionsForAgreement(Bytes),        // commission_id → Vec<RevisionRecord>
+    RevisionConfig(Bytes),               // commission_id → RevisionConfig
+    // Team collaboration keys — closes #603
+    TeamMembers(Bytes),                  // commission_id → Vec<TeamMember>
+    PaymentSplitConfig(Bytes),           // commission_id → Vec<PaymentSplitEntry>
 }

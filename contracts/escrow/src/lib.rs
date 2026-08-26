@@ -1,11 +1,14 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Bytes, Env};
+use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Bytes, Env, Vec};
 
 pub mod errors;
 pub mod storage;
 
 use errors::EscrowError;
-use storage::{CommissionStatus, EscrowRecord, escrow_exists, get_escrow, save_escrow};
+use storage::{
+    CommissionStatus, EscrowMilestone, EscrowRecord, MilestoneReleaseStatus,
+    escrow_exists, get_escrow, get_milestones, save_escrow, save_milestones,
+};
 
 // ── Pause helpers (closes #594) ─────────────────────────────────────────────
 
@@ -158,6 +161,7 @@ impl EscrowContract {
                 fee_bps,
                 status: CommissionStatus::Locked,
                 created_ledger: env.ledger().sequence(),
+                released_amount: 0,
             };
             save_escrow(&env, &record);
             extend_escrow_ttl_default(&env, &record);
@@ -185,7 +189,11 @@ impl EscrowContract {
     ) -> Result<(), EscrowError> {
         // CHECKS
         let mut r = get_escrow(&env, &commission_id);
-        if r.status != CommissionStatus::Locked { return Err(EscrowError::InvalidStatus); }
+        if r.status != CommissionStatus::Locked
+            && r.status != CommissionStatus::PartiallyReleased
+        {
+            return Err(EscrowError::InvalidStatus);
+        }
 
         let admin: Address = env.invoke_contract(&config_contract, &symbol_short!("get_adm"), soroban_sdk::vec![&env]);
         admin.require_auth();
@@ -193,12 +201,17 @@ impl EscrowContract {
         let pw: Address = env.invoke_contract(&config_contract, &symbol_short!("get_pw"), soroban_sdk::vec![&env]);
 
         let artist = r.artist.clone();
+        // Remaining unheld amount (deduct already-released portions).
+        let remaining = r.amount
+            .checked_sub(r.released_amount)
+            .ok_or(EscrowError::ArithmeticOverflow)?;
 
         storage::with_reentrancy_guard(&env, || {
-            let (fee, payout) = calculate_fee_split(r.amount, r.fee_bps)?;
+            let (fee, payout) = calculate_fee_split(remaining, r.fee_bps)?;
 
             // EFFECTS
             r.status = CommissionStatus::Released;
+            r.released_amount = r.amount;
             save_escrow(&env, &r);
 
             // INTERACTIONS
@@ -226,7 +239,10 @@ impl EscrowContract {
         // CHECKS
         require_not_paused(&env)?;
         let mut r = get_escrow(&env, &commission_id);
-        if r.status != CommissionStatus::Locked && r.status != CommissionStatus::Disputed {
+        if r.status != CommissionStatus::Locked
+            && r.status != CommissionStatus::Disputed
+            && r.status != CommissionStatus::PartiallyReleased
+        {
             return Err(EscrowError::InvalidStatus);
         }
         let admin: Address = env.invoke_contract(&config_contract, &symbol_short!("get_adm"), soroban_sdk::vec![&env]);
@@ -234,7 +250,10 @@ impl EscrowContract {
         let usdc: Address = env.invoke_contract(&config_contract, &symbol_short!("get_usdc"), soroban_sdk::vec![&env]);
 
         let client = r.client.clone();
-        let amount = r.amount;
+        // Only refund the still-held amount.
+        let held = r.amount
+            .checked_sub(r.released_amount)
+            .ok_or(EscrowError::ArithmeticOverflow)?;
 
         storage::with_reentrancy_guard(&env, || {
             // EFFECTS
@@ -242,12 +261,12 @@ impl EscrowContract {
             save_escrow(&env, &r);
 
             // INTERACTIONS
-            token::Client::new(&env, &usdc).transfer(&env.current_contract_address(), &client, &amount);
+            token::Client::new(&env, &usdc).transfer(&env.current_contract_address(), &client, &held);
 
             // EVENT
             env.events().publish(
                 (symbol_short!("escrow"), symbol_short!("refunded")),
-                (commission_id.clone(), client.clone(), amount),
+                (commission_id.clone(), client.clone(), held),
             );
             Ok(())
         })
@@ -257,7 +276,11 @@ impl EscrowContract {
     pub fn expire_escrow(env: Env, commission_id: Bytes, expiry_ledger: u32) -> Result<(), EscrowError> {
         // CHECKS
         let mut r = get_escrow(&env, &commission_id);
-        if r.status != CommissionStatus::Locked { return Err(EscrowError::InvalidStatus); }
+        if r.status != CommissionStatus::Locked
+            && r.status != CommissionStatus::PartiallyReleased
+        {
+            return Err(EscrowError::InvalidStatus);
+        }
         if env.ledger().sequence() < expiry_ledger { return Err(EscrowError::NotExpired); }
 
         // EFFECTS
@@ -279,7 +302,11 @@ impl EscrowContract {
         // CHECKS
         let mut r = get_escrow(&env, &commission_id);
         if r.status == CommissionStatus::Disputed { return Err(EscrowError::DisputeAlreadyOpen); }
-        if r.status != CommissionStatus::Locked { return Err(EscrowError::InvalidStatus); }
+        if r.status != CommissionStatus::Locked
+            && r.status != CommissionStatus::PartiallyReleased
+        {
+            return Err(EscrowError::InvalidStatus);
+        }
         if initiator != r.client && initiator != r.artist { return Err(EscrowError::Unauthorized); }
 
         // EFFECTS – extend the record TTL with the dispute-period length so the
@@ -402,6 +429,310 @@ impl EscrowContract {
         if !escrow_exists(&env, &commission_id) { return Err(EscrowError::NotFound); }
         Ok(storage::get_escrow(&env, &commission_id))
     }
+
+    // -----------------------------------------------------------------------
+    // Milestone-based partial release — closes #601
+    // -----------------------------------------------------------------------
+
+    /// Register a new milestone on an existing escrow.
+    ///
+    /// - Only the **client** may add milestones (they hold the funds).
+    /// - The cumulative milestone amounts must not exceed `escrow.amount`.
+    /// - `auto_release_ledger = 0` disables auto-release for this milestone.
+    ///
+    /// Closes #601.
+    pub fn add_milestone(
+        env: Env,
+        commission_id: Bytes,
+        milestone_id: Bytes,
+        amount: i128,
+        auto_release_ledger: u32,
+    ) -> Result<(), EscrowError> {
+        // CHECKS
+        let r = get_escrow(&env, &commission_id);
+        if r.status != CommissionStatus::Locked
+            && r.status != CommissionStatus::PartiallyReleased
+        {
+            return Err(EscrowError::InvalidStatus);
+        }
+        r.client.require_auth();
+
+        if amount <= 0 {
+            return Err(EscrowError::InvalidAmount);
+        }
+
+        let mut milestones = get_milestones(&env, &commission_id);
+
+        // Duplicate milestone_id check.
+        for ms in milestones.iter() {
+            if ms.milestone_id == milestone_id {
+                return Err(EscrowError::MilestoneAlreadyExists);
+            }
+        }
+
+        // Budget check: total allocated must not exceed escrow amount.
+        let total_allocated: i128 = milestones.iter().map(|m| m.amount).sum();
+        let new_total = total_allocated
+            .checked_add(amount)
+            .ok_or(EscrowError::ArithmeticOverflow)?;
+        if new_total > r.amount {
+            return Err(EscrowError::MilestoneBudgetExceeded);
+        }
+
+        // EFFECTS
+        milestones.push_back(EscrowMilestone {
+            milestone_id: milestone_id.clone(),
+            amount,
+            status: MilestoneReleaseStatus::Pending,
+            auto_release_ledger,
+        });
+        save_milestones(&env, &commission_id, &milestones);
+
+        env.events().publish(
+            (symbol_short!("ms"), symbol_short!("added")),
+            (commission_id, milestone_id, amount),
+        );
+        Ok(())
+    }
+
+    /// Client approves a milestone, marking it ready for release.
+    ///
+    /// Closes #601.
+    pub fn approve_milestone_release(
+        env: Env,
+        commission_id: Bytes,
+        milestone_id: Bytes,
+    ) -> Result<(), EscrowError> {
+        // CHECKS
+        let r = get_escrow(&env, &commission_id);
+        if r.status != CommissionStatus::Locked
+            && r.status != CommissionStatus::PartiallyReleased
+        {
+            return Err(EscrowError::InvalidStatus);
+        }
+        r.client.require_auth();
+
+        let mut milestones = get_milestones(&env, &commission_id);
+        let mut found = false;
+        let mut updated: Vec<EscrowMilestone> = Vec::new(&env);
+        for ms in milestones.iter() {
+            if ms.milestone_id == milestone_id {
+                if ms.status != MilestoneReleaseStatus::Pending {
+                    return Err(EscrowError::InvalidMilestoneStatus);
+                }
+                found = true;
+                updated.push_back(EscrowMilestone {
+                    milestone_id: ms.milestone_id.clone(),
+                    amount: ms.amount,
+                    status: MilestoneReleaseStatus::Approved,
+                    auto_release_ledger: ms.auto_release_ledger,
+                });
+            } else {
+                updated.push_back(ms);
+            }
+        }
+        if !found {
+            return Err(EscrowError::MilestoneNotFound);
+        }
+
+        // EFFECTS
+        save_milestones(&env, &commission_id, &updated);
+
+        env.events().publish(
+            (symbol_short!("ms"), symbol_short!("approved")),
+            (commission_id, milestone_id),
+        );
+        Ok(())
+    }
+
+    /// Release funds for an **approved** milestone to the artist.
+    ///
+    /// Admin-gated. Transfers the milestone amount (minus platform fee) to the
+    /// artist and updates the escrow's `released_amount`.  If all milestones
+    /// are now released the escrow status moves to `Released`.
+    ///
+    /// Closes #601.
+    pub fn release_milestone(
+        env: Env,
+        commission_id: Bytes,
+        milestone_id: Bytes,
+        config_contract: Address,
+    ) -> Result<(), EscrowError> {
+        // CHECKS
+        let mut r = get_escrow(&env, &commission_id);
+        if r.status != CommissionStatus::Locked
+            && r.status != CommissionStatus::PartiallyReleased
+        {
+            return Err(EscrowError::InvalidStatus);
+        }
+
+        let admin: Address = env.invoke_contract(&config_contract, &symbol_short!("get_adm"), soroban_sdk::vec![&env]);
+        admin.require_auth();
+        let usdc: Address = env.invoke_contract(&config_contract, &symbol_short!("get_usdc"), soroban_sdk::vec![&env]);
+        let pw: Address = env.invoke_contract(&config_contract, &symbol_short!("get_pw"), soroban_sdk::vec![&env]);
+
+        let mut milestones = get_milestones(&env, &commission_id);
+
+        // Find the target milestone.
+        let mut ms_amount: i128 = 0;
+        let mut found = false;
+        let mut updated: Vec<EscrowMilestone> = Vec::new(&env);
+        for ms in milestones.iter() {
+            if ms.milestone_id == milestone_id {
+                if ms.status != MilestoneReleaseStatus::Approved {
+                    return Err(EscrowError::InvalidMilestoneStatus);
+                }
+                found = true;
+                ms_amount = ms.amount;
+                updated.push_back(EscrowMilestone {
+                    milestone_id: ms.milestone_id.clone(),
+                    amount: ms.amount,
+                    status: MilestoneReleaseStatus::Released,
+                    auto_release_ledger: ms.auto_release_ledger,
+                });
+            } else {
+                updated.push_back(ms);
+            }
+        }
+        if !found {
+            return Err(EscrowError::MilestoneNotFound);
+        }
+
+        let artist = r.artist.clone();
+
+        storage::with_reentrancy_guard(&env, || {
+            let (fee, payout) = calculate_fee_split(ms_amount, r.fee_bps)?;
+
+            // EFFECTS
+            r.released_amount = r.released_amount
+                .checked_add(ms_amount)
+                .ok_or(EscrowError::ArithmeticOverflow)?;
+
+            // Determine new top-level status.
+            let all_released = updated.iter().all(|m| {
+                m.status == MilestoneReleaseStatus::Released
+                    || m.status == MilestoneReleaseStatus::AutoReleased
+            });
+            r.status = if all_released && !updated.is_empty() {
+                CommissionStatus::Released
+            } else {
+                CommissionStatus::PartiallyReleased
+            };
+
+            save_escrow(&env, &r);
+            save_milestones(&env, &commission_id, &updated);
+
+            // INTERACTIONS
+            let tc = token::Client::new(&env, &usdc);
+            tc.transfer(&env.current_contract_address(), &artist, &payout);
+            tc.transfer(&env.current_contract_address(), &pw, &fee);
+
+            env.events().publish(
+                (symbol_short!("ms"), symbol_short!("released")),
+                (commission_id.clone(), milestone_id.clone(), payout, fee),
+            );
+            Ok(())
+        })
+    }
+
+    /// Auto-release a milestone whose `auto_release_ledger` deadline has passed.
+    ///
+    /// Anyone may trigger this once the deadline has passed.  The milestone
+    /// must still be in `Pending` status (not yet manually approved/released).
+    ///
+    /// Closes #601.
+    pub fn auto_release_milestone(
+        env: Env,
+        commission_id: Bytes,
+        milestone_id: Bytes,
+        config_contract: Address,
+    ) -> Result<(), EscrowError> {
+        // CHECKS
+        let mut r = get_escrow(&env, &commission_id);
+        if r.status != CommissionStatus::Locked
+            && r.status != CommissionStatus::PartiallyReleased
+        {
+            return Err(EscrowError::InvalidStatus);
+        }
+
+        let usdc: Address = env.invoke_contract(&config_contract, &symbol_short!("get_usdc"), soroban_sdk::vec![&env]);
+        let pw: Address = env.invoke_contract(&config_contract, &symbol_short!("get_pw"), soroban_sdk::vec![&env]);
+
+        let milestones = get_milestones(&env, &commission_id);
+        let mut ms_amount: i128 = 0;
+        let mut found = false;
+        let mut updated: Vec<EscrowMilestone> = Vec::new(&env);
+
+        for ms in milestones.iter() {
+            if ms.milestone_id == milestone_id {
+                // Must be Pending and deadline must have passed.
+                if ms.status != MilestoneReleaseStatus::Pending {
+                    return Err(EscrowError::InvalidMilestoneStatus);
+                }
+                if ms.auto_release_ledger == 0 || env.ledger().sequence() < ms.auto_release_ledger {
+                    return Err(EscrowError::NotExpired);
+                }
+                found = true;
+                ms_amount = ms.amount;
+                updated.push_back(EscrowMilestone {
+                    milestone_id: ms.milestone_id.clone(),
+                    amount: ms.amount,
+                    status: MilestoneReleaseStatus::AutoReleased,
+                    auto_release_ledger: ms.auto_release_ledger,
+                });
+            } else {
+                updated.push_back(ms);
+            }
+        }
+        if !found {
+            return Err(EscrowError::MilestoneNotFound);
+        }
+
+        let artist = r.artist.clone();
+
+        storage::with_reentrancy_guard(&env, || {
+            let (fee, payout) = calculate_fee_split(ms_amount, r.fee_bps)?;
+
+            // EFFECTS
+            r.released_amount = r.released_amount
+                .checked_add(ms_amount)
+                .ok_or(EscrowError::ArithmeticOverflow)?;
+
+            let all_released = updated.iter().all(|m| {
+                m.status == MilestoneReleaseStatus::Released
+                    || m.status == MilestoneReleaseStatus::AutoReleased
+            });
+            r.status = if all_released && !updated.is_empty() {
+                CommissionStatus::Released
+            } else {
+                CommissionStatus::PartiallyReleased
+            };
+
+            save_escrow(&env, &r);
+            save_milestones(&env, &commission_id, &updated);
+
+            // INTERACTIONS
+            let tc = token::Client::new(&env, &usdc);
+            tc.transfer(&env.current_contract_address(), &artist, &payout);
+            tc.transfer(&env.current_contract_address(), &pw, &fee);
+
+            env.events().publish(
+                (symbol_short!("ms"), symbol_short!("auto_rel")),
+                (commission_id.clone(), milestone_id.clone(), payout),
+            );
+            Ok(())
+        })
+    }
+
+    /// Returns all milestones for a commission escrow.
+    ///
+    /// Closes #601.
+    pub fn get_milestones(env: Env, commission_id: Bytes) -> Result<Vec<EscrowMilestone>, EscrowError> {
+        if !escrow_exists(&env, &commission_id) {
+            return Err(EscrowError::NotFound);
+        }
+        Ok(get_milestones(&env, &commission_id))
+    }
 }
 
 #[cfg(test)]
@@ -416,5 +747,7 @@ mod fee_math_tests;
 mod storage_edge_tests;
 #[cfg(test)]
 mod cancellation_tests;
+#[cfg(test)]
+mod partial_release_tests;
 #[cfg(test)]
 mod integration_tests;

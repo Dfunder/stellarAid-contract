@@ -17,7 +17,12 @@ pub enum EscrowError {
     ArithmeticOverflow = 12,
     /// Contract is paused — operation not permitted (closes #594).
     ContractPaused = 13,
-    InvalidSplit = 13,
+    InvalidSplit = 14,
+    /// Milestone-specific errors — closes #601.
+    MilestoneAlreadyExists = 15,
+    MilestoneNotFound = 16,
+    InvalidMilestoneStatus = 17,
+    MilestoneBudgetExceeded = 18,
 }
 
 impl core::fmt::Display for EscrowError {
@@ -37,6 +42,10 @@ impl core::fmt::Display for EscrowError {
             Self::ArithmeticOverflow => write!(f, "arithmetic operation would overflow"),
             Self::ContractPaused => write!(f, "contract is paused; operation not permitted"),
             Self::InvalidSplit => write!(f, "cancellation split must equal the escrowed amount"),
+            Self::MilestoneAlreadyExists => write!(f, "milestone already exists"),
+            Self::MilestoneNotFound => write!(f, "milestone not found"),
+            Self::InvalidMilestoneStatus => write!(f, "invalid milestone status for operation"),
+            Self::MilestoneBudgetExceeded => write!(f, "milestone amounts exceed escrow total"),
         }
     }
 }
@@ -56,6 +65,10 @@ pub fn get_suggestion(error: EscrowError) -> Symbol {
         EscrowError::InsufficientBalance => symbol_short!("NO_FUND"),
         EscrowError::ArithmeticOverflow => symbol_short!("OVERFL"),
         EscrowError::ContractPaused => symbol_short!("PAUSED"),
-        EscrowError::InvalidSplit => symbol_short!("BAD_SPLIT"),
+        EscrowError::InvalidSplit => symbol_short!("BAD_SPLT"),
+        EscrowError::MilestoneAlreadyExists => symbol_short!("MS_DUP"),
+        EscrowError::MilestoneNotFound => symbol_short!("MS_404"),
+        EscrowError::InvalidMilestoneStatus => symbol_short!("MS_STS"),
+        EscrowError::MilestoneBudgetExceeded => symbol_short!("MS_BUD"),
     }
 }

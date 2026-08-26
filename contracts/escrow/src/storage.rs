@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Bytes, Env};
+use soroban_sdk::{contracttype, Address, Bytes, Env, Vec};
 
 use crate::errors::EscrowError;
 
@@ -12,6 +12,8 @@ pub enum CommissionStatus {
     Expired = 4,
     /// Settled early under a commission cancellation (#605).
     Cancelled = 5,
+    /// Partially released — one or more milestones paid, remainder held.
+    PartiallyReleased = 6,
 }
 
 #[contracttype]
@@ -24,6 +26,38 @@ pub struct EscrowRecord {
     pub fee_bps: u32,
     pub status: CommissionStatus,
     pub created_ledger: u32,
+    /// Total amount already released via milestone partial releases (#601).
+    pub released_amount: i128,
+}
+
+// ---------------------------------------------------------------------------
+// Milestone release types — closes #601
+// ---------------------------------------------------------------------------
+
+/// A single milestone within an escrow, supporting partial release (#601).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowMilestone {
+    pub milestone_id: Bytes,
+    /// Amount in USDC smallest-denomination units.
+    pub amount: i128,
+    pub status: MilestoneReleaseStatus,
+    /// Ledger after which the milestone auto-releases if not yet released.
+    pub auto_release_ledger: u32,
+}
+
+/// Lifecycle state of a single milestone for release purposes.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MilestoneReleaseStatus {
+    /// Awaiting client approval.
+    Pending = 0,
+    /// Client approved; funds transferable.
+    Approved = 1,
+    /// Funds already transferred to artist.
+    Released = 2,
+    /// Auto-released because deadline passed.
+    AutoReleased = 3,
 }
 
 #[contracttype]
@@ -33,6 +67,8 @@ pub enum DataKey {
     ReentrancyLock,
     /// Configurable dispute-period TTL extension in ledgers (#586).
     DisputeTtlLedgers,
+    /// List of milestones for a commission (#601).
+    Milestones(Bytes),
 }
 
 pub fn escrow_exists(env: &Env, id: &Bytes) -> bool {
@@ -43,6 +79,21 @@ pub fn get_escrow(env: &Env, id: &Bytes) -> EscrowRecord {
 }
 pub fn save_escrow(env: &Env, r: &EscrowRecord) {
     env.storage().persistent().set(&DataKey::Escrow(r.commission_id.clone()), r);
+}
+
+// ── Milestone helpers — closes #601 ────────────────────────────────────────
+
+pub fn get_milestones(env: &Env, commission_id: &Bytes) -> Vec<EscrowMilestone> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Milestones(commission_id.clone()))
+        .unwrap_or(Vec::new(env))
+}
+
+pub fn save_milestones(env: &Env, commission_id: &Bytes, milestones: &Vec<EscrowMilestone>) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::Milestones(commission_id.clone()), milestones);
 }
 
 // ── Re-entrancy lock helpers (#484) ────────────────────────────────────────

@@ -1,71 +1,71 @@
-use soroban_sdk::{contracttype, Address, String};
+use soroban_sdk::{contracttype, Address, Bytes, String, Vec};
 
+/// Supported badge types.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PortfolioStatus {
-    Submitted = 0,
-    UnderReview = 1,
-    Verified = 2,
-    Rejected = 3,
-    UpdateRequired = 4,
+pub enum BadgeType {
+    /// Artist portfolio has been reviewed and verified.
+    PortfolioVerified = 0,
+    /// Artist identity has been verified.
+    IdVerified = 1,
+    /// Artist has completed a background check.
+    BackgroundChecked = 2,
+    /// Artist is a vetted professional agency.
+    AgencyVerified = 3,
+    /// Artist has achieved top-tier status.
+    TopCreator = 4,
 }
 
+/// Lifecycle status of a badge.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ReviewOutcome {
-    Approved = 0,
-    Rejected = 1,
-    Resubmitted = 2,
+pub enum BadgeStatus {
+    /// Request submitted, awaiting admin review.
+    Pending = 0,
+    /// Approved and active.
+    Active = 1,
+    /// Rejected by admin.
+    Rejected = 2,
+    /// Revoked after prior approval.
+    Revoked = 3,
+    /// Passed the expiry ledger.
+    Expired = 4,
 }
 
-/// Per-criterion marks, each on a 0..=100 scale. The weighted blend of these
-/// is the overall quality score compared against the configured minimum.
-#[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct QualityScore {
-    pub originality: u32,
-    pub technique: u32,
-    pub consistency: u32,
-    pub presentation: u32,
-}
-
+/// A single badge record.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Portfolio {
+pub struct BadgeRecord {
+    pub badge_id: Bytes,
     pub artist: Address,
-    pub metadata_uri: String,
-    pub work_count: u32,
-    pub status: PortfolioStatus,
-    pub score: u32,
-    pub revision: u32,
-    pub submitted_ledger: u32,
-    pub reviewed_ledger: u32,
-    pub reviewer: Option<Address>,
-    /// Ledger after which a verified portfolio must be refreshed. Zero while
-    /// the portfolio has never been approved.
-    pub next_update_ledger: u32,
+    pub badge_type: BadgeType,
+    pub status: BadgeStatus,
+    /// Ledger at which the badge was requested.
+    pub requested_ledger: u32,
+    /// Ledger at which the badge expires (0 = no expiry).
+    pub expiry_ledger: u32,
+    /// Optional admin note (reason for rejection/revocation).
+    pub note: Option<String>,
 }
 
+/// History entry kept every time a badge's status changes.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct VerificationRecord {
-    pub revision: u32,
-    pub outcome: ReviewOutcome,
-    pub score: u32,
-    pub quality: QualityScore,
-    pub reviewer: Option<Address>,
-    pub ledger: u32,
-    pub note: String,
+pub struct BadgeHistoryEntry {
+    pub from_status: BadgeStatus,
+    pub to_status: BadgeStatus,
+    pub changed_at_ledger: u32,
+    pub changed_by: Address,
+    pub note: Option<String>,
 }
 
+/// On-chain key space.
 #[contracttype]
 pub enum DataKey {
     Admin,
-    MinScore,
-    MinWorkCount,
-    UpdateInterval,
-    HistoryLimit,
-    Reviewer(Address),
-    Portfolio(Address),
-    History(Address),
+    Badge(Bytes),
+    /// History list for a badge_id.
+    BadgeHistory(Bytes),
+    /// Index: (artist, badge_type) → badge_id — to prevent duplicates.
+    ArtistBadgeIndex(Address, BadgeType),
 }

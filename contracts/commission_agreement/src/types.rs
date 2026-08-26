@@ -91,4 +91,17 @@ pub enum DataKey {
     MilestonesForAgreement(Bytes),
     /// List of team members for a commission.  Key: commission_id.
     TeamMembers(Bytes),
+    /// Serialization lock for milestone state transitions (closes #589).
+    /// Key: (commission_id, milestone_id) — value: `true` when locked.
+    MilestoneLock(Bytes, Bytes),
+    // Cancellation (#605)
+    CancellationPolicy(Bytes),
+    Cancellation(Bytes),
+    CancellationHistory,
+    // Agency support (#609)
+    Agency(Address),
+    Roster(Address),
+    RosterEntry(Address, Address),
+    ArtistAgency(Address),
+    AgencyAnalytics(Address),
 }

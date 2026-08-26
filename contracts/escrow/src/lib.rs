@@ -7,6 +7,25 @@ pub mod storage;
 use errors::EscrowError;
 use storage::{CommissionStatus, EscrowRecord, escrow_exists, get_escrow, save_escrow};
 
+// ── Pause helpers (closes #594) ─────────────────────────────────────────────
+
+/// Storage key for the escrow contract pause flag.
+#[soroban_sdk::contracttype]
+enum PauseKey {
+    Paused,
+    Admin,
+}
+
+/// Require the escrow contract is not paused.
+fn require_not_paused(env: &Env) -> Result<(), EscrowError> {
+    let paused: bool = env.storage().instance().get(&PauseKey::Paused).unwrap_or(false);
+    if paused {
+        Err(EscrowError::ContractPaused)
+    } else {
+        Ok(())
+    }
+}
+
 /// Ledgers until an escrow record expires from persistent storage (~30 days at 6s/ledger).
 /// Closes #487 – ledger-based TTL for escrow records.
 /// Disputed escrows are extended with the configurable dispute-period TTL
@@ -47,7 +66,64 @@ pub struct EscrowContract;
 
 #[contractimpl]
 impl EscrowContract {
+    // ── Pause / Resume (closes #594) ────────────────────────────────────────
+
+    /// Initialise the escrow admin. Must be called once after deployment.
+    /// If `initialize` is never called, pause/unpause are unavailable.
+    pub fn initialize(env: Env, admin: Address) -> Result<(), EscrowError> {
+        admin.require_auth();
+        if env.storage().instance().has(&PauseKey::Admin) {
+            return Err(EscrowError::AlreadyExists);
+        }
+        env.storage().instance().set(&PauseKey::Admin, &admin);
+        env.storage().instance().set(&PauseKey::Paused, &false);
+        Ok(())
+    }
+
+    /// Pause the escrow contract — blocks `create_escrow` and `refund_client`.
+    /// Only callable by the escrow admin set during `initialize`.
+    /// Closes #594.
+    pub fn pause(env: Env, admin: Address) -> Result<(), EscrowError> {
+        admin.require_auth();
+        let stored: Address = env.storage().instance()
+            .get(&PauseKey::Admin)
+            .ok_or(EscrowError::Unauthorized)?;
+        if stored != admin {
+            return Err(EscrowError::Unauthorized);
+        }
+        env.storage().instance().set(&PauseKey::Paused, &true);
+        env.events().publish(
+            (symbol_short!("esc"), symbol_short!("paused")),
+            admin,
+        );
+        Ok(())
+    }
+
+    /// Resume normal operations after a pause. Only callable by the escrow admin.
+    /// Closes #594.
+    pub fn unpause(env: Env, admin: Address) -> Result<(), EscrowError> {
+        admin.require_auth();
+        let stored: Address = env.storage().instance()
+            .get(&PauseKey::Admin)
+            .ok_or(EscrowError::Unauthorized)?;
+        if stored != admin {
+            return Err(EscrowError::Unauthorized);
+        }
+        env.storage().instance().set(&PauseKey::Paused, &false);
+        env.events().publish(
+            (symbol_short!("esc"), symbol_short!("unpaused")),
+            admin,
+        );
+        Ok(())
+    }
+
+    /// Returns `true` when the contract is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage().instance().get(&PauseKey::Paused).unwrap_or(false)
+    }
+
     /// Closes #482 (CEI), #486 (events), #487 (TTL), #587 (reentrancy guard).
+    /// Closes #594 (pause guard on create_escrow).
     /// CEI: Checks → Effects (save record) → Interactions (token transfer).
     pub fn create_escrow(
         env: Env,
@@ -60,6 +136,7 @@ impl EscrowContract {
         client.require_auth();
 
         // CHECKS
+        require_not_paused(&env)?;
         if amount <= 0 { return Err(EscrowError::InvalidAmount); }
         if escrow_exists(&env, &commission_id) { return Err(EscrowError::AlreadyExists); }
 
@@ -140,6 +217,7 @@ impl EscrowContract {
     }
 
     /// Closes #482 (CEI), #486 (events), #587 (reentrancy guard).
+    /// Closes #594 (pause guard on refund_client).
     /// CEI: Checks → Effects (status update) → Interactions (transfer).
     pub fn refund_client(
         env: Env,
@@ -147,6 +225,7 @@ impl EscrowContract {
         config_contract: Address,
     ) -> Result<(), EscrowError> {
         // CHECKS
+        require_not_paused(&env)?;
         let mut r = get_escrow(&env, &commission_id);
         if r.status != CommissionStatus::Locked && r.status != CommissionStatus::Disputed {
             return Err(EscrowError::InvalidStatus);
@@ -382,6 +461,49 @@ impl EscrowContract {
             // EFFECTS
             r.released_amount = r.amount;
             r.status = CommissionStatus::Released;
+    /// Settle a cancelled commission (#605).
+    ///
+    /// The split is computed off-contract by the commission agreement's
+    /// pro-rata settlement and passed in; the two amounts must account for the
+    /// escrowed total exactly, so no dust can be stranded. The platform fee is
+    /// charged only on the artist's share — the client's refund is not taxed.
+    ///
+    /// CEI: Checks → Effects (status update) → Interactions (transfers).
+    pub fn cancel_escrow(
+        env: Env,
+        commission_id: Bytes,
+        config_contract: Address,
+        artist_amount: i128,
+        client_refund: i128,
+    ) -> Result<(), EscrowError> {
+        // CHECKS
+        let mut r = get_escrow(&env, &commission_id);
+        if r.status != CommissionStatus::Locked && r.status != CommissionStatus::Disputed {
+            return Err(EscrowError::InvalidStatus);
+        }
+        if artist_amount < 0 || client_refund < 0 {
+            return Err(EscrowError::InvalidAmount);
+        }
+        let total = artist_amount
+            .checked_add(client_refund)
+            .ok_or(EscrowError::ArithmeticOverflow)?;
+        if total != r.amount {
+            return Err(EscrowError::InvalidSplit);
+        }
+
+        let admin: Address = env.invoke_contract(&config_contract, &symbol_short!("get_adm"), soroban_sdk::vec![&env]);
+        admin.require_auth();
+        let usdc: Address = env.invoke_contract(&config_contract, &symbol_short!("get_usdc"), soroban_sdk::vec![&env]);
+        let pw: Address = env.invoke_contract(&config_contract, &symbol_short!("get_pw"), soroban_sdk::vec![&env]);
+
+        let artist = r.artist.clone();
+        let client = r.client.clone();
+
+        storage::with_reentrancy_guard(&env, || {
+            let (fee, payout) = calculate_fee_split(artist_amount, r.fee_bps)?;
+
+            // EFFECTS
+            r.status = CommissionStatus::Cancelled;
             save_escrow(&env, &r);
 
             // INTERACTIONS
@@ -393,6 +515,20 @@ impl EscrowContract {
             env.events().publish(
                 (symbol_short!("escrow"), symbol_short!("autorls")),
                 (commission_id.clone(), auto_release_ledger, remaining, payout, fee),
+            if payout > 0 {
+                tc.transfer(&env.current_contract_address(), &artist, &payout);
+            }
+            if fee > 0 {
+                tc.transfer(&env.current_contract_address(), &pw, &fee);
+            }
+            if client_refund > 0 {
+                tc.transfer(&env.current_contract_address(), &client, &client_refund);
+            }
+
+            // EVENT
+            env.events().publish(
+                (symbol_short!("escrow"), symbol_short!("cancelled")),
+                (commission_id.clone(), payout, fee, client_refund),
             );
             Ok(())
         })
@@ -414,5 +550,7 @@ mod dispute_tests;
 mod fee_math_tests;
 #[cfg(test)]
 mod storage_edge_tests;
+#[cfg(test)]
+mod cancellation_tests;
 #[cfg(test)]
 mod integration_tests;

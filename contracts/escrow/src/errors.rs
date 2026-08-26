@@ -15,6 +15,9 @@ pub enum EscrowError {
     InvalidAddress = 10,
     InsufficientBalance = 11,
     ArithmeticOverflow = 12,
+    /// Contract is paused — operation not permitted (closes #594).
+    ContractPaused = 13,
+    InvalidSplit = 13,
 }
 
 impl core::fmt::Display for EscrowError {
@@ -32,6 +35,8 @@ impl core::fmt::Display for EscrowError {
             Self::InvalidAddress => write!(f, "client and artist addresses must be distinct"),
             Self::InsufficientBalance => write!(f, "client does not hold enough USDC"),
             Self::ArithmeticOverflow => write!(f, "arithmetic operation would overflow"),
+            Self::ContractPaused => write!(f, "contract is paused; operation not permitted"),
+            Self::InvalidSplit => write!(f, "cancellation split must equal the escrowed amount"),
         }
     }
 }
@@ -50,5 +55,7 @@ pub fn get_suggestion(error: EscrowError) -> Symbol {
         EscrowError::InvalidAddress => symbol_short!("BAD_ADR"),
         EscrowError::InsufficientBalance => symbol_short!("NO_FUND"),
         EscrowError::ArithmeticOverflow => symbol_short!("OVERFL"),
+        EscrowError::ContractPaused => symbol_short!("PAUSED"),
+        EscrowError::InvalidSplit => symbol_short!("BAD_SPLIT"),
     }
 }

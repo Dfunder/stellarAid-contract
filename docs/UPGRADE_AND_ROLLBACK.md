@@ -2,6 +2,43 @@
 
 This document describes the safe process for upgrading Soroban contracts and rolling back if issues are detected after deployment.
 
+> **Closes #595** — Backward compatibility strategy for upgrades with state migration functions and upgrade safety checks.
+
+## Upgrade Safety Architecture
+
+All Lumora contracts use `shared::upgrade` helpers to enforce a safe upgrade lifecycle:
+
+- **`ContractVersion`** — semantic version struct persisted in instance storage so the current version is always readable on-chain.
+- **`require_paused_for_upgrade`** — panics if the contract is not paused, ensuring no in-flight transactions run against a partially migrated state.
+- **`record_upgrade`** — writes the new version and emits an `upgraded` event after WASM replacement.
+- **`signal_migration_needed`** — emits a `mig_need` event indicating that an off-chain migration script must run before operations resume.
+
+## State Migration Functions
+
+Each contract exposes a versioned migration entry point callable by the admin after a schema-changing upgrade:
+
+```rust
+// Example: contract v1 → v2 migration entry point
+pub fn migrate_v1_to_v2(env: Env, admin: Address) -> Result<(), ContractError> {
+    admin.require_auth();
+    // 1. Read all v1 records
+    // 2. Transform to v2 schema
+    // 3. Write v2 records
+    // 4. Call shared::upgrade::record_upgrade(...)
+    Ok(())
+}
+```
+
+For schema-compatible upgrades (adding optional fields only), no migration function is needed — existing records remain valid and new fields default to `None` or `0`.
+
+## Backward Compatibility Rules
+
+1. **Never remove or rename a `#[contracttype]` variant** — doing so breaks ABI compatibility with existing stored records.
+2. **New fields must be `Option<T>`** — deserialisation of old records will produce `None` for fields that did not exist at write time.
+3. **Error code values are permanent** — never renumber a `#[contracterror]` variant; add new variants at the end only.
+4. **Storage key values are permanent** — never change the discriminant of a `DataKey` enum variant after deployment.
+5. **Deploy to a new contract ID** — always deploy the upgraded WASM to a fresh contract address and migrate traffic, rather than upgrading in-place (Soroban `update_current_contract_wasm` replaces the WASM but preserves storage).
+
 ## Prerequisites
 
 - Admin secret key for the contract (admin must be set during initialization).
@@ -44,21 +81,26 @@ This document describes the safe process for upgrading Soroban contracts and rol
      --network <NETWORK> --source <ADMIN>)
    ```
 
-3. Migrate storage (if schema changed):
-   - Read existing records from the old contract.
-   - Transform and write to the new contract.
-   - Verify record counts match.
-
-4. Reinitialize the new contract with the existing admin and configuration.
-
-5. Run smoke tests against the new contract:
+3. (Schema-changing upgrades only) Run the migration entry point:
    ```bash
-   soroban contract invoke --id $NEW_ID --network <NETWORK> --source <ADMIN> -- ping
+   soroban contract invoke --id $NEW_ID --network <NETWORK> --source <ADMIN> -- migrate_v1_to_v2
    ```
 
-6. Redirect traffic to the new contract ID.
+4. Verify record counts via view functions:
+   ```bash
+   soroban contract invoke --id $NEW_ID -- get_version
+   ```
 
-7. Unpause the new contract (if applicable) and verify normal operations.
+5. Reinitialize the new contract with the existing admin and configuration.
+
+6. Run smoke tests against the new contract.
+
+7. Redirect traffic to the new contract ID.
+
+8. Unpause the new contract and verify normal operations:
+   ```bash
+   soroban contract invoke --id $NEW_ID --network <NETWORK> --source <ADMIN> -- unpause
+   ```
 
 ## Rollback Criteria
 
@@ -84,6 +126,7 @@ Monitor the following for at least 24 hours after upgrade:
 - Event emission completeness.
 - Storage record consistency (use view functions).
 - Error rate per operation type.
+- `upgraded` event visible in the contract event stream.
 
 ## Rollback Safety Considerations
 

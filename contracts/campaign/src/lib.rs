@@ -33,6 +33,13 @@ pub struct CampaignStatusChangedEvent {
 const MIN_TTL: u32 = 17280; // 1 day in ledgers (assuming 5s ledger time)
 const MAX_TTL: u32 = 6312000; // 1 year in ledgers (assuming 5s ledger time)
 
+/// Maximum number of seconds into the future a deadline may be set.
+/// 2 years = 2 * 365.25 * 24 * 3600 ≈ 63_115_200 seconds (closes #592).
+const MAX_DEADLINE_OFFSET_SECS: u64 = 63_115_200;
+
+/// Maximum byte length for a campaign-related string input (closes #591).
+const MAX_STRING_INPUT_LEN: u32 = 512;
+
 #[contract]
 pub struct CampaignContract;
 
@@ -66,6 +73,8 @@ impl CampaignContract {
 
     /// Create a new fundraising campaign.
     /// Returns the newly assigned campaign ID.
+    /// Closes #591 – no string input in this function, validated at caller.
+    /// Closes #592 – validates deadline does not exceed 2 years from now.
     pub fn create_campaign(
         env: Env,
         owner: Address,
@@ -78,6 +87,16 @@ impl CampaignContract {
         owner.require_auth();
         if fee_bps > 1000 {
             panic!("fee_bps must not exceed 1000");
+        }
+        // ── Deadline upper bound (closes #592) ─────────────────────────────
+        let now = env.ledger().timestamp();
+        let max_deadline = now.checked_add(MAX_DEADLINE_OFFSET_SECS)
+            .expect("deadline arithmetic overflow");
+        if deadline > max_deadline {
+            panic!("deadline exceeds maximum allowed (2 years from now)");
+        }
+        if deadline <= now {
+            panic!("deadline must be in the future");
         }
         let id = Self::next_campaign_id(&env);
         let campaign = Campaign {
@@ -142,10 +161,15 @@ impl CampaignContract {
     }
 
     /// Reject a campaign, moving it to Rejected status.
+    /// Closes #591 – validates reason length.
     pub fn reject_campaign(env: Env, admin: Address, campaign_id: u64, reason: String) {
         pause::require_not_paused(&env);
         admin.require_auth();
         Self::ensure_admin(&env, &admin);
+        // ── Input length validation (closes #591) ──────────────────────────
+        if reason.len() > MAX_STRING_INPUT_LEN {
+            panic!("reason exceeds maximum allowed length");
+        }
         let mut campaign = Self::get_campaign(env.clone(), campaign_id).unwrap();
         let old_status = campaign.status.clone();
         campaign.status = CampaignStatus::Rejected;
@@ -203,6 +227,8 @@ impl CampaignContract {
             (Symbol::new(&env, "campaign_archived"),),
             (campaign_id,),
         );
+    }
+
     pub fn get_fee_config(env: Env, campaign_id: u64) -> (u32, Option<Address>) {
         let campaign = Self::get_campaign(env.clone(), campaign_id).unwrap();
         (campaign.fee_bps, campaign.platform_wallet)
@@ -277,12 +303,12 @@ mod test {
         client.pause(&admin);
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            client.create_campaign(&owner, &1_000_i128, &2_000_u64);
+            client.create_campaign(&owner, &1_000_i128, &2_000_u64, &500, &None);
         }));
         assert!(result.is_err());
 
         client.unpause(&admin);
-        let campaign_id = client.create_campaign(&owner, &1_000_i128, &2_000_u64);
+        let campaign_id = client.create_campaign(&owner, &1_000_i128, &2_000_u64, &500, &None);
         assert_eq!(campaign_id, 1);
     }
 }

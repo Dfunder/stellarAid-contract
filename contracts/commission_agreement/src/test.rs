@@ -441,3 +441,222 @@ fn test_non_artist_cannot_reject_agreement() {
     // This call must panic because the artist's auth is not satisfied.
     client.reject_agreement(&commission_id, &reason);
 }
+
+
+// ── Issue #603 – Team Collaboration ────────────────────────────────────────
+
+#[test]
+fn test_invite_team_member_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client_addr = Address::generate(&env);
+    let artist_addr = Address::generate(&env);
+    let contributor = Address::generate(&env);
+
+    let contract_id = env.register_contract(None, CommissionAgreementContract);
+    let client = CommissionAgreementContractClient::new(&env, &contract_id);
+
+    env.ledger().with_mut(|li| { li.sequence = 10; });
+
+    let commission_id = Bytes::from_array(&env, &[7, 8, 9]);
+    let title = String::from_str(&env, "Team Project");
+    let note = String::from_str(&env, "Handles background illustrations");
+
+    client.create_agreement(
+        &commission_id, &client_addr, &artist_addr, &title, &5000i128, &200u32,
+    );
+    client.accept_agreement(&commission_id);
+
+    client.invite_team_member(
+        &commission_id,
+        &contributor,
+        &crate::types::TeamRole::Contributor,
+        &3000u32,
+        &note,
+    );
+
+    let members = client.get_team_members(&commission_id);
+    assert_eq!(members.len(), 1);
+    assert_eq!(members.get(0).unwrap().member, contributor);
+    assert_eq!(members.get(0).unwrap().payment_share_bps, 3000);
+}
+
+#[test]
+fn test_invite_duplicate_member_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client_addr = Address::generate(&env);
+    let artist_addr = Address::generate(&env);
+    let contributor = Address::generate(&env);
+
+    let contract_id = env.register_contract(None, CommissionAgreementContract);
+    let client = CommissionAgreementContractClient::new(&env, &contract_id);
+
+    env.ledger().with_mut(|li| { li.sequence = 10; });
+
+    let commission_id = Bytes::from_array(&env, &[10, 11, 12]);
+    let title = String::from_str(&env, "Dup Team Test");
+    let note = String::from_str(&env, "first");
+
+    client.create_agreement(
+        &commission_id, &client_addr, &artist_addr, &title, &5000i128, &200u32,
+    );
+    client.accept_agreement(&commission_id);
+
+    client.invite_team_member(
+        &commission_id, &contributor, &crate::types::TeamRole::Contributor, &1000u32, &note,
+    );
+    let result = client.try_invite_team_member(
+        &commission_id, &contributor, &crate::types::TeamRole::Viewer, &500u32, &note,
+    );
+    assert_eq!(result, Err(Ok(crate::errors::AgreementError::MemberAlreadyExists)));
+}
+
+#[test]
+fn test_invite_exceeds_payment_share_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client_addr = Address::generate(&env);
+    let artist_addr = Address::generate(&env);
+
+    let contract_id = env.register_contract(None, CommissionAgreementContract);
+    let client = CommissionAgreementContractClient::new(&env, &contract_id);
+
+    env.ledger().with_mut(|li| { li.sequence = 10; });
+
+    let commission_id = Bytes::from_array(&env, &[13, 14, 15]);
+    let title = String::from_str(&env, "Share Test");
+    let note = String::from_str(&env, "n/a");
+
+    client.create_agreement(
+        &commission_id, &client_addr, &artist_addr, &title, &5000i128, &200u32,
+    );
+    client.accept_agreement(&commission_id);
+
+    let m1 = Address::generate(&env);
+    let m2 = Address::generate(&env);
+
+    client.invite_team_member(
+        &commission_id, &m1, &crate::types::TeamRole::Contributor, &6000u32, &note,
+    );
+    // 6000 + 6000 = 12000 > 10000
+    let result = client.try_invite_team_member(
+        &commission_id, &m2, &crate::types::TeamRole::Contributor, &6000u32, &note,
+    );
+    assert_eq!(result, Err(Ok(crate::errors::AgreementError::PaymentShareExceeded)));
+}
+
+#[test]
+fn test_accept_team_invitation() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client_addr = Address::generate(&env);
+    let artist_addr = Address::generate(&env);
+    let contributor = Address::generate(&env);
+
+    let contract_id = env.register_contract(None, CommissionAgreementContract);
+    let client = CommissionAgreementContractClient::new(&env, &contract_id);
+
+    env.ledger().with_mut(|li| { li.sequence = 10; });
+
+    let commission_id = Bytes::from_array(&env, &[16, 17, 18]);
+    let title = String::from_str(&env, "Accept Invite Test");
+    let note = String::from_str(&env, "contributor note");
+
+    client.create_agreement(
+        &commission_id, &client_addr, &artist_addr, &title, &5000i128, &200u32,
+    );
+    client.accept_agreement(&commission_id);
+
+    client.invite_team_member(
+        &commission_id, &contributor, &crate::types::TeamRole::Contributor, &2000u32, &note,
+    );
+
+    client.accept_team_invitation(&commission_id, &contributor);
+
+    let members = client.get_team_members(&commission_id);
+    assert_eq!(members.get(0).unwrap().invitation_status, crate::types::InvitationStatus::Accepted);
+}
+
+#[test]
+fn test_decline_team_invitation() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client_addr = Address::generate(&env);
+    let artist_addr = Address::generate(&env);
+    let viewer = Address::generate(&env);
+
+    let contract_id = env.register_contract(None, CommissionAgreementContract);
+    let client = CommissionAgreementContractClient::new(&env, &contract_id);
+
+    env.ledger().with_mut(|li| { li.sequence = 10; });
+
+    let commission_id = Bytes::from_array(&env, &[19, 20, 21]);
+    let title = String::from_str(&env, "Decline Invite Test");
+    let note = String::from_str(&env, "viewer note");
+
+    client.create_agreement(
+        &commission_id, &client_addr, &artist_addr, &title, &5000i128, &200u32,
+    );
+    client.accept_agreement(&commission_id);
+
+    client.invite_team_member(
+        &commission_id, &viewer, &crate::types::TeamRole::Viewer, &0u32, &note,
+    );
+
+    client.decline_team_invitation(&commission_id, &viewer);
+
+    let members = client.get_team_members(&commission_id);
+    assert_eq!(members.get(0).unwrap().invitation_status, crate::types::InvitationStatus::Declined);
+}
+
+#[test]
+fn test_get_team_members_empty_for_new_agreement() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client_addr = Address::generate(&env);
+    let artist_addr = Address::generate(&env);
+
+    let contract_id = env.register_contract(None, CommissionAgreementContract);
+    let client = CommissionAgreementContractClient::new(&env, &contract_id);
+
+    env.ledger().with_mut(|li| { li.sequence = 10; });
+
+    let commission_id = Bytes::from_array(&env, &[22, 23, 24]);
+    let title = String::from_str(&env, "Empty Team Test");
+
+    client.create_agreement(
+        &commission_id, &client_addr, &artist_addr, &title, &5000i128, &200u32,
+    );
+
+    let members = client.get_team_members(&commission_id);
+    assert_eq!(members.len(), 0);
+}
+
+#[test]
+fn test_invite_team_member_on_pending_agreement_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client_addr = Address::generate(&env);
+    let artist_addr = Address::generate(&env);
+    let contributor = Address::generate(&env);
+
+    let contract_id = env.register_contract(None, CommissionAgreementContract);
+    let client = CommissionAgreementContractClient::new(&env, &contract_id);
+
+    env.ledger().with_mut(|li| { li.sequence = 10; });
+
+    let commission_id = Bytes::from_array(&env, &[25, 26, 27]);
+    let title = String::from_str(&env, "Pending Team Test");
+    let note = String::from_str(&env, "note");
+
+    // Agreement stays in Pending status (not accepted)
+    client.create_agreement(
+        &commission_id, &client_addr, &artist_addr, &title, &5000i128, &200u32,
+    );
+
+    let result = client.try_invite_team_member(
+        &commission_id, &contributor, &crate::types::TeamRole::Contributor, &1000u32, &note,
+    );
+    assert_eq!(result, Err(Ok(crate::errors::AgreementError::InvalidStatus)));
+}

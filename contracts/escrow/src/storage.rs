@@ -10,6 +10,8 @@ pub enum CommissionStatus {
     Refunded = 2,
     Disputed = 3,
     Expired = 4,
+    /// Partially released — some milestones paid, remaining amount still held.
+    PartiallyReleased = 5,
 }
 
 #[contracttype]
@@ -22,6 +24,8 @@ pub struct EscrowRecord {
     pub fee_bps: u32,
     pub status: CommissionStatus,
     pub created_ledger: u32,
+    /// Total amount already released via partial releases. Starts at 0.
+    pub released_amount: i128,
 }
 
 #[contracttype]

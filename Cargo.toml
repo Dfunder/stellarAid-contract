@@ -5,8 +5,16 @@ members = [
     "contracts/escrow",
     "contracts/commission_agreement",
     "contracts/dispute_arbiter",
+    "contracts/analytics",
+    "contracts/reputation",
 ]
 resolver = "2"
 
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
 [workspace.dependencies]
 soroban-sdk = { version = "21.0.0" }
+ethnum = { version = "1.5.3" }
+ed25519-dalek = { version = "=2.2.0", features = ["rand_core"] }

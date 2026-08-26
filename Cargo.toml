@@ -24,8 +24,3 @@ edition = "2021"
 
 [workspace.dependencies]
 soroban-sdk = { version = "21.0.0" }
-
-[patch.crates-io]
-# ethnum 1.5.0 fails to compile with Rust ≥ 1.82 due to a transmute size
-# mismatch in error.rs.  Patch to v1.5.3 which fixes the issue.
-ethnum = { git = "https://github.com/nlordell/ethnum-rs", tag = "v1.5.3" }

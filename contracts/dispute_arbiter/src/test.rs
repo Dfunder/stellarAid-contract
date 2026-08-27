@@ -1,17 +1,67 @@
 extern crate std;
+use soroban_sdk::{
+    contract, contractimpl, testutils::{Address as _, Events as _, Ledger as _},
+    Address, Bytes, Env, String, IntoVal,
+};
+
+use crate::errors::DisputeError;
+use crate::types::{DisputeRecord, DisputeStatus};
 use soroban_sdk::{testutils::{Address as _, Ledger, Events}, Address, Bytes, Env, String};
 
 use crate::errors::DisputeError;
 use crate::types::DisputeStatus;
 use crate::{DisputeArbiter, DisputeArbiterClient};
 
+#[contract]
+pub struct MockEscrow;
+
+#[contractimpl]
+impl MockEscrow {
+    pub fn open_dis(_env: Env, _commission_id: Bytes, _initiator: Address) {}
+    pub fn refund_cl(_env: Env, _commission_id: Bytes, _config_contract: Address) {}
+    pub fn release_p(_env: Env, _commission_id: Bytes, _config_contract: Address) {}
+    pub fn rel_pay(_env: Env, _commission_id: Bytes, _config_contract: Address) {}
+}
+
+#[contract]
+pub struct MockConfig;
+
+#[contractimpl]
+impl MockConfig {
+    pub fn get_usdc(env: Env) -> Address {
+        env.register_contract(None, MockToken)
+    }
+}
+
+#[contract]
+pub struct MockToken;
+
+#[contractimpl]
+impl MockToken {
+    pub fn balance(_env: Env, _id: Address) -> i128 { 1000 }
+    pub fn transfer(_env: Env, _from: Address, _to: Bytes, _amount: i128) {}
+}
+
 fn create_test_env() -> (Env, Address, Address, Address, Address) {
     let env = Env::default();
     let admin = Address::generate(&env);
-    let escrow_contract = Address::generate(&env);
-    let config_contract = Address::generate(&env);
+    let escrow_contract = env.register_contract(None, MockEscrow);
+    let config_contract = env.register_contract(None, MockConfig);
     let token_admin = Address::generate(&env);
     (env, admin, escrow_contract, config_contract, token_admin)
+}
+
+fn setup_initialized(
+    env: &Env,
+    admin: &Address,
+    escrow: &Address,
+    config: &Address,
+    auto_resolve: u32,
+) {
+    env.mock_all_auths();
+    let arbiter = env.register_contract(None, DisputeArbiter);
+    let client = DisputeArbiterClient::new(env, &arbiter);
+    client.initialize(admin, escrow, config, &auto_resolve);
 }
 
 // ========== initialize ==========
@@ -31,6 +81,9 @@ fn test_initialize_double_init_fails() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let result = client.try_initialize(&admin, &escrow, &config, &100u32);
+    assert_eq!(result.unwrap_err().unwrap(), DisputeError::AlreadyInitialized);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let result = client.try_initialize(&admin, &escrow, &config, &100u32);
     assert!(result.is_err());
@@ -45,6 +98,7 @@ fn test_open_dispute_succeeds() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     client.open_dispute(&commission_id, &initiator);
@@ -59,6 +113,11 @@ fn test_open_dispute_already_exists_fails() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
+    let result = client.try_open_dispute(&commission_id, &initiator);
+    assert_eq!(result.unwrap_err().unwrap(), DisputeError::AlreadyResolved);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let _ = client.open_dispute(&commission_id, &initiator);
@@ -74,6 +133,7 @@ fn test_open_dispute_not_initialized_fails() {
     let client = DisputeArbiterClient::new(&env, &arbiter);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let result = client.try_open_dispute(&commission_id, &initiator);
+    assert_eq!(result.unwrap_err().unwrap(), DisputeError::NotInitialized);
     assert!(result.is_err());
 }
 
@@ -87,6 +147,9 @@ fn test_resolve_for_client_succeeds() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let _ = client.open_dispute(&commission_id, &initiator);
@@ -101,6 +164,10 @@ fn test_resolve_for_client_not_found_fails() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    let result = client.try_resolve_for_client(&commission_id, &String::from_str(&env, "note"));
+    assert_eq!(result.unwrap_err().unwrap(), DisputeError::NotFound);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let result = client.try_resolve_for_client(&commission_id, &String::from_str(&env, "note"));
@@ -115,6 +182,12 @@ fn test_resolve_for_client_wrong_status_fails() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
+    client.resolve_for_client(&commission_id, &String::from_str(&env, "first"));
+    let result = client.try_resolve_for_client(&commission_id, &String::from_str(&env, "second"));
+    assert_eq!(result.unwrap_err().unwrap(), DisputeError::InvalidStatus);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let _ = client.open_dispute(&commission_id, &initiator);
@@ -133,6 +206,9 @@ fn test_resolve_for_artist_succeeds() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let _ = client.open_dispute(&commission_id, &initiator);
@@ -147,6 +223,10 @@ fn test_resolve_for_artist_not_found_fails() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    let result = client.try_resolve_for_artist(&commission_id, &String::from_str(&env, "note"));
+    assert_eq!(result.unwrap_err().unwrap(), DisputeError::NotFound);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let result = client.try_resolve_for_artist(&commission_id, &String::from_str(&env, "note"));
@@ -161,6 +241,12 @@ fn test_resolve_for_artist_wrong_status_fails() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
+    client.resolve_for_artist(&commission_id, &String::from_str(&env, "first"));
+    let result = client.try_resolve_for_artist(&commission_id, &String::from_str(&env, "second"));
+    assert_eq!(result.unwrap_err().unwrap(), DisputeError::InvalidStatus);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let _ = client.open_dispute(&commission_id, &initiator);
@@ -179,6 +265,9 @@ fn test_partial_resolve_4000_bps() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let _ = client.open_dispute(&commission_id, &initiator);
@@ -194,6 +283,11 @@ fn test_partial_resolve_invalid_bps_fails() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
+    let result = client.try_partial_resolve(&commission_id, &10001u32, &String::from_str(&env, "bad"));
+    assert_eq!(result.unwrap_err().unwrap(), DisputeError::InvalidShareBps);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let _ = client.open_dispute(&commission_id, &initiator);
@@ -209,6 +303,9 @@ fn test_partial_resolve_valid_bps_boundary() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let _ = client.open_dispute(&commission_id, &initiator);
@@ -221,6 +318,10 @@ fn test_partial_resolve_not_found_fails() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    let result = client.try_partial_resolve(&commission_id, &5000u32, &String::from_str(&env, "note"));
+    assert_eq!(result.unwrap_err().unwrap(), DisputeError::NotFound);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let result = client.try_partial_resolve(&commission_id, &5000u32, &String::from_str(&env, "note"));
@@ -235,6 +336,12 @@ fn test_partial_resolve_wrong_status_fails() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
+    client.resolve_for_client(&commission_id, &String::from_str(&env, "done"));
+    let result = client.try_partial_resolve(&commission_id, &5000u32, &String::from_str(&env, "note"));
+    assert_eq!(result.unwrap_err().unwrap(), DisputeError::InvalidStatus);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let _ = client.open_dispute(&commission_id, &initiator);
@@ -252,6 +359,11 @@ fn test_auto_resolve_before_timeout_fails() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
+    let result = client.try_auto_resolve(&commission_id);
+    assert_eq!(result.unwrap_err().unwrap(), DisputeError::AutoResolveNotDue);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let _ = client.open_dispute(&commission_id, &initiator);
@@ -266,6 +378,13 @@ fn test_auto_resolve_at_timeout_succeeds() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
+    env.ledger().with_mut(|l| l.sequence_number = 101);
+    client.auto_resolve(&commission_id);
+    let record = client.get_dispute(&commission_id);
+    assert_eq!(record.status, DisputeStatus::AutoResolved);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let _ = client.open_dispute(&commission_id, &initiator);
@@ -280,6 +399,11 @@ fn test_auto_resolve_after_timeout_succeeds() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
+    env.ledger().with_mut(|l| l.sequence_number = 200);
+    client.auto_resolve(&commission_id);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let _ = client.open_dispute(&commission_id, &initiator);
@@ -293,6 +417,10 @@ fn test_auto_resolve_not_found_fails() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    let result = client.try_auto_resolve(&commission_id);
+    assert_eq!(result.unwrap_err().unwrap(), DisputeError::NotFound);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let result = client.try_auto_resolve(&commission_id);
@@ -307,6 +435,13 @@ fn test_auto_resolve_wrong_status_fails() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
+    env.ledger().with_mut(|l| l.sequence_number = 101);
+    client.auto_resolve(&commission_id);
+    let result = client.try_auto_resolve(&commission_id);
+    assert_eq!(result.unwrap_err().unwrap(), DisputeError::InvalidStatus);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let _ = client.open_dispute(&commission_id, &initiator);
@@ -325,6 +460,9 @@ fn test_get_dispute_succeeds() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let _ = client.open_dispute(&commission_id, &initiator);
@@ -339,6 +477,10 @@ fn test_get_dispute_not_found_fails() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    let result = client.try_get_dispute(&commission_id);
+    assert_eq!(result.unwrap_err().unwrap(), DisputeError::NotFound);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let result = client.try_get_dispute(&commission_id);
@@ -379,9 +521,10 @@ fn test_open_dispute_emits_event() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
-    let _ = client.open_dispute(&commission_id, &initiator);
+    client.open_dispute(&commission_id, &initiator);
     let events = env.events().all();
     assert!(!events.is_empty());
 }
@@ -394,10 +537,11 @@ fn test_resolve_for_client_emits_event() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
-    let _ = client.open_dispute(&commission_id, &initiator);
-    let _ = client.resolve_for_client(&commission_id, &String::from_str(&env, "Refunded"));
+    client.open_dispute(&commission_id, &initiator);
+    client.resolve_for_client(&commission_id, &String::from_str(&env, "Refunded"));
     let events = env.events().all();
     assert!(events.len() >= 2);
 }
@@ -410,10 +554,11 @@ fn test_resolve_for_artist_emits_event() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
-    let _ = client.open_dispute(&commission_id, &initiator);
-    let _ = client.resolve_for_artist(&commission_id, &String::from_str(&env, "Paid"));
+    client.open_dispute(&commission_id, &initiator);
+    client.resolve_for_artist(&commission_id, &String::from_str(&env, "Paid"));
     let events = env.events().all();
     assert!(events.len() >= 2);
 }
@@ -426,10 +571,11 @@ fn test_partial_resolve_emits_event() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
-    let _ = client.open_dispute(&commission_id, &initiator);
-    let _ = client.partial_resolve(&commission_id, &4000u32, &String::from_str(&env, "split"));
+    client.open_dispute(&commission_id, &initiator);
+    client.partial_resolve(&commission_id, &4000u32, &String::from_str(&env, "split"));
     let events = env.events().all();
     assert!(events.len() >= 2);
 }
@@ -442,6 +588,11 @@ fn test_auto_resolve_emits_event() {
     env.mock_all_auths();
     let arbiter = env.register_contract(None, DisputeArbiter);
     let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
+    env.ledger().with_mut(|l| l.sequence_number = 101);
+    client.auto_resolve(&commission_id);
     let _ = client.initialize(&admin, &escrow, &config, &100u32);
     let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
     let _ = client.open_dispute(&commission_id, &initiator);

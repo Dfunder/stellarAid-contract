@@ -37,6 +37,13 @@ where
 ///
 /// Closes #590.
 pub fn try_get_fee_bps(env: &Env, config_contract: &Address) -> Result<u32, ()> {
+    let result: Option<u32> = env.try_invoke_contract::<u32, soroban_sdk::Error>(
+        config_contract,
+        &symbol_short!("get_fee_b"),
+        soroban_sdk::vec![env],
+    ).ok().and_then(|r| r.ok());
+
+    match result {
     match try_call(env, config_contract, &symbol_short!("get_fee_b")) {
         Some(v) => Ok(v),
         None => {
@@ -50,6 +57,13 @@ pub fn try_get_fee_bps(env: &Env, config_contract: &Address) -> Result<u32, ()> 
 ///
 /// Closes #590.
 pub fn try_get_usdc(env: &Env, config_contract: &Address) -> Result<Address, ()> {
+    let result: Option<Address> = env.try_invoke_contract::<Address, soroban_sdk::Error>(
+        config_contract,
+        &symbol_short!("get_usdc"),
+        soroban_sdk::vec![env],
+    ).ok().and_then(|r| r.ok());
+
+    match result {
     match try_call(env, config_contract, &symbol_short!("get_usdc")) {
         Some(v) => Ok(v),
         None => {
@@ -63,6 +77,13 @@ pub fn try_get_usdc(env: &Env, config_contract: &Address) -> Result<Address, ()>
 ///
 /// Closes #590.
 pub fn try_get_admin(env: &Env, config_contract: &Address) -> Result<Address, ()> {
+    let result: Option<Address> = env.try_invoke_contract::<Address, soroban_sdk::Error>(
+        config_contract,
+        &symbol_short!("get_adm"),
+        soroban_sdk::vec![env],
+    ).ok().and_then(|r| r.ok());
+
+    match result {
     match try_call(env, config_contract, &symbol_short!("get_adm")) {
         Some(v) => Ok(v),
         None => {
@@ -76,6 +97,13 @@ pub fn try_get_admin(env: &Env, config_contract: &Address) -> Result<Address, ()
 ///
 /// Closes #590.
 pub fn try_get_platform_wallet(env: &Env, config_contract: &Address) -> Result<Address, ()> {
+    let result: Option<Address> = env.try_invoke_contract::<Address, soroban_sdk::Error>(
+        config_contract,
+        &symbol_short!("get_pw"),
+        soroban_sdk::vec![env],
+    ).ok().and_then(|r| r.ok());
+
+    match result {
     match try_call(env, config_contract, &symbol_short!("get_pw")) {
         Some(v) => Ok(v),
         None => {

@@ -1,3 +1,9 @@
+//! Escrow Smart Contract
+//!
+//! Handles locking, releasing, refunding, and dispute escrow workflows for StellarAid.
+//! Architecture Decision: [ADR-0002](../../docs/ADRs/0002-escrow-architecture-and-state-machine.md)
+//! See also: [ADR-0007](../../docs/ADRs/0007-storage-data-model-and-ttl-management.md)
+
 #![no_std]
 use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Bytes, Env};
 

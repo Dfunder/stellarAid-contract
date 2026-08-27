@@ -18,6 +18,8 @@ pub enum EscrowError {
     /// Contract is paused — operation not permitted (closes #594).
     ContractPaused = 14,
     InvalidSplit = 13,
+    /// Contract is paused — operation not permitted (closes #594).
+    ContractPaused = 14,
 }
 
 impl core::fmt::Display for EscrowError {

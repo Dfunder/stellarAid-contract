@@ -1,5 +1,8 @@
 //! CommissionAgreement contract — core agreement lifecycle functions.
 //!
+//! Architecture Decision: [ADR-0003](../../docs/ADRs/0003-commission-agreement-milestone-flow.md)
+//! See also: [ADR-0006](../../docs/ADRs/0006-event-driven-architecture.md)
+//!
 //! Implements:
 //! - `create_agreement`    (closes #457, closes #458)
 //! - `accept_agreement`    (closes #459)
@@ -395,6 +398,7 @@ impl CommissionAgreementContract {
         // Release the serialization lock
         env.storage().persistent().remove(&lock_key);
 
+        env.events().publish((soroban_sdk::Symbol::new(&env, "ms_approved"),), (commission_id, milestone_id));
         env.events().publish((symbol_short!("ms_apprvd"),), (commission_id, milestone_id));
         Ok(())
     }

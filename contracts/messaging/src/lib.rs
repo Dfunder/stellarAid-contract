@@ -441,6 +441,7 @@ impl MessagingContract {
 #[cfg(test)]
 mod test {
     use super::*;
+    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};
     use soroban_sdk::{testutils::{Address as _, Ledger}, Env, String};
 
     #[test]

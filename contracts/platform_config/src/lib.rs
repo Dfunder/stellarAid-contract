@@ -1,3 +1,8 @@
+//! Platform Configuration Contract
+//!
+//! Protocol-wide parameters, fee governance, and admin authority delegation.
+//! Architecture Decision: [ADR-0005](../../docs/ADRs/0005-platform-fee-and-revenue-distribution.md)
+
 #![no_std]
 use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env};
 

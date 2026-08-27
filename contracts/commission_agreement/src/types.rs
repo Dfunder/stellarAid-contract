@@ -59,4 +59,7 @@ pub enum DataKey {
     RosterEntry(Address, Address),
     ArtistAgency(Address),
     AgencyAnalytics(Address),
+    // Revisions (#600)
+    RevisionPolicy(Bytes),
+    RevisionsForAgreement(Bytes),
 }

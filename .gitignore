@@ -1,5 +1,112 @@
+# Rust
 target/
-**/test_snapshots/
+Cargo.lock
+*.rs.bk
+Cargo.toml.orig
+
+# Soroban
+.soroban/accounts/
+.soroban/contracts/
 *.wasm
-.DS_Store
+*.wasm.gz
+soroban.log
+
+# Node.js & TypeScript
 node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.lncache/
+dist/
+build/
+.next/
+out/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.testnet
+.env.mainnet
+.env.development
+.env.production
+
+# IDE & Editor files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+*.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.code-workspace
+
+# OS generated files
+Thumbs.db
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# Docker
+docker-compose.override.yml
+*.log
+temp/
+
+# Build artifacts
+*.log
+*.tmp
+*.pid
+*.seed
+*.pid.lock
+*.tsbuildinfo
+coverage/
+.nyc_output/
+
+# Local configuration
+config/local_*.json
+!config/testnet_contracts.json
+!config/mainnet_contracts.example.json
+local-*.json
+deployment-local.json
+
+# Secrets & keys
+*.pem
+*.key
+*.keystore
+secret*
+private*
+mnemonic.txt
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+.parcel-cache/
+.eslintcache
+.eslintcache.*
+.temp/
+
+# Test coverage
+coverage/
+lcov.info
+junit.xml
+
+# Miscellaneous
+.freebuff/local-project-id
+!.freebuff/project-id
+*.log.*
+*.csv
+*.sqlite
+*.db
+*.sql
+.backup/
+archives/

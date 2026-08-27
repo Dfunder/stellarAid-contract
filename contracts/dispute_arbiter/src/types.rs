@@ -9,6 +9,7 @@ pub enum DisputeStatus {
     PartiallyResolved = 3,
     AutoResolved = 4,
 }
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DisputeRecord {

@@ -15,6 +15,8 @@ pub enum EscrowError {
     InvalidAddress = 10,
     InsufficientBalance = 11,
     ArithmeticOverflow = 12,
+    /// Contract is paused — operation not permitted (closes #594).
+    ContractPaused = 14,
     InvalidSplit = 13,
     /// Contract is paused — operation not permitted (closes #594).
     ContractPaused = 14,

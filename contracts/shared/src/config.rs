@@ -12,7 +12,20 @@
 
 #![allow(unused)]
 
-use soroban_sdk::{symbol_short, Address, Env, Symbol};
+use soroban_sdk::{symbol_short, Address, Env, InvokeError, Symbol, TryFromVal, Val};
+
+fn try_call<T>(env: &Env, config_contract: &Address, selector: &Symbol) -> Option<T>
+where
+    T: TryFromVal<Env, Val>,
+{
+    env.try_invoke_contract::<T, InvokeError>(
+        config_contract,
+        selector,
+        soroban_sdk::vec![env],
+    )
+    .ok()
+    .and_then(Result::ok)
+}
 
 // ── Typed wrappers ───────────────────────────────────────────────────────────
 
@@ -31,6 +44,7 @@ pub fn try_get_fee_bps(env: &Env, config_contract: &Address) -> Result<u32, ()> 
     ).ok().and_then(|r| r.ok());
 
     match result {
+    match try_call(env, config_contract, &symbol_short!("get_fee_b")) {
         Some(v) => Ok(v),
         None => {
             emit_config_lookup_failed(env, config_contract, "get_fee_b");
@@ -50,6 +64,7 @@ pub fn try_get_usdc(env: &Env, config_contract: &Address) -> Result<Address, ()>
     ).ok().and_then(|r| r.ok());
 
     match result {
+    match try_call(env, config_contract, &symbol_short!("get_usdc")) {
         Some(v) => Ok(v),
         None => {
             emit_config_lookup_failed(env, config_contract, "get_usdc");
@@ -69,6 +84,7 @@ pub fn try_get_admin(env: &Env, config_contract: &Address) -> Result<Address, ()
     ).ok().and_then(|r| r.ok());
 
     match result {
+    match try_call(env, config_contract, &symbol_short!("get_adm")) {
         Some(v) => Ok(v),
         None => {
             emit_config_lookup_failed(env, config_contract, "get_adm");
@@ -88,6 +104,7 @@ pub fn try_get_platform_wallet(env: &Env, config_contract: &Address) -> Result<A
     ).ok().and_then(|r| r.ok());
 
     match result {
+    match try_call(env, config_contract, &symbol_short!("get_pw")) {
         Some(v) => Ok(v),
         None => {
             emit_config_lookup_failed(env, config_contract, "get_pw");

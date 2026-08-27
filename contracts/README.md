@@ -8,6 +8,10 @@
 | `escrow` | Manages commission escrow lifecycle: create, release, refund, dispute, expire |
 | `shared` | Shared types used across contracts |
 
+## Versioning
+
+All crates follow semantic versioning. Query a live contract with `get_version` / `get_version_metadata`. See [../docs/VERSIONING.md](../docs/VERSIONING.md).
+
 ## Architecture
 
 ```

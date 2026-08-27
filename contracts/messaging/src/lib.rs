@@ -25,6 +25,8 @@ use types::{
     MAX_MESSAGE_LEN, MAX_HISTORY, RATE_LIMIT_LEDGERS,
 };
 
+include!("../../semver_types.rs");
+
 #[contract]
 pub struct MessagingContract;
 
@@ -43,6 +45,8 @@ impl MessagingContract {
         env.storage().instance().set(&DataKey::Initialized, &true);
         Ok(())
     }
+
+    impl_semver_queries!();
 
     // ── Conversation management ───────────────────────────────────────────────
 
@@ -369,12 +373,76 @@ impl MessagingContract {
             }
         })
     }
+
+    // ── Health monitoring (#678) and gradual rollout (#684) ──────────────
+    pub fn health_check(env: Env) -> shared::health::HealthReport {
+        let report = shared::health::health_check(&env);
+        if report.anomaly {
+            shared::rollout::maybe_auto_rollback(&env);
+        }
+        report
+    }
+    pub fn get_health_metrics(env: Env) -> shared::health::HealthMetrics {
+        shared::health::get_metrics(&env)
+    }
+    pub fn get_sla_targets(env: Env) -> shared::health::SlaTargets {
+        let _ = env;
+        shared::health::sla_targets()
+    }
+    pub fn set_alert_config(env: Env, admin: Address, config: shared::health::AlertConfig) {
+        admin.require_auth();
+        shared::health::set_alert_config(&env, config);
+    }
+    pub fn get_alert_config(env: Env) -> shared::health::AlertConfig {
+        shared::health::get_alert_config(&env)
+    }
+    pub fn detect_anomaly(env: Env) -> bool {
+        shared::health::detect_anomaly(&env)
+    }
+    pub fn report_ok(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::health::record_ok(&env);
+    }
+    pub fn report_error(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::health::record_error(&env);
+    }
+    pub fn set_feature_flag(env: Env, admin: Address, flag: soroban_sdk::Symbol, enabled: bool) {
+        admin.require_auth();
+        shared::rollout::set_feature_flag(&env, &flag, enabled);
+    }
+    pub fn is_feature_enabled(env: Env, flag: soroban_sdk::Symbol) -> bool {
+        shared::rollout::is_feature_enabled(&env, &flag)
+    }
+    pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
+        admin.require_auth();
+        shared::rollout::set_canary_deployment(&env, canary, stable, canary_bps);
+    }
+    pub fn route_to_canary(env: Env, caller: Address) -> bool {
+        shared::rollout::route_to_canary(&env, &caller)
+    }
+    pub fn get_rollout_state(env: Env) -> shared::rollout::RolloutState {
+        shared::rollout::get_state(&env)
+    }
+    pub fn set_rollback_trigger(env: Env, admin: Address, error_bps: u32) {
+        admin.require_auth();
+        shared::rollout::set_rollback_trigger(&env, error_bps);
+    }
+    pub fn should_rollback(env: Env) -> bool {
+        shared::rollout::should_rollback(&env)
+    }
+    pub fn trigger_rollback(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::rollout::trigger_rollback(&env, &admin);
+    }
 }
+
 
 #[cfg(test)]
 mod test {
     use super::*;
     use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};
+    use soroban_sdk::{testutils::{Address as _, Ledger}, Env, String};
 
     #[test]
     fn test_create_conversation_and_send_message() {
@@ -507,6 +575,85 @@ mod test {
     }
 
     #[test]
+    fn health_check_and_feature_flag() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MessagingContract);
+        let client = MessagingContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let report = client.health_check();
+        assert_eq!(report.status, shared::HealthStatus::Healthy);
+        assert_eq!(client.get_sla_targets().availability_bps, 9_990);
+        assert!(!client.detect_anomaly());
+
+        let flag = soroban_sdk::symbol_short!("beta");
+        client.set_feature_flag(&admin, &flag, &true);
+        assert!(client.is_feature_enabled(&flag));
+
+        client.report_ok(&admin);
+        let metrics = client.get_health_metrics();
+        assert_eq!(metrics.ok_count, 1);
+    }
+
+    #[test]
+    fn canary_traffic_split_and_rollback() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MessagingContract);
+        let client = MessagingContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let caller = Address::generate(&env);
+        let canary = Address::generate(&env);
+        let stable = Address::generate(&env);
+        client.initialize(&admin);
+
+        client.set_canary_deployment(&admin, &canary, &stable, &0);
+        assert!(!client.route_to_canary(&caller));
+
+        client.set_canary_deployment(&admin, &canary, &stable, &10_000);
+        assert!(client.route_to_canary(&caller));
+        assert_eq!(client.get_rollout_state().phase, shared::RolloutPhase::Full);
+
+        client.set_canary_deployment(&admin, &canary, &stable, &5_000);
+        let first = client.route_to_canary(&caller);
+        let second = client.route_to_canary(&caller);
+        assert_eq!(first, second);
+
+        client.set_feature_flag(&admin, &soroban_sdk::symbol_short!("beta"), &true);
+        client.trigger_rollback(&admin);
+        assert!(!client.route_to_canary(&caller));
+        assert!(!client.is_feature_enabled(&soroban_sdk::symbol_short!("beta")));
+        assert!(client.should_rollback());
+        assert_eq!(client.get_rollout_state().phase, shared::RolloutPhase::RolledBack);
+    }
+
+    #[test]
+    fn health_anomaly_auto_rolls_back_canary() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MessagingContract);
+        let client = MessagingContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        client.set_canary_deployment(
+            &admin,
+            &Address::generate(&env),
+            &Address::generate(&env),
+            &1_000,
+        );
+        client.set_rollback_trigger(&admin, &500);
+        client.report_error(&admin);
+        let report = client.health_check();
+        assert_eq!(report.status, shared::HealthStatus::Unhealthy);
+        assert!(client.detect_anomaly());
+        assert_eq!(client.get_rollout_state().phase, shared::RolloutPhase::RolledBack);
+        assert_eq!(client.get_rollout_state().canary_bps, 0);
+    }
+
+    #[test]
     fn test_unauthorized_participant() {
         let env = Env::default();
         env.mock_all_auths();
@@ -526,5 +673,28 @@ mod test {
         env.ledger().with_mut(|l| l.sequence_number = RATE_LIMIT_LEDGERS + 1);
         let result = client.try_send_message(&conv_id, &charlie, &String::from_str(&env, "hack"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_version_after_initialize() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MessagingContract);
+        let client = MessagingContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+
+        client.initialize(&admin);
+
+        let v = client.get_version();
+        assert_eq!(v.major, 0);
+        assert_eq!(v.minor, 1);
+        assert_eq!(v.patch, 0);
+        assert!(client.is_version_compatible(&0, &1, &0));
+        assert!(!client.is_version_compatible(&1, &0, &0));
+        let meta = client.get_version_metadata();
+        assert_eq!(meta.storage_schema, 1);
+        assert_eq!(meta.min_compatible.major, 0);
+        assert_eq!(meta.min_compatible.minor, 1);
+        assert_eq!(meta.min_compatible.patch, 0);
     }
 }

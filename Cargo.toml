@@ -19,5 +19,12 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 
+# Workspace-wide contract versioning (closes #682). Per-crate copies live in
+# contracts/*/Cargo.toml under [package.metadata.stellar-aid].
+[workspace.metadata.stellar-aid]
+versioning = "semver"
+storage-schema = 1
+min-compatible = "0.1.0"
+
 [workspace.dependencies]
 soroban-sdk = { version = "21.0.0" }

@@ -398,7 +398,6 @@ impl CommissionAgreementContract {
         // Release the serialization lock
         env.storage().persistent().remove(&lock_key);
 
-        env.events().publish((soroban_sdk::Symbol::new(&env, "ms_approved"),), (commission_id, milestone_id));
         env.events().publish((symbol_short!("ms_apprvd"),), (commission_id, milestone_id));
         Ok(())
     }

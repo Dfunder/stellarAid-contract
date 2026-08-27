@@ -11,6 +11,10 @@
 //!    gracefully fall back to defaults (soft failure path).
 
 #![allow(unused)]
+// `Result<_, ()>` is intentional here: callers only care whether the
+// cross-contract read succeeded, and the failure event already carries the
+// diagnostic detail (see `emit_config_lookup_failed`).
+#![allow(clippy::result_unit_err)]
 
 use soroban_sdk::{symbol_short, Address, Env, InvokeError, Symbol, TryFromVal, Val};
 

@@ -919,6 +919,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "reputation"
+version = "0.1.0"
+dependencies = [
+ "shared",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "revenue_sharing"
 version = "0.1.0"
 dependencies = [

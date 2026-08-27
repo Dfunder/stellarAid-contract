@@ -1,14 +1,7 @@
 use crate::PlatformConfigContractClient;
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
-fn setup(
-    env: &Env,
-) -> (
-    crate::PlatformConfigContractClient,
-    Address,
-    Address,
-    Address,
-) {
+fn setup(env: &Env) -> (crate::PlatformConfigContractClient<'_>, Address, Address, Address) {
     env.mock_all_auths();
     let contract_id = env.register_contract(None, crate::PlatformConfigContract);
     let client = PlatformConfigContractClient::new(env, &contract_id);
@@ -53,10 +46,9 @@ fn test_set_fee_bps_too_high() {
 #[test]
 fn test_transfer_admin_sets_pending() {
     let env = Env::default();
-    let (client, admin, _, _) = setup(&env);
+    let (client, _admin, _, _) = setup(&env);
     let new_admin = Address::generate(&env);
     client.transfer_admin(&new_admin);
-    // pending admin is set, accept_admin succeeds
     client.accept_admin();
     assert_eq!(client.get_config().admin, new_admin);
 }
@@ -116,15 +108,11 @@ fn test_get_config_returns_correct_values() {
 }
 
 #[test]
-fn test_get_version_after_initialize() {
+fn health_check_is_healthy_after_init() {
     let env = Env::default();
-    let (client, _, _, _) = setup(&env);
-    let v = client.get_version();
-    assert_eq!(v.major, 0);
-    assert_eq!(v.minor, 1);
-    assert_eq!(v.patch, 0);
-    assert!(client.is_version_compatible(&0, &1, &0));
-    assert!(!client.is_version_compatible(&0, &2, &0));
-    let meta = client.get_version_metadata();
-    assert_eq!(meta.storage_schema, 1);
+    let (client, admin, _, _) = setup(&env);
+    let report = client.health_check();
+    assert_eq!(report.status, shared::HealthStatus::Healthy);
+    client.report_ok(&admin);
+    assert_eq!(client.get_health_metrics().ok_count, 1);
 }

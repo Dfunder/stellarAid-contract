@@ -11,7 +11,7 @@ pub enum CommissionStatus {
     Expired = 4,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[contracttype]
 pub enum CampaignStatus {
     Pending = 0,

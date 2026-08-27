@@ -41,6 +41,10 @@ pub enum SharedErrorCode {
     DeadlineInPast = 8,
     DeadlineTooFar = 9,
     InputTooLong = 10,
+    HealthUnhealthy = 11,
+    RolloutRolledBack = 12,
+    InvalidAlertConfig = 13,
+    InvalidCanaryBps = 14,
 
     // ── Escrow (100–199) ─────────────────────────────────────────────────────
     EscrowAlreadyExists = 100,
@@ -116,6 +120,10 @@ impl SharedErrorCode {
             Self::DeadlineInPast => "deadline is in the past",
             Self::DeadlineTooFar => "deadline exceeds maximum allowed",
             Self::InputTooLong => "input string exceeds maximum length",
+            Self::HealthUnhealthy => "contract health is unhealthy",
+            Self::RolloutRolledBack => "rollout has been rolled back",
+            Self::InvalidAlertConfig => "invalid health alert configuration",
+            Self::InvalidCanaryBps => "canary traffic share exceeds 10000 bps",
 
             Self::EscrowAlreadyExists => "escrow: already exists",
             Self::EscrowNotFound => "escrow: not found",

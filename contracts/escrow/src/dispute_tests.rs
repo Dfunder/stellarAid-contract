@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use soroban_sdk::{Bytes, Env};
+use soroban_sdk::Env;
 use crate::{EscrowContract, storage::CommissionStatus, errors::EscrowError};
 
 /// open_dispute on a Locked commission transitions to Disputed.

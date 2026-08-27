@@ -13,6 +13,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 soroban-sdk = { version = "21.0.0" }
+shared = { path = "../shared" }
 
 [dev-dependencies]
 soroban-sdk = { version = "21.0.0", features = ["testutils"] }

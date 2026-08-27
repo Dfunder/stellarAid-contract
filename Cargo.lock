@@ -160,6 +160,7 @@ dependencies = [
 name = "commission_agreement"
 version = "0.1.0"
 dependencies = [
+ "shared",
  "soroban-sdk",
 ]
 
@@ -167,6 +168,7 @@ dependencies = [
 name = "competitions"
 version = "0.1.0"
 dependencies = [
+ "shared",
  "soroban-sdk",
 ]
 
@@ -215,6 +217,7 @@ dependencies = [
 name = "creator_fund"
 version = "0.1.0"
 dependencies = [
+ "shared",
  "soroban-sdk",
 ]
 
@@ -417,6 +420,7 @@ dependencies = [
  "elliptic-curve",
  "rfc6979",
  "signature 2.2.0",
+ "signature",
 ]
 
 [[package]]
@@ -464,6 +468,7 @@ dependencies = [
  "rand_core 0.10.1",
  "sha2 0.11.0",
  "signature 3.0.0",
+ "sha2",
  "subtle",
  "zeroize",
 ]

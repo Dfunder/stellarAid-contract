@@ -4,6 +4,8 @@ This document describes the safe process for upgrading Soroban contracts and rol
 
 > **Closes #595** — Backward compatibility strategy for upgrades with state migration functions and upgrade safety checks.
 
+Version numbers, compatibility rules, and `get_version` querying are defined in [VERSIONING.md](./VERSIONING.md). Run upgrades inside a [maintenance window](./MAINTENANCE_WINDOWS.md).
+
 ## Upgrade Safety Architecture
 
 All Lumora contracts use `shared::upgrade` helpers to enforce a safe upgrade lifecycle:

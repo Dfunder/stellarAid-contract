@@ -1,5 +1,9 @@
 // contracts/version_tracking.rs
-// Implements version tracking for all contracts (closes #576)
+// Off-chain version registry helper (closes #576).
+//
+// On-chain semantic versioning lives in `shared::version` and is queried via
+// `get_version` / `get_version_metadata` on each contract (closes #682).
+// Keep the two in lockstep: Cargo.toml `package.version` is the source of truth.
 
 pub struct ContractVersion {
     pub major: u32,

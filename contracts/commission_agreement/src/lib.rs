@@ -1,5 +1,8 @@
 //! CommissionAgreement contract — core agreement lifecycle functions.
 //!
+//! Architecture Decision: [ADR-0003](../../docs/ADRs/0003-commission-agreement-milestone-flow.md)
+//! See also: [ADR-0006](../../docs/ADRs/0006-event-driven-architecture.md)
+//!
 //! Implements:
 //! - `create_agreement`    (closes #457, closes #458)
 //! - `accept_agreement`    (closes #459)
@@ -41,6 +44,8 @@ use agency::{AgencyAnalytics, AgencyProfile, BatchPayment, RosterEntry};
 use cancellation::{CancellationPolicy, CancellationQuote, CancellationReason, CancellationRecord};
 use errors::AgreementError;
 use types::{AgreementRecord, AgreementStatus, DataKey, MilestoneRecord, MilestoneStatus};
+
+include!("../../semver_types.rs");
 
 /// Cap on the retained cancellation history, so the list stays bounded.
 const CANCELLATION_HISTORY_LIMIT: u32 = 50;
@@ -148,6 +153,8 @@ pub struct CommissionAgreementContract;
 
 #[contractimpl]
 impl CommissionAgreementContract {
+    impl_semver_queries!();
+
     /// Create a new commission agreement.
     ///
     /// Closes #457, closes #458.
@@ -384,24 +391,6 @@ impl CommissionAgreementContract {
         let all_approved = !updated_milestones.is_empty()
             && updated_milestones.iter().all(|m| m.status == MilestoneStatus::Approved);
         if all_approved {
-        // Mirror the approval into the per-agreement list. Without this the
-        // list keeps the stale `Pending` copy, which both the completion check
-        // below and the pro-rata cancellation settlement (#605) read from.
-        let milestones: Vec<MilestoneRecord> = env.storage().persistent()
-            .get(&DataKey::MilestonesForAgreement(commission_id.clone()))
-            .unwrap_or(Vec::new(&env));
-        let mut updated = Vec::new(&env);
-        for m in milestones.iter() {
-            if m.milestone_id == milestone_id {
-                updated.push_back(milestone.clone());
-            } else {
-                updated.push_back(m);
-            }
-        }
-        env.storage().persistent().set(&DataKey::MilestonesForAgreement(commission_id.clone()), &updated);
-
-        let all_approved = updated.iter().all(|m| m.status == MilestoneStatus::Approved);
-        if all_approved && !updated.is_empty() {
             record.status = AgreementStatus::Completed;
             env.storage().persistent().set(&DataKey::Agreement(commission_id.clone()), &record);
         }
@@ -409,7 +398,8 @@ impl CommissionAgreementContract {
         // Release the serialization lock
         env.storage().persistent().remove(&lock_key);
 
-        env.events().publish((symbol_short!("ms_approved"),), (commission_id, milestone_id));
+        env.events().publish((soroban_sdk::Symbol::new(&env, "ms_approved"),), (commission_id, milestone_id));
+        env.events().publish((symbol_short!("ms_apprvd"),), (commission_id, milestone_id));
         Ok(())
     }
 
@@ -828,7 +818,70 @@ impl CommissionAgreementContract {
     pub fn get_agency_analytics(env: Env, agency: Address) -> AgencyAnalytics {
         load_analytics(&env, &agency)
     }
+
+    // ── Health monitoring (#678) and gradual rollout (#684) ──────────────
+    pub fn health_check(env: Env) -> shared::health::HealthReport {
+        let report = shared::health::health_check(&env);
+        if report.anomaly {
+            shared::rollout::maybe_auto_rollback(&env);
+        }
+        report
+    }
+    pub fn get_health_metrics(env: Env) -> shared::health::HealthMetrics {
+        shared::health::get_metrics(&env)
+    }
+    pub fn get_sla_targets(env: Env) -> shared::health::SlaTargets {
+        let _ = env;
+        shared::health::sla_targets()
+    }
+    pub fn set_alert_config(env: Env, admin: Address, config: shared::health::AlertConfig) {
+        admin.require_auth();
+        shared::health::set_alert_config(&env, config);
+    }
+    pub fn get_alert_config(env: Env) -> shared::health::AlertConfig {
+        shared::health::get_alert_config(&env)
+    }
+    pub fn detect_anomaly(env: Env) -> bool {
+        shared::health::detect_anomaly(&env)
+    }
+    pub fn report_ok(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::health::record_ok(&env);
+    }
+    pub fn report_error(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::health::record_error(&env);
+    }
+    pub fn set_feature_flag(env: Env, admin: Address, flag: soroban_sdk::Symbol, enabled: bool) {
+        admin.require_auth();
+        shared::rollout::set_feature_flag(&env, &flag, enabled);
+    }
+    pub fn is_feature_enabled(env: Env, flag: soroban_sdk::Symbol) -> bool {
+        shared::rollout::is_feature_enabled(&env, &flag)
+    }
+    pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
+        admin.require_auth();
+        shared::rollout::set_canary_deployment(&env, canary, stable, canary_bps);
+    }
+    pub fn route_to_canary(env: Env, caller: Address) -> bool {
+        shared::rollout::route_to_canary(&env, &caller)
+    }
+    pub fn get_rollout_state(env: Env) -> shared::rollout::RolloutState {
+        shared::rollout::get_state(&env)
+    }
+    pub fn set_rollback_trigger(env: Env, admin: Address, error_bps: u32) {
+        admin.require_auth();
+        shared::rollout::set_rollback_trigger(&env, error_bps);
+    }
+    pub fn should_rollback(env: Env) -> bool {
+        shared::rollout::should_rollback(&env)
+    }
+    pub fn trigger_rollback(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::rollout::trigger_rollback(&env, &admin);
+    }
 }
+
 
 impl CommissionAgreementContract {
     /// True while the agreement is inside its free-cancellation window.

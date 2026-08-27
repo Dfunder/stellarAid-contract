@@ -32,6 +32,16 @@ This document describes all Soroban smart contracts in the StellarAid workspace.
 
 All three contracts share a common `pause` mechanism that can halt state-changing operations in emergencies.
 
+## Versioning
+
+Every contract crate uses semantic versioning (`MAJOR.MINOR.PATCH` in `Cargo.toml`) and exposes:
+
+- `get_version()` — on-chain semver
+- `get_version_metadata()` — name, min-compatible client, storage schema
+- `is_version_compatible(major, minor, patch)` — constraint check
+
+See [VERSIONING.md](./VERSIONING.md) for bump rules and [CHANGELOG.md](../CHANGELOG.md) for released versions.
+
 ---
 
 ## Campaign Contract

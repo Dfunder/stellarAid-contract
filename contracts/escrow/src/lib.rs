@@ -1,3 +1,9 @@
+//! Escrow Smart Contract
+//!
+//! Handles locking, releasing, refunding, and dispute escrow workflows for StellarAid.
+//! Architecture Decision: [ADR-0002](../../docs/ADRs/0002-escrow-architecture-and-state-machine.md)
+//! See also: [ADR-0007](../../docs/ADRs/0007-storage-data-model-and-ttl-management.md)
+
 #![no_std]
 use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Bytes, Env};
 
@@ -6,6 +12,8 @@ pub mod storage;
 
 use errors::EscrowError;
 use storage::{CommissionStatus, EscrowRecord, escrow_exists, get_escrow, save_escrow};
+
+include!("../../semver_types.rs");
 
 // ── Pause helpers (closes #594) ─────────────────────────────────────────────
 
@@ -79,6 +87,8 @@ impl EscrowContract {
         env.storage().instance().set(&PauseKey::Paused, &false);
         Ok(())
     }
+
+    impl_semver_queries!();
 
     /// Pause the escrow contract — blocks `create_escrow` and `refund_client`.
     /// Only callable by the escrow admin set during `initialize`.
@@ -402,7 +412,70 @@ impl EscrowContract {
         if !escrow_exists(&env, &commission_id) { return Err(EscrowError::NotFound); }
         Ok(storage::get_escrow(&env, &commission_id))
     }
+
+    // ── Health monitoring (#678) and gradual rollout (#684) ──────────────
+    pub fn health_check(env: Env) -> shared::health::HealthReport {
+        let report = shared::health::health_check(&env);
+        if report.anomaly {
+            shared::rollout::maybe_auto_rollback(&env);
+        }
+        report
+    }
+    pub fn get_health_metrics(env: Env) -> shared::health::HealthMetrics {
+        shared::health::get_metrics(&env)
+    }
+    pub fn get_sla_targets(env: Env) -> shared::health::SlaTargets {
+        let _ = env;
+        shared::health::sla_targets()
+    }
+    pub fn set_alert_config(env: Env, admin: Address, config: shared::health::AlertConfig) {
+        admin.require_auth();
+        shared::health::set_alert_config(&env, config);
+    }
+    pub fn get_alert_config(env: Env) -> shared::health::AlertConfig {
+        shared::health::get_alert_config(&env)
+    }
+    pub fn detect_anomaly(env: Env) -> bool {
+        shared::health::detect_anomaly(&env)
+    }
+    pub fn report_ok(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::health::record_ok(&env);
+    }
+    pub fn report_error(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::health::record_error(&env);
+    }
+    pub fn set_feature_flag(env: Env, admin: Address, flag: soroban_sdk::Symbol, enabled: bool) {
+        admin.require_auth();
+        shared::rollout::set_feature_flag(&env, &flag, enabled);
+    }
+    pub fn is_feature_enabled(env: Env, flag: soroban_sdk::Symbol) -> bool {
+        shared::rollout::is_feature_enabled(&env, &flag)
+    }
+    pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
+        admin.require_auth();
+        shared::rollout::set_canary_deployment(&env, canary, stable, canary_bps);
+    }
+    pub fn route_to_canary(env: Env, caller: Address) -> bool {
+        shared::rollout::route_to_canary(&env, &caller)
+    }
+    pub fn get_rollout_state(env: Env) -> shared::rollout::RolloutState {
+        shared::rollout::get_state(&env)
+    }
+    pub fn set_rollback_trigger(env: Env, admin: Address, error_bps: u32) {
+        admin.require_auth();
+        shared::rollout::set_rollback_trigger(&env, error_bps);
+    }
+    pub fn should_rollback(env: Env) -> bool {
+        shared::rollout::should_rollback(&env)
+    }
+    pub fn trigger_rollback(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::rollout::trigger_rollback(&env, &admin);
+    }
 }
+
 
 #[cfg(test)]
 mod tests;

@@ -209,3 +209,25 @@ fn test_ttl_extends_on_dispute() {
     assert_eq!(disputed, CommissionStatus::Disputed);
     // TTL reset is tested indirectly; direct test requires mock storage.
 }
+
+#[test]
+fn test_get_version_after_initialize() {
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::Address;
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = crate::EscrowContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    let v = client.get_version();
+    assert_eq!(v.major, 0);
+    assert_eq!(v.minor, 1);
+    assert_eq!(v.patch, 0);
+    assert!(client.is_version_compatible(&0, &1, &0));
+    assert!(!client.is_version_compatible(&0, &2, &0));
+    let meta = client.get_version_metadata();
+    assert_eq!(meta.storage_schema, 1);
+}

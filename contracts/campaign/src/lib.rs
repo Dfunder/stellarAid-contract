@@ -55,7 +55,10 @@ impl CampaignContract {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Initialized, &true);
         env.storage().instance().set(&DataKey::CampaignCount, &0_u64);
+        shared::version::seed(&env, env!("CARGO_PKG_VERSION"));
     }
+
+    shared::impl_semver_queries!();
 
     /// Pause the contract, blocking all state-changing operations.
     pub fn pause(env: Env, admin: Address) {
@@ -252,7 +255,70 @@ impl CampaignContract {
         env.storage().instance().set(&DataKey::CampaignCount, &next_id);
         next_id
     }
+
+    // ── Health monitoring (#678) and gradual rollout (#684) ──────────────
+    pub fn health_check(env: Env) -> shared::health::HealthReport {
+        let report = shared::health::health_check(&env);
+        if report.anomaly {
+            shared::rollout::maybe_auto_rollback(&env);
+        }
+        report
+    }
+    pub fn get_health_metrics(env: Env) -> shared::health::HealthMetrics {
+        shared::health::get_metrics(&env)
+    }
+    pub fn get_sla_targets(env: Env) -> shared::health::SlaTargets {
+        let _ = env;
+        shared::health::sla_targets()
+    }
+    pub fn set_alert_config(env: Env, admin: Address, config: shared::health::AlertConfig) {
+        admin.require_auth();
+        shared::health::set_alert_config(&env, config);
+    }
+    pub fn get_alert_config(env: Env) -> shared::health::AlertConfig {
+        shared::health::get_alert_config(&env)
+    }
+    pub fn detect_anomaly(env: Env) -> bool {
+        shared::health::detect_anomaly(&env)
+    }
+    pub fn report_ok(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::health::record_ok(&env);
+    }
+    pub fn report_error(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::health::record_error(&env);
+    }
+    pub fn set_feature_flag(env: Env, admin: Address, flag: soroban_sdk::Symbol, enabled: bool) {
+        admin.require_auth();
+        shared::rollout::set_feature_flag(&env, &flag, enabled);
+    }
+    pub fn is_feature_enabled(env: Env, flag: soroban_sdk::Symbol) -> bool {
+        shared::rollout::is_feature_enabled(&env, &flag)
+    }
+    pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
+        admin.require_auth();
+        shared::rollout::set_canary_deployment(&env, canary, stable, canary_bps);
+    }
+    pub fn route_to_canary(env: Env, caller: Address) -> bool {
+        shared::rollout::route_to_canary(&env, &caller)
+    }
+    pub fn get_rollout_state(env: Env) -> shared::rollout::RolloutState {
+        shared::rollout::get_state(&env)
+    }
+    pub fn set_rollback_trigger(env: Env, admin: Address, error_bps: u32) {
+        admin.require_auth();
+        shared::rollout::set_rollback_trigger(&env, error_bps);
+    }
+    pub fn should_rollback(env: Env) -> bool {
+        shared::rollout::should_rollback(&env)
+    }
+    pub fn trigger_rollback(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::rollout::trigger_rollback(&env, &admin);
+    }
 }
+
 
 #[cfg(test)]
 mod invariant_tests;
@@ -310,5 +376,25 @@ mod test {
         client.unpause(&admin);
         let campaign_id = client.create_campaign(&owner, &1_000_i128, &2_000_u64, &500, &None);
         assert_eq!(campaign_id, 1);
+    }
+
+    #[test]
+    fn get_version_matches_cargo_semver() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, CampaignContract);
+        let client = CampaignContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+
+        client.initialize(&admin);
+        let v = client.get_version();
+        assert_eq!(v.major, 0);
+        assert_eq!(v.minor, 1);
+        assert_eq!(v.patch, 0);
+        assert!(client.is_version_compatible(&0, &1, &0));
+        assert!(!client.is_version_compatible(&0, &2, &0));
+        let meta = client.get_version_metadata();
+        assert_eq!(meta.storage_schema, 1);
+        assert_eq!(meta.min_compatible.minor, 1);
     }
 }

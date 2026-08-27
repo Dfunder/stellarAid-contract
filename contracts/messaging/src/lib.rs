@@ -374,7 +374,7 @@ impl MessagingContract {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env, String};
+    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};
 
     #[test]
     fn test_create_conversation_and_send_message() {

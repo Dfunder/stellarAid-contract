@@ -1,3 +1,8 @@
+//! Dispute Arbiter Smart Contract
+//!
+//! Autonomous arbitration and dispute settlement for StellarAid escrows.
+//! Architecture Decision: [ADR-0004](../../docs/ADRs/0004-dispute-resolution-and-arbitration.md)
+
 #![no_std]
 use soroban_sdk::{contract, contractimpl, symbol_short, Address, Bytes, Env, IntoVal, String};
 

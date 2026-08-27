@@ -14,21 +14,21 @@ pub enum AgreementError {
     NotAllMilestonesApproved = 8,
     ArithmeticOverflow = 9,
     /// Input string exceeds the allowed maximum length (closes #591).
-    InputTooLong = 11,
+    InputTooLong = 10,
     /// Deadline exceeds the maximum permitted future ledger (closes #592).
-    DeadlineTooFar = 12,
+    DeadlineTooFar = 11,
     /// Milestone state transition is locked — a concurrent update is in
     /// progress; retry the operation. Closes #589.
-    MilestoneLocked = 10,
-    NotCancellable = 10,
-    AlreadyCancelled = 11,
-    InvalidPolicy = 12,
-    AgencyExists = 13,
-    AgencyNotFound = 14,
-    ArtistNotOnRoster = 15,
-    ArtistAlreadyRepresented = 16,
-    InvalidSplitBps = 17,
-    EmptyBatch = 18,
+    MilestoneLocked = 12,
+    NotCancellable = 13,
+    AlreadyCancelled = 14,
+    InvalidPolicy = 15,
+    AgencyExists = 16,
+    AgencyNotFound = 17,
+    ArtistNotOnRoster = 18,
+    ArtistAlreadyRepresented = 19,
+    InvalidSplitBps = 20,
+    EmptyBatch = 21,
 }
 
 impl core::fmt::Display for AgreementError {

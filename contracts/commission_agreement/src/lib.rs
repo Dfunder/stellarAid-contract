@@ -1,5 +1,8 @@
 //! CommissionAgreement contract — core agreement lifecycle functions.
 //!
+//! Architecture Decision: [ADR-0003](../../docs/ADRs/0003-commission-agreement-milestone-flow.md)
+//! See also: [ADR-0006](../../docs/ADRs/0006-event-driven-architecture.md)
+//!
 //! Implements:
 //! - `create_agreement`    (closes #457, closes #458)
 //! - `accept_agreement`    (closes #459)
@@ -384,24 +387,6 @@ impl CommissionAgreementContract {
         let all_approved = !updated_milestones.is_empty()
             && updated_milestones.iter().all(|m| m.status == MilestoneStatus::Approved);
         if all_approved {
-        // Mirror the approval into the per-agreement list. Without this the
-        // list keeps the stale `Pending` copy, which both the completion check
-        // below and the pro-rata cancellation settlement (#605) read from.
-        let milestones: Vec<MilestoneRecord> = env.storage().persistent()
-            .get(&DataKey::MilestonesForAgreement(commission_id.clone()))
-            .unwrap_or(Vec::new(&env));
-        let mut updated = Vec::new(&env);
-        for m in milestones.iter() {
-            if m.milestone_id == milestone_id {
-                updated.push_back(milestone.clone());
-            } else {
-                updated.push_back(m);
-            }
-        }
-        env.storage().persistent().set(&DataKey::MilestonesForAgreement(commission_id.clone()), &updated);
-
-        let all_approved = updated.iter().all(|m| m.status == MilestoneStatus::Approved);
-        if all_approved && !updated.is_empty() {
             record.status = AgreementStatus::Completed;
             env.storage().persistent().set(&DataKey::Agreement(commission_id.clone()), &record);
         }
@@ -409,7 +394,7 @@ impl CommissionAgreementContract {
         // Release the serialization lock
         env.storage().persistent().remove(&lock_key);
 
-        env.events().publish((symbol_short!("ms_approved"),), (commission_id, milestone_id));
+        env.events().publish((soroban_sdk::Symbol::new(&env, "ms_approved"),), (commission_id, milestone_id));
         Ok(())
     }
 

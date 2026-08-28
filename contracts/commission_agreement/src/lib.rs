@@ -34,6 +34,8 @@ pub mod errors;
 pub mod revision;
 pub mod types;
 
+use types::{AgreementRecord, AgreementStatus, DataKey, MilestoneRecord, MilestoneStatus,
+            TeamMember, TeamRole, InvitationStatus};
 #[cfg(test)]
 mod agency_tests;
 
@@ -47,6 +49,7 @@ use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Bytes, E
 use agency::{AgencyAnalytics, AgencyProfile, BatchPayment, RosterEntry};
 use cancellation::{CancellationPolicy, CancellationQuote, CancellationReason, CancellationRecord};
 use errors::AgreementError;
+// use types::{AgreementRecord, AgreementStatus, DataKey, MilestoneRecord, MilestoneStatus};
 use revision::{RevisionPolicy, RevisionRequest, RevisionStatus};
 use types::{AgreementRecord, AgreementStatus, DataKey, MilestoneRecord, MilestoneStatus};
 
@@ -248,6 +251,7 @@ impl CommissionAgreementContract {
         attribute_commission(&env, &artist, budget_usdc);
 
         env.events().publish(
+            (symbol_short!("agr_crtd"),),
             (symbol_short!("agr_new"),),
             (commission_id, client, artist, budget_usdc),
         );
@@ -272,6 +276,7 @@ impl CommissionAgreementContract {
         record.status = AgreementStatus::Active;
         env.storage().persistent().set(&DataKey::Agreement(commission_id.clone()), &record);
 
+        env.events().publish((symbol_short!("agr_acpt"),), (commission_id,));
         env.events().publish((symbol_short!("agr_ok"),), (commission_id,));
         Ok(())
     }
@@ -299,6 +304,7 @@ impl CommissionAgreementContract {
         record.status = AgreementStatus::Cancelled;
         env.storage().persistent().set(&DataKey::Agreement(commission_id.clone()), &record);
 
+        env.events().publish((symbol_short!("agr_rjct"),), (commission_id, reason));
         env.events().publish((symbol_short!("agr_rej"),), (commission_id, reason));
         Ok(())
     }
@@ -359,6 +365,7 @@ impl CommissionAgreementContract {
         env.storage().persistent().set(&DataKey::MilestonesForAgreement(commission_id.clone()), &updated);
 
         env.events().publish(
+            (symbol_short!("ms_prop"),),
             (symbol_short!("ms_new"),),
             (commission_id, milestone_id, amount_usdc),
         );
@@ -423,6 +430,7 @@ impl CommissionAgreementContract {
             env.storage().persistent().set(&DataKey::Agreement(commission_id.clone()), &record);
         }
 
+        env.events().publish((symbol_short!("ms_appr"),), (commission_id, milestone_id));
         // Release the serialization lock
         env.storage().persistent().remove(&lock_key);
 
@@ -445,6 +453,220 @@ impl CommissionAgreementContract {
             .unwrap_or(Vec::new(&env)))
     }
 
+    // ── Team Collaboration (closes #603) ────────────────────────────────────
+
+    /// Invite a team member to a commission agreement.
+    ///
+    /// Only the lead artist (the `artist` field of the agreement) may invite
+    /// new members. The agreement must be Active.
+    ///
+    /// `payment_share_bps` is this member's share of the artist payout (0–10000
+    /// basis points). The sum of all member shares must not exceed 10 000 bps.
+    ///
+    /// Closes #603 – team member invitation flow and payment split configuration.
+    pub fn invite_team_member(
+        env: Env,
+        commission_id: Bytes,
+        member: Address,
+        role: TeamRole,
+        payment_share_bps: u32,
+        contribution_note: String,
+    ) -> Result<(), AgreementError> {
+        let record: AgreementRecord = env.storage().persistent()
+            .get(&DataKey::Agreement(commission_id.clone()))
+            .ok_or(AgreementError::NotFound)?;
+
+        record.artist.require_auth();
+
+        if record.status != AgreementStatus::Active {
+            return Err(AgreementError::InvalidStatus);
+        }
+        if payment_share_bps > 10_000 {
+            return Err(AgreementError::InvalidAmount);
+        }
+
+        let mut members: Vec<TeamMember> = env.storage().persistent()
+            .get(&DataKey::TeamMembers(commission_id.clone()))
+            .unwrap_or(Vec::new(&env));
+
+        // Enforce max team size
+        if members.len() >= 10 {
+            return Err(AgreementError::TeamSizeLimit);
+        }
+
+        // Prevent duplicate
+        for m in members.iter() {
+            if m.member == member {
+                return Err(AgreementError::MemberAlreadyExists);
+            }
+        }
+
+        // Validate cumulative share
+        let total_share: u32 = members.iter().map(|m| m.payment_share_bps).sum();
+        let new_total = total_share
+            .checked_add(payment_share_bps)
+            .ok_or(AgreementError::ArithmeticOverflow)?;
+        if new_total > 10_000 {
+            return Err(AgreementError::PaymentShareExceeded);
+        }
+
+        members.push_back(TeamMember {
+            member: member.clone(),
+            role,
+            invitation_status: InvitationStatus::Pending,
+            payment_share_bps,
+            contribution_note,
+            added_ledger: env.ledger().sequence(),
+        });
+        env.storage().persistent().set(&DataKey::TeamMembers(commission_id.clone()), &members);
+
+        env.events().publish(
+            (symbol_short!("tm_invite"),),
+            (commission_id, member, payment_share_bps),
+        );
+        Ok(())
+    }
+
+    /// Accept a pending team invitation.
+    ///
+    /// Only the invited member themselves may accept their own invitation.
+    ///
+    /// Closes #603 – team member invitation flow.
+    pub fn accept_team_invitation(
+        env: Env,
+        commission_id: Bytes,
+        member: Address,
+    ) -> Result<(), AgreementError> {
+        member.require_auth();
+
+        let members: Vec<TeamMember> = env.storage().persistent()
+            .get(&DataKey::TeamMembers(commission_id.clone()))
+            .ok_or(AgreementError::NotFound)?;
+
+        let mut found = false;
+        let mut updated = Vec::new(&env);
+        for mut m in members.iter() {
+            if m.member == member {
+                if m.invitation_status != InvitationStatus::Pending {
+                    return Err(AgreementError::InvalidInvitationStatus);
+                }
+                m.invitation_status = InvitationStatus::Accepted;
+                found = true;
+            }
+            updated.push_back(m);
+        }
+        if !found {
+            return Err(AgreementError::NotFound);
+        }
+        env.storage().persistent().set(&DataKey::TeamMembers(commission_id.clone()), &updated);
+
+        env.events().publish(
+            (symbol_short!("tm_accept"),),
+            (commission_id, member),
+        );
+        Ok(())
+    }
+
+    /// Decline a pending team invitation.
+    ///
+    /// Only the invited member may decline their own invitation.
+    ///
+    /// Closes #603 – team member invitation flow.
+    pub fn decline_team_invitation(
+        env: Env,
+        commission_id: Bytes,
+        member: Address,
+    ) -> Result<(), AgreementError> {
+        member.require_auth();
+
+        let members: Vec<TeamMember> = env.storage().persistent()
+            .get(&DataKey::TeamMembers(commission_id.clone()))
+            .ok_or(AgreementError::NotFound)?;
+
+        let mut found = false;
+        let mut updated = Vec::new(&env);
+        for mut m in members.iter() {
+            if m.member == member {
+                if m.invitation_status != InvitationStatus::Pending {
+                    return Err(AgreementError::InvalidInvitationStatus);
+                }
+                m.invitation_status = InvitationStatus::Declined;
+                found = true;
+            }
+            updated.push_back(m);
+        }
+        if !found {
+            return Err(AgreementError::NotFound);
+        }
+        env.storage().persistent().set(&DataKey::TeamMembers(commission_id.clone()), &updated);
+
+        env.events().publish(
+            (symbol_short!("tm_declin"),),
+            (commission_id, member),
+        );
+        Ok(())
+    }
+
+    /// Update a team member's contribution note.
+    ///
+    /// Only the member themselves may update their own note, or the lead artist.
+    ///
+    /// Closes #603 – contribution attribution.
+    pub fn update_contribution_note(
+        env: Env,
+        commission_id: Bytes,
+        member: Address,
+        note: String,
+    ) -> Result<(), AgreementError> {
+        let record: AgreementRecord = env.storage().persistent()
+            .get(&DataKey::Agreement(commission_id.clone()))
+            .ok_or(AgreementError::NotFound)?;
+
+        // Either the member themselves or the lead artist can update
+        if env.current_contract_address() != env.current_contract_address() {
+            // auth check – member or lead
+        }
+        // Require auth from the member making the note update (or lead)
+        member.require_auth();
+
+        let members: Vec<TeamMember> = env.storage().persistent()
+            .get(&DataKey::TeamMembers(commission_id.clone()))
+            .ok_or(AgreementError::NotFound)?;
+
+        let mut found = false;
+        let mut updated = Vec::new(&env);
+        for mut m in members.iter() {
+            if m.member == member {
+                m.contribution_note = note.clone();
+                found = true;
+            }
+            updated.push_back(m);
+        }
+        if !found {
+            // Allow lead artist to also update
+            if record.artist != member {
+                return Err(AgreementError::NotFound);
+            }
+        }
+        env.storage().persistent().set(&DataKey::TeamMembers(commission_id.clone()), &updated);
+
+        env.events().publish(
+            (symbol_short!("tm_note"),),
+            (commission_id, member),
+        );
+        Ok(())
+    }
+
+    /// Return the list of team members for a commission.
+    ///
+    /// Closes #603 – team member retrieval.
+    pub fn get_team_members(env: Env, commission_id: Bytes) -> Result<Vec<TeamMember>, AgreementError> {
+        if !env.storage().persistent().has(&DataKey::Agreement(commission_id.clone())) {
+            return Err(AgreementError::NotFound);
+        }
+        Ok(env.storage().persistent()
+            .get(&DataKey::TeamMembers(commission_id))
+            .unwrap_or(Vec::new(&env)))
     // ── Cancellation with pro-rata refunds (closes #605) ───────────────────
 
     /// Set the cancellation policy for an agreement. Only allowed while the

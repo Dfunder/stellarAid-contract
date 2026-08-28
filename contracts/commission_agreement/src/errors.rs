@@ -13,7 +13,6 @@ pub enum AgreementError {
     MilestoneBudgetExceeded = 7,
     NotAllMilestonesApproved = 8,
     ArithmeticOverflow = 9,
-    MilestoneLocked = 10,
     /// Input string exceeds the allowed maximum length (closes #591).
     InputTooLong = 10,
     /// Deadline exceeds the maximum permitted future ledger (closes #592).
@@ -30,16 +29,11 @@ pub enum AgreementError {
     ArtistAlreadyRepresented = 19,
     InvalidSplitBps = 20,
     EmptyBatch = 21,
-    DeadlineTooFar = 12,
-    AgencyExists = 13,
-    AgencyNotFound = 14,
-    ArtistNotOnRoster = 15,
-    ArtistAlreadyRepresented = 16,
-    InvalidSplitBps = 17,
-    EmptyBatch = 18,
-    NotCancellable = 19,
-    AlreadyCancelled = 20,
-    InvalidPolicy = 21,
+    // Revisions (#600)
+    RevisionNotFound = 22,
+    RevisionLimitReached = 23,
+    RevisionAlreadyResolved = 24,
+    RevisionSameParty = 25,
 }
 
 impl core::fmt::Display for AgreementError {
@@ -66,6 +60,10 @@ impl core::fmt::Display for AgreementError {
             Self::ArtistAlreadyRepresented => write!(f, "artist is already represented"),
             Self::InvalidSplitBps => write!(f, "split bps out of range"),
             Self::EmptyBatch => write!(f, "batch must contain at least one payment"),
+            Self::RevisionNotFound => write!(f, "revision not found"),
+            Self::RevisionLimitReached => write!(f, "revision limit reached for this agreement"),
+            Self::RevisionAlreadyResolved => write!(f, "revision has already been resolved"),
+            Self::RevisionSameParty => write!(f, "the requesting party cannot resolve their own revision"),
         }
     }
 }
@@ -93,5 +91,9 @@ pub fn get_suggestion(error: AgreementError) -> Symbol {
         AgreementError::ArtistAlreadyRepresented => symbol_short!("REPPED"),
         AgreementError::InvalidSplitBps => symbol_short!("BAD_BPS"),
         AgreementError::EmptyBatch => symbol_short!("NO_BATCH"),
+        AgreementError::RevisionNotFound => symbol_short!("NO_REV"),
+        AgreementError::RevisionLimitReached => symbol_short!("REV_MAX"),
+        AgreementError::RevisionAlreadyResolved => symbol_short!("REV_DONE"),
+        AgreementError::RevisionSameParty => symbol_short!("REV_SELF"),
     }
 }

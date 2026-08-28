@@ -68,4 +68,69 @@ pub enum DataKey {
     Reviewer(Address),
     Portfolio(Address),
     History(Address),
+    // ── Verification badges (#598) ──────────────────────────────────────
+    Badge(Address, BadgeType),
+    BadgeHistory(Address),
+    BadgeTypes(Address),
+}
+
+/// The kind of verification a badge represents. New kinds can be appended
+/// without disturbing existing badges, which are keyed by (artist, type).
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BadgeType {
+    /// Backed by the portfolio quality-review workflow in this contract.
+    PortfolioVerified = 0,
+    /// Off-chain identity check (KYC-style), attested by a reviewer.
+    IdVerified = 1,
+    /// Awarded for sustained high ratings; source of truth lives off this
+    /// contract (e.g. the reputation contract) — reviewers issue/revoke it.
+    TopRated = 2,
+    /// Professional credential or certification attested by a reviewer.
+    ProfessionalCertified = 3,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BadgeStatus {
+    Active = 0,
+    Revoked = 1,
+}
+
+impl BadgeStatus {
+    pub fn revoked(&self) -> bool {
+        matches!(self, BadgeStatus::Revoked)
+    }
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Badge {
+    pub artist: Address,
+    pub badge_type: BadgeType,
+    pub issuer: Address,
+    pub status: BadgeStatus,
+    pub issued_ledger: u32,
+    /// Ledger after which the badge is no longer valid. Zero means it never
+    /// expires on its own (only explicit revocation ends it).
+    pub expires_ledger: u32,
+    pub revoke_reason: Option<String>,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BadgeAction {
+    Issued = 0,
+    Renewed = 1,
+    Revoked = 2,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BadgeEvent {
+    pub badge_type: BadgeType,
+    pub action: BadgeAction,
+    pub actor: Address,
+    pub ledger: u32,
+    pub note: Option<String>,
 }

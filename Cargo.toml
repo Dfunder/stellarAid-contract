@@ -9,6 +9,8 @@ members = [
     "contracts/subscription",
     "contracts/competitions",
     "contracts/verification",
+    "contracts/reputation",
+    "contracts/search",
     "contracts/revenue_sharing",
     "contracts/recruitment",
     "contracts/creator_fund",

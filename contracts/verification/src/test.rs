@@ -5,7 +5,7 @@ use soroban_sdk::{
 };
 
 use crate::errors::VerificationError;
-use crate::types::{PortfolioStatus, QualityScore, ReviewOutcome};
+use crate::types::{BadgeAction, BadgeType, PortfolioStatus, QualityScore, ReviewOutcome};
 use crate::{Verification, VerificationClient};
 
 const MIN_SCORE: u32 = 70;
@@ -292,6 +292,178 @@ fn unknown_artist_is_not_verified() {
         .unwrap()
         .unwrap();
     assert_eq!(err, VerificationError::PortfolioNotFound);
+}
+
+#[test]
+fn issue_badge_grants_active_status_until_expiry() {
+    let f = setup();
+    f.client.issue_badge(
+        &f.reviewer,
+        &f.artist,
+        &BadgeType::IdVerified,
+        &1000,
+        &note(&f.env),
+    );
+
+    assert!(f.client.is_badge_active(&f.artist, &BadgeType::IdVerified));
+    let badge = f.client.get_badge(&f.artist, &BadgeType::IdVerified);
+    assert_eq!(badge.expires_ledger, badge.issued_ledger + 1000);
+
+    let types = f.client.get_artist_badge_types(&f.artist);
+    assert_eq!(types.len(), 1);
+    assert_eq!(types.get(0).unwrap(), BadgeType::IdVerified);
+
+    let history = f.client.get_badge_history(&f.artist);
+    assert_eq!(history.len(), 1);
+    assert_eq!(history.get(0).unwrap().action, BadgeAction::Issued);
+}
+
+#[test]
+fn badge_expires_after_its_validity_window() {
+    let f = setup();
+    f.client.issue_badge(
+        &f.reviewer,
+        &f.artist,
+        &BadgeType::IdVerified,
+        &100,
+        &note(&f.env),
+    );
+    assert!(f.client.is_badge_active(&f.artist, &BadgeType::IdVerified));
+
+    f.env
+        .ledger()
+        .with_mut(|l| l.sequence_number += 101);
+    assert!(!f.client.is_badge_active(&f.artist, &BadgeType::IdVerified));
+}
+
+#[test]
+fn badge_with_zero_validity_never_expires() {
+    let f = setup();
+    f.client.issue_badge(
+        &f.reviewer,
+        &f.artist,
+        &BadgeType::ProfessionalCertified,
+        &0,
+        &note(&f.env),
+    );
+    // Advance well past the validity window used elsewhere in this file (but
+    // within the test sandbox's default storage TTL) to show the badge is
+    // still active because it was issued with `valid_for_ledgers == 0`.
+    f.env
+        .ledger()
+        .with_mut(|l| l.sequence_number += UPDATE_INTERVAL * 2);
+    assert!(f
+        .client
+        .is_badge_active(&f.artist, &BadgeType::ProfessionalCertified));
+}
+
+#[test]
+fn revoked_badge_is_no_longer_active_and_cannot_be_revoked_twice() {
+    let f = setup();
+    f.client.issue_badge(
+        &f.reviewer,
+        &f.artist,
+        &BadgeType::TopRated,
+        &0,
+        &note(&f.env),
+    );
+    f.client
+        .revoke_badge(&f.reviewer, &f.artist, &BadgeType::TopRated, &String::from_str(&f.env, "quality dropped"));
+
+    assert!(!f.client.is_badge_active(&f.artist, &BadgeType::TopRated));
+    let badge = f.client.get_badge(&f.artist, &BadgeType::TopRated);
+    assert_eq!(badge.status, crate::types::BadgeStatus::Revoked);
+
+    let err = f
+        .client
+        .try_revoke_badge(&f.reviewer, &f.artist, &BadgeType::TopRated, &String::from_str(&f.env, "again"))
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, VerificationError::BadgeAlreadyRevoked);
+
+    let history = f.client.get_badge_history(&f.artist);
+    assert_eq!(history.len(), 2);
+    assert_eq!(history.get(1).unwrap().action, BadgeAction::Revoked);
+}
+
+#[test]
+fn reissuing_a_badge_after_revocation_starts_fresh() {
+    let f = setup();
+    f.client
+        .issue_badge(&f.reviewer, &f.artist, &BadgeType::IdVerified, &0, &note(&f.env));
+    f.client.revoke_badge(
+        &f.reviewer,
+        &f.artist,
+        &BadgeType::IdVerified,
+        &String::from_str(&f.env, "expired ID"),
+    );
+    assert!(!f.client.is_badge_active(&f.artist, &BadgeType::IdVerified));
+
+    f.client
+        .issue_badge(&f.reviewer, &f.artist, &BadgeType::IdVerified, &0, &note(&f.env));
+    assert!(f.client.is_badge_active(&f.artist, &BadgeType::IdVerified));
+
+    let history = f.client.get_badge_history(&f.artist);
+    assert_eq!(history.len(), 3);
+    assert_eq!(history.get(2).unwrap().action, BadgeAction::Issued);
+}
+
+#[test]
+fn multiple_badge_types_are_tracked_independently() {
+    let f = setup();
+    f.client
+        .issue_badge(&f.reviewer, &f.artist, &BadgeType::PortfolioVerified, &0, &note(&f.env));
+    f.client
+        .issue_badge(&f.reviewer, &f.artist, &BadgeType::IdVerified, &0, &note(&f.env));
+
+    assert!(f.client.is_badge_active(&f.artist, &BadgeType::PortfolioVerified));
+    assert!(f.client.is_badge_active(&f.artist, &BadgeType::IdVerified));
+    assert_eq!(f.client.get_artist_badge_types(&f.artist).len(), 2);
+
+    f.client.revoke_badge(
+        &f.reviewer,
+        &f.artist,
+        &BadgeType::PortfolioVerified,
+        &String::from_str(&f.env, "portfolio no longer verified"),
+    );
+    assert!(!f.client.is_badge_active(&f.artist, &BadgeType::PortfolioVerified));
+    assert!(f.client.is_badge_active(&f.artist, &BadgeType::IdVerified));
+}
+
+#[test]
+fn non_reviewer_cannot_issue_or_revoke_badges() {
+    let f = setup();
+    let outsider = Address::generate(&f.env);
+    let err = f
+        .client
+        .try_issue_badge(&outsider, &f.artist, &BadgeType::IdVerified, &0, &note(&f.env))
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, VerificationError::Unauthorized);
+
+    f.client
+        .issue_badge(&f.reviewer, &f.artist, &BadgeType::IdVerified, &0, &note(&f.env));
+    let err = f
+        .client
+        .try_revoke_badge(&outsider, &f.artist, &BadgeType::IdVerified, &String::from_str(&f.env, "x"))
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, VerificationError::Unauthorized);
+}
+
+#[test]
+fn revoking_a_nonexistent_badge_is_reported() {
+    let f = setup();
+    let err = f
+        .client
+        .try_revoke_badge(&f.reviewer, &f.artist, &BadgeType::IdVerified, &String::from_str(&f.env, "n/a"))
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, VerificationError::BadgeNotFound);
 }
 
 #[test]

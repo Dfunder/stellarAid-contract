@@ -1,0 +1,18 @@
+[package]
+name = "upgrade_testing"
+version = "0.1.0"
+edition = "2021"
+
+[package.metadata.stellar-aid]
+versioning = "semver"
+storage-schema = 1
+min-compatible = "0.1.0"
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

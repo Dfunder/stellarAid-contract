@@ -8,6 +8,10 @@ pub enum ConfigError {
     Unauthorized = 3,
     InvalidFeeBps = 4,
     NoPendingAdmin = 5,
+    InvalidTier = 6,
+    InvalidPromotion = 7,
+    InvalidReferralBps = 8,
+    PromotionNotActive = 9,
 }
 
 impl core::fmt::Display for ConfigError {
@@ -18,6 +22,10 @@ impl core::fmt::Display for ConfigError {
             Self::Unauthorized => write!(f, "caller is not authorized"),
             Self::InvalidFeeBps => write!(f, "fee basis points out of allowed range (0-10000)"),
             Self::NoPendingAdmin => write!(f, "no pending admin transfer requested"),
+            Self::InvalidTier => write!(f, "fee tier has an invalid threshold or fee"),
+            Self::InvalidPromotion => write!(f, "promotional period is invalid or out of range"),
+            Self::InvalidReferralBps => write!(f, "referral share out of allowed range (0-10000)"),
+            Self::PromotionNotActive => write!(f, "no promotion is active at the given ledger"),
         }
     }
 }
@@ -29,5 +37,9 @@ pub fn get_suggestion(error: ConfigError) -> Symbol {
         ConfigError::Unauthorized => symbol_short!("AUTH"),
         ConfigError::InvalidFeeBps => symbol_short!("BAD_BPS"),
         ConfigError::NoPendingAdmin => symbol_short!("NO_ADM"),
+        ConfigError::InvalidTier => symbol_short!("BAD_TIER"),
+        ConfigError::InvalidPromotion => symbol_short!("BAD_PRO"),
+        ConfigError::InvalidReferralBps => symbol_short!("BAD_REF"),
+        ConfigError::PromotionNotActive => symbol_short!("NO_PRO"),
     }
 }

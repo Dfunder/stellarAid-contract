@@ -4,7 +4,7 @@
 //! Architecture Decision: [ADR-0005](../../docs/ADRs/0005-platform-fee-and-revenue-distribution.md)
 
 #![no_std]
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Symbol};
 
 pub mod errors;
 pub mod storage;
@@ -12,7 +12,9 @@ pub mod types;
 
 use errors::ConfigError;
 use storage::*;
-use types::{FeeTokenMetadata, PlatformConfig};
+use types::{
+    AddressEnvironment, FeeTokenMetadata, PlatformConfig, RegistryEntry, ResolutionCacheEntry,
+};
 
 include!("../../semver_types.rs");
 
@@ -118,6 +120,118 @@ impl PlatformConfigContract {
 
     pub fn get_token_metadata(env: Env) -> FeeTokenMetadata {
         get_fee_token_metadata(&env)
+    }
+
+    // ── Address registry + resolution caching (#662) ──────────────────────
+    /// Register (or overwrite) the contract address injected for `name` in the
+    /// given environment. Admin-only. Invalidates the resolution cache for that
+    /// key so a subsequent `resolve_*` observes the new address immediately.
+    pub fn register_address(
+        env: Env,
+        e: AddressEnvironment,
+        name: Symbol,
+        address: Address,
+    ) -> Result<(), ConfigError> {
+        let admin = get_admin(&env);
+        admin.require_auth();
+        set_registered_address(&env, &e, &name, &address);
+        remove_resolution_cache(&env, &e, &name);
+        env.events()
+            .publish((symbol_short!("addrreg"), name), (e, address));
+        Ok(())
+    }
+
+    /// Remove a registered address. Admin-only. Unknown keys fail instead of
+    /// silently no-opping so callers cannot mix up environments.
+    pub fn unregister_address(
+        env: Env,
+        e: AddressEnvironment,
+        name: Symbol,
+    ) -> Result<(), ConfigError> {
+        let admin = get_admin(&env);
+        admin.require_auth();
+        if get_registered_address(&env, &e, &name).is_none() {
+            return Err(ConfigError::AddressNotRegistered);
+        }
+        remove_registered_address(&env, &e, &name);
+        remove_resolution_cache(&env, &e, &name);
+        Ok(())
+    }
+
+    /// Look up a registered address without touching the cache.
+    pub fn get_registered_address(
+        env: Env,
+        e: AddressEnvironment,
+        name: Symbol,
+    ) -> Result<Address, ConfigError> {
+        get_registered_address(&env, &e, &name).ok_or(ConfigError::AddressNotRegistered)
+    }
+
+    /// Full registry entry (env, name, address) for tooling/audits.
+    pub fn registry_entry(
+        env: Env,
+        e: AddressEnvironment,
+        name: Symbol,
+    ) -> Result<RegistryEntry, ConfigError> {
+        let address =
+            get_registered_address(&env, &e, &name).ok_or(ConfigError::AddressNotRegistered)?;
+        Ok(RegistryEntry { env: e, name, address })
+    }
+
+    /// Set the active environment so `resolve_for_environment` can be used by
+    /// contracts that want to ignore the environment dimension. Admin-only.
+    pub fn set_environment(env: Env, e: AddressEnvironment) -> Result<(), ConfigError> {
+        let admin = get_admin(&env);
+        admin.require_auth();
+        set_active_environment(&env, e);
+        Ok(())
+    }
+
+    pub fn get_environment(env: Env) -> AddressEnvironment {
+        get_active_environment(&env)
+    }
+
+    /// Resolve `name` in environment `e`, honoring a fresh resolution cache
+    /// entry and populating the cache on a registry miss.
+    pub fn resolve_address(
+        env: Env,
+        e: AddressEnvironment,
+        name: Symbol,
+    ) -> Result<Address, ConfigError> {
+        if let Some(cached) = get_resolution_cache(&env, &e, &name) {
+            let now = env.ledger().sequence();
+            if now >= cached.resolved_ledger
+                && now - cached.resolved_ledger <= RESOLUTION_CACHE_TTL_LEDGERS
+            {
+                return Ok(cached.address);
+            }
+        }
+        let addr = get_registered_address(&env, &e, &name).ok_or(ConfigError::AddressNotRegistered)?;
+        set_resolution_cache(
+            &env,
+            &e,
+            &name,
+            &ResolutionCacheEntry {
+                address: addr.clone(),
+                resolved_ledger: env.ledger().sequence(),
+            },
+        );
+        Ok(addr)
+    }
+
+    /// Resolve using the currently active environment (test vs. production).
+    pub fn resolve_for_environment(env: Env, name: Symbol) -> Result<Address, ConfigError> {
+        let e = get_active_environment(&env);
+        Self::resolve_address(env, e, name)
+    }
+
+    /// Inspect the resolution cache for `(e, name)`.
+    pub fn resolution_cache(
+        env: Env,
+        e: AddressEnvironment,
+        name: Symbol,
+    ) -> Result<ResolutionCacheEntry, ConfigError> {
+        get_resolution_cache(&env, &e, &name).ok_or(ConfigError::AddressNotRegistered)
     }
 
     // ── Health monitoring (#678) and gradual rollout (#684) ──────────────

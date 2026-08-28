@@ -49,6 +49,22 @@ topics: ( Symbol("<contract_domain>"), Symbol("<action_name>") )
 * **Topic 1 (Action):** Identifies the state transition or operation (e.g., `created`, `released`, `refunded`, `opened`, `approved`).
 * **Payload:** A typed tuple or single ScVal containing event parameters in deterministic order.
 
+**Correlated events (correlation IDs, #661):** events that should be correlated
+across contracts (e.g. a `create_escrow` that mirrors a commission agreement)
+carry a third reserved topic `Symbol("corr")` plus the derived 32-byte
+`CorrelationId` in the payload. Consumers place them under the same "corr" group;
+
+```
+topics: ( Symbol("<contract_domain>"), Symbol("<action_name>"), Symbol("corr") )
+payload: ( ..., correlation_id: BytesN<32> )
+```
+
+Segregating correlation events behind the reserved `corr` topic keeps them
+distinct from plain two-topic events (`escrow`/`created`, etc.) in RPC filters
+and avoids false matches against token `transfer` events, which also emit three
+topics but with `Address` payloads in topic positions 1/2. See
+[Correlation Events (Escrow)](#correlation-events-escrow) for the concrete schema.
+
 ```rust
 // Example: Escrow Created Event
 env.events().publish(
@@ -132,6 +148,34 @@ Emitted by `contracts/escrow` during payment custody lifecycle.
 | `client_amount` | `i128` | Amount returned to client |
 | `artist_amount` | `i128` | Amount paid to artist |
 
+#### Correlation Events (Escrow)
+
+Cross-contract correlation points emitted by `contracts/escrow` (from
+`contracts/shared`'s `correlation` module, #661) always use the reserved
+`corr` topic.
+
+##### `escrow` / `created` / `corr`
+* **Trigger:** `create_escrow`
+* **Condition:** Successful lock of client token funds into escrow storage.
+* **Topics:** `(escrow, created, corr)`
+* **Payload:**
+
+| Field | Type | Description |
+|---|---|---|
+| `correlation_id` | `BytesN<32>` | Deterministically derived SHA-256 correlation id (#661) |
+| `key` | `Bytes` | Shared operation key (the `commission_id`) enabling cross-contract joins |
+
+##### `escrow` / `released` / `corr` (planned)
+* **Trigger:** `release_payment`
+* **Condition:** Released escrows carrying a correlation id also emit the
+  3-topic correlated variant with the same `correlation_id` in the payload.
+
+> **Indexing note:** correlation events are distinct from the two-topic events
+> listed above. Filter on topic `corr` (position 2) — many contracts also emit
+> three-topic events where topic positions 1/2 are `Address` values (e.g. token
+> `transfer`), so a filter that only checks "length == 3" will produce false
+> positives; always compare topic 2 to the `corr` symbol.
+
 ---
 
 ### 2. Commission Agreement Contract
@@ -205,6 +249,15 @@ Emitted by `contracts/platform_config`.
 #### `admin_transfer_completed`
 * **Trigger:** `accept_admin`
 * **Payload:** `(old_admin: Address, new_admin: Address)`
+
+#### `addrreg` / `(name)` (`symbol_short!("addrreg")`)
+* **Trigger:** `register_address`
+* **Condition:** A dependency for `environment`+`name` was registered (PR #662).
+* **Topics:** `(addrreg, <name>)`
+* **Payload:** `(environment: AddressEnvironment, address: Address)`
+* **Note:** `AddressEnvironment` is one of `Production` / `Test`, enabling a
+  per-environment dependency registry resolved through `resolve_for_environment`
+  with a bounded `ResolutionCache` (TTL `86_400` ledgers).
 
 ---
 

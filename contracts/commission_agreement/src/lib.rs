@@ -1,5 +1,8 @@
 //! CommissionAgreement contract — core agreement lifecycle functions.
 //!
+//! Architecture Decision: [ADR-0003](../../docs/ADRs/0003-commission-agreement-milestone-flow.md)
+//! See also: [ADR-0006](../../docs/ADRs/0006-event-driven-architecture.md)
+//!
 //! Implements:
 //! - `create_agreement`    (closes #457, closes #458)
 //! - `accept_agreement`    (closes #459)
@@ -28,6 +31,7 @@ mod dispute_resolution;
 pub mod agency;
 pub mod cancellation;
 pub mod errors;
+pub mod revision;
 pub mod types;
 
 use types::{AgreementRecord, AgreementStatus, DataKey, MilestoneRecord, MilestoneStatus,
@@ -38,11 +42,18 @@ mod agency_tests;
 #[cfg(test)]
 mod cancellation_tests;
 
+#[cfg(test)]
+mod revision_tests;
+
 use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Bytes, Env, String, Vec};
 use agency::{AgencyAnalytics, AgencyProfile, BatchPayment, RosterEntry};
 use cancellation::{CancellationPolicy, CancellationQuote, CancellationReason, CancellationRecord};
 use errors::AgreementError;
 // use types::{AgreementRecord, AgreementStatus, DataKey, MilestoneRecord, MilestoneStatus};
+use revision::{RevisionPolicy, RevisionRequest, RevisionStatus};
+use types::{AgreementRecord, AgreementStatus, DataKey, MilestoneRecord, MilestoneStatus};
+
+include!("../../semver_types.rs");
 
 /// Cap on the retained cancellation history, so the list stays bounded.
 const CANCELLATION_HISTORY_LIMIT: u32 = 50;
@@ -74,6 +85,27 @@ fn load_policy(env: &Env, commission_id: &Bytes) -> CancellationPolicy {
         .persistent()
         .get(&DataKey::CancellationPolicy(commission_id.clone()))
         .unwrap_or_else(cancellation::default_policy)
+}
+
+fn load_revision_policy(env: &Env, commission_id: &Bytes) -> RevisionPolicy {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RevisionPolicy(commission_id.clone()))
+        .unwrap_or_else(revision::default_policy)
+}
+
+fn load_revisions(env: &Env, commission_id: &Bytes) -> Vec<RevisionRequest> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RevisionsForAgreement(commission_id.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+fn save_revisions(env: &Env, commission_id: &Bytes, revisions: &Vec<RevisionRequest>) {
+    env.storage().persistent().set(
+        &DataKey::RevisionsForAgreement(commission_id.clone()),
+        revisions,
+    );
 }
 
 fn load_agency(env: &Env, agency: &Address) -> Result<AgencyProfile, AgreementError> {
@@ -138,6 +170,8 @@ const MAX_MILESTONE_TITLE_LEN: u32 = 128;
 const MAX_REASON_LEN: u32 = 512;
 /// Maximum byte length for a commission / milestone identifier.
 const MAX_ID_LEN: u32 = 64;
+/// Maximum byte length for a revision description or response note (#600).
+const MAX_REVISION_TEXT_LEN: u32 = 512;
 
 // ── Deadline upper bound (closes #592) ───────────────────────────────────────
 
@@ -150,6 +184,8 @@ pub struct CommissionAgreementContract;
 
 #[contractimpl]
 impl CommissionAgreementContract {
+    impl_semver_queries!();
+
     /// Create a new commission agreement.
     ///
     /// Closes #457, closes #458.
@@ -390,24 +426,6 @@ impl CommissionAgreementContract {
         let all_approved = !updated_milestones.is_empty()
             && updated_milestones.iter().all(|m| m.status == MilestoneStatus::Approved);
         if all_approved {
-        // Mirror the approval into the per-agreement list. Without this the
-        // list keeps the stale `Pending` copy, which both the completion check
-        // below and the pro-rata cancellation settlement (#605) read from.
-        let milestones: Vec<MilestoneRecord> = env.storage().persistent()
-            .get(&DataKey::MilestonesForAgreement(commission_id.clone()))
-            .unwrap_or(Vec::new(&env));
-        let mut updated = Vec::new(&env);
-        for m in milestones.iter() {
-            if m.milestone_id == milestone_id {
-                updated.push_back(milestone.clone());
-            } else {
-                updated.push_back(m);
-            }
-        }
-        env.storage().persistent().set(&DataKey::MilestonesForAgreement(commission_id.clone()), &updated);
-
-        let all_approved = updated.iter().all(|m| m.status == MilestoneStatus::Approved);
-        if all_approved && !updated.is_empty() {
             record.status = AgreementStatus::Completed;
             env.storage().persistent().set(&DataKey::Agreement(commission_id.clone()), &record);
         }
@@ -416,7 +434,7 @@ impl CommissionAgreementContract {
         // Release the serialization lock
         env.storage().persistent().remove(&lock_key);
 
-        env.events().publish((symbol_short!("ms_approved"),), (commission_id, milestone_id));
+        env.events().publish((symbol_short!("ms_apprvd"),), (commission_id, milestone_id));
         Ok(())
     }
 
@@ -796,6 +814,183 @@ impl CommissionAgreementContract {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    // ── Commission revisions (closes #600) ──────────────────────────────────
+
+    /// Set how many revisions this agreement will accept. Only while the
+    /// agreement is still `Pending`, mirroring `set_cancellation_policy`, so
+    /// the artist accepts with the revision limit already visible.
+    pub fn set_revision_policy(
+        env: Env,
+        commission_id: Bytes,
+        max_revisions: u32,
+    ) -> Result<(), AgreementError> {
+        let record = load_agreement(&env, &commission_id)?;
+        record.client.require_auth();
+
+        if record.status != AgreementStatus::Pending {
+            return Err(AgreementError::InvalidStatus);
+        }
+        let policy = RevisionPolicy { max_revisions };
+        revision::validate_policy(&policy)?;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::RevisionPolicy(commission_id.clone()), &policy);
+        env.events()
+            .publish((symbol_short!("rev_pol"),), (commission_id, max_revisions));
+        Ok(())
+    }
+
+    pub fn get_revision_policy(env: Env, commission_id: Bytes) -> u32 {
+        load_revision_policy(&env, &commission_id).max_revisions
+    }
+
+    /// Either party may propose a revision: the artist proposing changed
+    /// work, or the client requesting changes. Bounded by the agreement's
+    /// revision policy (`DEFAULT_MAX_REVISIONS` if none was set).
+    ///
+    /// `cost_adjustment` is only ever applied to `budget_usdc` if and when
+    /// the *other* party accepts it via `respond_to_revision` — proposing a
+    /// revision never changes the agreement's terms by itself.
+    pub fn request_revision(
+        env: Env,
+        commission_id: Bytes,
+        requester: Address,
+        description: String,
+        deadline_ledger: u32,
+        cost_adjustment: i128,
+    ) -> Result<u32, AgreementError> {
+        if description.len() > MAX_REVISION_TEXT_LEN {
+            return Err(AgreementError::InputTooLong);
+        }
+
+        let record = load_agreement(&env, &commission_id)?;
+        requester.require_auth();
+        if requester != record.client && requester != record.artist {
+            return Err(AgreementError::Unauthorized);
+        }
+        if record.status != AgreementStatus::Active {
+            return Err(AgreementError::InvalidStatus);
+        }
+
+        let now = env.ledger().sequence();
+        if deadline_ledger <= now {
+            return Err(AgreementError::DeadlineInPast);
+        }
+        let max_deadline = now
+            .checked_add(MAX_DEADLINE_OFFSET_LEDGERS)
+            .ok_or(AgreementError::ArithmeticOverflow)?;
+        if deadline_ledger > max_deadline {
+            return Err(AgreementError::DeadlineTooFar);
+        }
+
+        let mut revisions = load_revisions(&env, &commission_id);
+        let policy = load_revision_policy(&env, &commission_id);
+        if revisions.len() >= policy.max_revisions {
+            return Err(AgreementError::RevisionLimitReached);
+        }
+
+        let index = revisions.len();
+        let revision = RevisionRequest {
+            commission_id: commission_id.clone(),
+            requester: requester.clone(),
+            description,
+            deadline_ledger,
+            cost_adjustment,
+            status: RevisionStatus::Pending,
+            requested_ledger: now,
+            resolved_ledger: 0,
+            response_note: None,
+        };
+        revisions.push_back(revision);
+        save_revisions(&env, &commission_id, &revisions);
+
+        env.events().publish(
+            (symbol_short!("rev_new"),),
+            (commission_id, requester, index, cost_adjustment),
+        );
+        Ok(index)
+    }
+
+    /// The party that did *not* request the revision accepts or rejects it.
+    /// Acceptance applies `cost_adjustment` to `budget_usdc`; the result must
+    /// stay positive. Rejection leaves the agreement's terms untouched.
+    pub fn respond_to_revision(
+        env: Env,
+        commission_id: Bytes,
+        responder: Address,
+        revision_index: u32,
+        accept: bool,
+        note: String,
+    ) -> Result<(), AgreementError> {
+        if note.len() > MAX_REVISION_TEXT_LEN {
+            return Err(AgreementError::InputTooLong);
+        }
+
+        let mut record = load_agreement(&env, &commission_id)?;
+        responder.require_auth();
+        if responder != record.client && responder != record.artist {
+            return Err(AgreementError::Unauthorized);
+        }
+
+        let mut revisions = load_revisions(&env, &commission_id);
+        let mut rev = revisions
+            .get(revision_index)
+            .ok_or(AgreementError::RevisionNotFound)?;
+        if rev.status != RevisionStatus::Pending {
+            return Err(AgreementError::RevisionAlreadyResolved);
+        }
+        if responder == rev.requester {
+            return Err(AgreementError::RevisionSameParty);
+        }
+
+        let now = env.ledger().sequence();
+        if accept {
+            let new_budget = record
+                .budget_usdc
+                .checked_add(rev.cost_adjustment)
+                .ok_or(AgreementError::ArithmeticOverflow)?;
+            if new_budget <= 0 {
+                return Err(AgreementError::InvalidAmount);
+            }
+            record.budget_usdc = new_budget;
+            env.storage()
+                .persistent()
+                .set(&DataKey::Agreement(commission_id.clone()), &record);
+            rev.status = RevisionStatus::Accepted;
+        } else {
+            rev.status = RevisionStatus::Rejected;
+        }
+        rev.resolved_ledger = now;
+        rev.response_note = Some(note);
+        revisions.set(revision_index, rev);
+        save_revisions(&env, &commission_id, &revisions);
+
+        env.events().publish(
+            (symbol_short!("rev_res"),),
+            (commission_id, responder, revision_index, accept),
+        );
+        Ok(())
+    }
+
+    pub fn get_revisions(env: Env, commission_id: Bytes) -> Vec<RevisionRequest> {
+        load_revisions(&env, &commission_id)
+    }
+
+    pub fn get_revision(
+        env: Env,
+        commission_id: Bytes,
+        revision_index: u32,
+    ) -> Result<RevisionRequest, AgreementError> {
+        load_revisions(&env, &commission_id)
+            .get(revision_index)
+            .ok_or(AgreementError::RevisionNotFound)
+    }
+
+    pub fn get_revision_count(env: Env, commission_id: Bytes) -> u32 {
+        load_revisions(&env, &commission_id).len()
+    }
+
     // ── Agency support (closes #609) ───────────────────────────────────────
 
     /// Register an agency account. The agency address is its own identity and
@@ -1049,7 +1244,70 @@ impl CommissionAgreementContract {
     pub fn get_agency_analytics(env: Env, agency: Address) -> AgencyAnalytics {
         load_analytics(&env, &agency)
     }
+
+    // ── Health monitoring (#678) and gradual rollout (#684) ──────────────
+    pub fn health_check(env: Env) -> shared::health::HealthReport {
+        let report = shared::health::health_check(&env);
+        if report.anomaly {
+            shared::rollout::maybe_auto_rollback(&env);
+        }
+        report
+    }
+    pub fn get_health_metrics(env: Env) -> shared::health::HealthMetrics {
+        shared::health::get_metrics(&env)
+    }
+    pub fn get_sla_targets(env: Env) -> shared::health::SlaTargets {
+        let _ = env;
+        shared::health::sla_targets()
+    }
+    pub fn set_alert_config(env: Env, admin: Address, config: shared::health::AlertConfig) {
+        admin.require_auth();
+        shared::health::set_alert_config(&env, config);
+    }
+    pub fn get_alert_config(env: Env) -> shared::health::AlertConfig {
+        shared::health::get_alert_config(&env)
+    }
+    pub fn detect_anomaly(env: Env) -> bool {
+        shared::health::detect_anomaly(&env)
+    }
+    pub fn report_ok(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::health::record_ok(&env);
+    }
+    pub fn report_error(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::health::record_error(&env);
+    }
+    pub fn set_feature_flag(env: Env, admin: Address, flag: soroban_sdk::Symbol, enabled: bool) {
+        admin.require_auth();
+        shared::rollout::set_feature_flag(&env, &flag, enabled);
+    }
+    pub fn is_feature_enabled(env: Env, flag: soroban_sdk::Symbol) -> bool {
+        shared::rollout::is_feature_enabled(&env, &flag)
+    }
+    pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
+        admin.require_auth();
+        shared::rollout::set_canary_deployment(&env, canary, stable, canary_bps);
+    }
+    pub fn route_to_canary(env: Env, caller: Address) -> bool {
+        shared::rollout::route_to_canary(&env, &caller)
+    }
+    pub fn get_rollout_state(env: Env) -> shared::rollout::RolloutState {
+        shared::rollout::get_state(&env)
+    }
+    pub fn set_rollback_trigger(env: Env, admin: Address, error_bps: u32) {
+        admin.require_auth();
+        shared::rollout::set_rollback_trigger(&env, error_bps);
+    }
+    pub fn should_rollback(env: Env) -> bool {
+        shared::rollout::should_rollback(&env)
+    }
+    pub fn trigger_rollback(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::rollout::trigger_rollback(&env, &admin);
+    }
 }
+
 
 impl CommissionAgreementContract {
     /// True while the agreement is inside its free-cancellation window.

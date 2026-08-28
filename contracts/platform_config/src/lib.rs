@@ -1,3 +1,8 @@
+//! Platform Configuration Contract
+//!
+//! Protocol-wide parameters, fee governance, and admin authority delegation.
+//! Architecture Decision: [ADR-0005](../../docs/ADRs/0005-platform-fee-and-revenue-distribution.md)
+
 #![no_std]
 use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env};
 
@@ -8,6 +13,8 @@ pub mod types;
 use errors::ConfigError;
 use storage::*;
 use types::{FeeTokenMetadata, PlatformConfig};
+
+include!("../../semver_types.rs");
 
 #[contract]
 pub struct PlatformConfigContract;
@@ -31,9 +38,12 @@ impl PlatformConfigContract {
         set_fee_bps_val(&env, fee_bps);
         set_platform_wallet(&env, &platform_wallet);
         set_usdc_token(&env, &usdc_token);
-        env.events().publish((symbol_short!("init"),), (admin.clone(), fee_bps));
+        env.events()
+            .publish((symbol_short!("init"),), (admin.clone(), fee_bps));
         Ok(())
     }
+
+    impl_semver_queries!();
 
     pub fn get_config(env: Env) -> PlatformConfig {
         PlatformConfig {
@@ -52,7 +62,8 @@ impl PlatformConfigContract {
         }
         let old_fee = get_fee_bps(&env);
         set_fee_bps_val(&env, fee_bps);
-        env.events().publish((symbol_short!("feeupdtd"),), (old_fee, fee_bps));
+        env.events()
+            .publish((symbol_short!("feeupdtd"),), (old_fee, fee_bps));
         Ok(())
     }
 
@@ -67,7 +78,8 @@ impl PlatformConfigContract {
         let admin = get_admin(&env);
         admin.require_auth();
         set_pending_admin(&env, &new_admin);
-        env.events().publish((symbol_short!("admprosd"),), new_admin);
+        env.events()
+            .publish((symbol_short!("admprosd"),), new_admin);
         Ok(())
     }
 
@@ -92,7 +104,13 @@ impl PlatformConfigContract {
         if max_fee_bps > 1000 {
             return Err(ConfigError::InvalidFeeBps);
         }
-        let meta = FeeTokenMetadata { name, symbol, decimal, min_fee_bps, max_fee_bps };
+        let meta = FeeTokenMetadata {
+            name,
+            symbol,
+            decimal,
+            min_fee_bps,
+            max_fee_bps,
+        };
         set_fee_token_metadata(&env, &meta);
         env.events().publish((symbol_short!("tkmeta"),), ());
         Ok(())
@@ -101,7 +119,70 @@ impl PlatformConfigContract {
     pub fn get_token_metadata(env: Env) -> FeeTokenMetadata {
         get_fee_token_metadata(&env)
     }
+
+    // ── Health monitoring (#678) and gradual rollout (#684) ──────────────
+    pub fn health_check(env: Env) -> shared::health::HealthReport {
+        let report = shared::health::health_check(&env);
+        if report.anomaly {
+            shared::rollout::maybe_auto_rollback(&env);
+        }
+        report
+    }
+    pub fn get_health_metrics(env: Env) -> shared::health::HealthMetrics {
+        shared::health::get_metrics(&env)
+    }
+    pub fn get_sla_targets(env: Env) -> shared::health::SlaTargets {
+        let _ = env;
+        shared::health::sla_targets()
+    }
+    pub fn set_alert_config(env: Env, admin: Address, config: shared::health::AlertConfig) {
+        admin.require_auth();
+        shared::health::set_alert_config(&env, config);
+    }
+    pub fn get_alert_config(env: Env) -> shared::health::AlertConfig {
+        shared::health::get_alert_config(&env)
+    }
+    pub fn detect_anomaly(env: Env) -> bool {
+        shared::health::detect_anomaly(&env)
+    }
+    pub fn report_ok(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::health::record_ok(&env);
+    }
+    pub fn report_error(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::health::record_error(&env);
+    }
+    pub fn set_feature_flag(env: Env, admin: Address, flag: soroban_sdk::Symbol, enabled: bool) {
+        admin.require_auth();
+        shared::rollout::set_feature_flag(&env, &flag, enabled);
+    }
+    pub fn is_feature_enabled(env: Env, flag: soroban_sdk::Symbol) -> bool {
+        shared::rollout::is_feature_enabled(&env, &flag)
+    }
+    pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
+        admin.require_auth();
+        shared::rollout::set_canary_deployment(&env, canary, stable, canary_bps);
+    }
+    pub fn route_to_canary(env: Env, caller: Address) -> bool {
+        shared::rollout::route_to_canary(&env, &caller)
+    }
+    pub fn get_rollout_state(env: Env) -> shared::rollout::RolloutState {
+        shared::rollout::get_state(&env)
+    }
+    pub fn set_rollback_trigger(env: Env, admin: Address, error_bps: u32) {
+        admin.require_auth();
+        shared::rollout::set_rollback_trigger(&env, error_bps);
+    }
+    pub fn should_rollback(env: Env) -> bool {
+        shared::rollout::should_rollback(&env)
+    }
+    pub fn trigger_rollback(env: Env, admin: Address) {
+        admin.require_auth();
+        shared::rollout::trigger_rollback(&env, &admin);
+    }
 }
+
 
 #[cfg(test)]
 mod tests;

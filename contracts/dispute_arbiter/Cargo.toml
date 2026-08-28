@@ -3,11 +3,17 @@ name = "dispute_arbiter"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.stellar-aid]
+versioning = "semver"
+storage-schema = 1
+min-compatible = "0.1.0"
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 soroban-sdk.workspace = true
+shared = { path = "../shared" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }

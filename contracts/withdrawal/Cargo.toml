@@ -3,6 +3,11 @@ name = "withdrawal"
 version = "0.1.0"
 edition = "2021"
 
+[package.metadata.stellar-aid]
+versioning = "semver"
+storage-schema = 1
+min-compatible = "0.1.0"
+
 [lib]
 crate-type = ["cdylib"]
 

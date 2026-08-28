@@ -31,9 +31,11 @@ use soroban_sdk::{contracttype, symbol_short, Address, Env};
 
 // ── Version tracking ─────────────────────────────────────────────────────────
 
-/// Semantic version stored in instance storage (closes #595).
+/// Semantic version stored in instance storage (closes #595, #682).
+///
+/// Comparison and compatibility helpers live in [`crate::version`].
 #[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ContractVersion {
     pub major: u32,
     pub minor: u32,
@@ -51,7 +53,7 @@ pub enum UpgradeKey {
 /// Write `version` to instance storage and emit `upgrade_complete`.
 ///
 /// Must be called by the admin from inside a guarded upgrade entry point.
-/// Closes #595.
+/// Closes #595. Version constraint rules: `docs/VERSIONING.md` (#682).
 pub fn record_upgrade(env: &Env, admin: &Address, version: ContractVersion) {
     admin.require_auth();
     let prev: Option<ContractVersion> = env.storage().instance().get(&UpgradeKey::Version);

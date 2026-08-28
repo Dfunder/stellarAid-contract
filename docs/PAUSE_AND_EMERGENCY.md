@@ -6,6 +6,8 @@ This document describes how operators can pause and unpause contracts, and the e
 
 Contracts in this workspace implement a standard pause mechanism via the shared `pause` module (`contracts/shared/src/pause.rs`). When a contract is paused, all non-admin operations are blocked with a `"contract is paused"` panic.
 
+Scheduled and emergency pauses belong inside a **maintenance window**. See [MAINTENANCE_WINDOWS.md](./MAINTENANCE_WINDOWS.md) for pause order across all contracts, backup steps, and user-facing templates.
+
 ## Prerequisites
 
 - Admin address for the contract (set during initialization via PlatformConfig).

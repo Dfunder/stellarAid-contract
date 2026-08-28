@@ -22,21 +22,26 @@ pub enum AgreementError {
     /// Too many members (enforced at 10).
     TeamSizeLimit = 13,
     /// Input string exceeds the allowed maximum length (closes #591).
-    InputTooLong = 11,
+    InputTooLong = 10,
     /// Deadline exceeds the maximum permitted future ledger (closes #592).
-    DeadlineTooFar = 12,
+    DeadlineTooFar = 11,
     /// Milestone state transition is locked — a concurrent update is in
     /// progress; retry the operation. Closes #589.
-    MilestoneLocked = 10,
-    NotCancellable = 10,
-    AlreadyCancelled = 11,
-    InvalidPolicy = 12,
-    AgencyExists = 13,
-    AgencyNotFound = 14,
-    ArtistNotOnRoster = 15,
-    ArtistAlreadyRepresented = 16,
-    InvalidSplitBps = 17,
-    EmptyBatch = 18,
+    MilestoneLocked = 12,
+    NotCancellable = 13,
+    AlreadyCancelled = 14,
+    InvalidPolicy = 15,
+    AgencyExists = 16,
+    AgencyNotFound = 17,
+    ArtistNotOnRoster = 18,
+    ArtistAlreadyRepresented = 19,
+    InvalidSplitBps = 20,
+    EmptyBatch = 21,
+    // Revisions (#600)
+    RevisionNotFound = 22,
+    RevisionLimitReached = 23,
+    RevisionAlreadyResolved = 24,
+    RevisionSameParty = 25,
 }
 
 impl core::fmt::Display for AgreementError {
@@ -67,6 +72,10 @@ impl core::fmt::Display for AgreementError {
             Self::ArtistAlreadyRepresented => write!(f, "artist is already represented"),
             Self::InvalidSplitBps => write!(f, "split bps out of range"),
             Self::EmptyBatch => write!(f, "batch must contain at least one payment"),
+            Self::RevisionNotFound => write!(f, "revision not found"),
+            Self::RevisionLimitReached => write!(f, "revision limit reached for this agreement"),
+            Self::RevisionAlreadyResolved => write!(f, "revision has already been resolved"),
+            Self::RevisionSameParty => write!(f, "the requesting party cannot resolve their own revision"),
         }
     }
 }
@@ -90,7 +99,7 @@ pub fn get_suggestion(error: AgreementError) -> Symbol {
         AgreementError::InputTooLong => symbol_short!("TOO_LONG"),
         AgreementError::DeadlineTooFar => symbol_short!("FAR_DDL"),
         AgreementError::MilestoneLocked => symbol_short!("MS_LOCK"),
-        AgreementError::NotCancellable => symbol_short!("NO_CANCEL"),
+        AgreementError::NotCancellable => symbol_short!("NO_CANCL"),
         AgreementError::AlreadyCancelled => symbol_short!("CANCELLED"),
         AgreementError::InvalidPolicy => symbol_short!("BAD_POL"),
         AgreementError::AgencyExists => symbol_short!("AGY_DUP"),
@@ -99,5 +108,9 @@ pub fn get_suggestion(error: AgreementError) -> Symbol {
         AgreementError::ArtistAlreadyRepresented => symbol_short!("REPPED"),
         AgreementError::InvalidSplitBps => symbol_short!("BAD_BPS"),
         AgreementError::EmptyBatch => symbol_short!("NO_BATCH"),
+        AgreementError::RevisionNotFound => symbol_short!("NO_REV"),
+        AgreementError::RevisionLimitReached => symbol_short!("REV_MAX"),
+        AgreementError::RevisionAlreadyResolved => symbol_short!("REV_DONE"),
+        AgreementError::RevisionSameParty => symbol_short!("REV_SELF"),
     }
 }

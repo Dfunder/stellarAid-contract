@@ -1,3 +1,5 @@
+pub mod batch;
+pub mod compression;
 pub mod config;
 pub mod errors;
 pub mod horizon;

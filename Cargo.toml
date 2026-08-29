@@ -12,6 +12,7 @@ members = [
     "contracts/revenue_sharing",
     "contracts/recruitment",
     "contracts/creator_fund",
+    "sdk",
 ]
 resolver = "2"
 
@@ -28,3 +29,13 @@ min-compatible = "0.1.0"
 
 [workspace.dependencies]
 soroban-sdk = { version = "21.0.0" }
+stellar-strkey = "0.0.2"
+stellar-xdr = "21.0.0"
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+dotenvy = "0.15"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

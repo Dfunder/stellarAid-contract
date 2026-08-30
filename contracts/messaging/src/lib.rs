@@ -442,7 +442,6 @@ impl MessagingContract {
 mod test {
     use super::*;
     use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};
-    use soroban_sdk::{testutils::{Address as _, Ledger}, Env, String};
 
     #[test]
     fn test_create_conversation_and_send_message() {
@@ -685,13 +684,13 @@ mod test {
 
         client.initialize(&admin);
 
-        let v = client.get_version();
+        let v = MessagingContract::get_version(env.clone());
         assert_eq!(v.major, 0);
         assert_eq!(v.minor, 1);
         assert_eq!(v.patch, 0);
-        assert!(client.is_version_compatible(&0, &1, &0));
-        assert!(!client.is_version_compatible(&1, &0, &0));
-        let meta = client.get_version_metadata();
+        assert!(MessagingContract::is_version_compatible(env.clone(), 0, 1, 0));
+        assert!(!MessagingContract::is_version_compatible(env.clone(), 1, 0, 0));
+        let meta = MessagingContract::get_version_metadata(env);
         assert_eq!(meta.storage_schema, 1);
         assert_eq!(meta.min_compatible.major, 0);
         assert_eq!(meta.min_compatible.minor, 1);

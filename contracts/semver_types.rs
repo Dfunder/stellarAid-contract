@@ -82,6 +82,7 @@ pub(crate) fn is_compatible(current: &ContractVersion, required: &ContractVersio
 
 /// Install `get_version`, `get_version_metadata`, and `is_version_compatible`
 /// on a `#[contractimpl]` block. Uses this crate's Cargo.toml version.
+#[allow(unused_macros)]
 macro_rules! impl_semver_queries {
     () => {
         /// Return the contract semantic version (MAJOR.MINOR.PATCH) from Cargo.toml.

@@ -1,5 +1,9 @@
-use soroban_sdk::{contracttype, Address, Env};
+use soroban_sdk::{contracttype, Address, Env, Symbol};
 
+use crate::types::{AddressEnvironment, FeeTokenMetadata, ResolutionCacheEntry};
+
+/// Resolutions are considered fresh for this many ledgers (~5 days at 5s/ledger).
+pub const RESOLUTION_CACHE_TTL_LEDGERS: u32 = 86_400;
 use crate::types::{FeeTier, FeeTokenMetadata, Promotion, ReferralConfig};
 
 #[contracttype]
@@ -14,6 +18,12 @@ pub enum DataKey {
     TokenDecimal,
     MinFeeBps,
     MaxFeeBps,
+    /// Active deployment environment for unqualified resolutions.
+    ActiveEnvironment,
+    /// (env, name) -> Address
+    RegistryEntry(AddressEnvironment, Symbol),
+    /// (env, name) -> ResolutionCacheEntry
+    ResolutionCache(AddressEnvironment, Symbol),
     FeeTiers,
     Promotion,
     ReferralConfig,
@@ -104,6 +114,52 @@ pub fn set_fee_token_metadata(env: &Env, meta: &FeeTokenMetadata) {
     set_max_fee_bps(env, meta.max_fee_bps);
 }
 
+// ── Address registry + resolution cache (#662) ──────────────────────────────
+
+pub fn get_active_environment(env: &Env) -> AddressEnvironment {
+    env.storage()
+        .instance()
+        .get(&DataKey::ActiveEnvironment)
+        .unwrap_or(AddressEnvironment::Production)
+}
+pub fn set_active_environment(env: &Env, e: AddressEnvironment) {
+    env.storage().instance().set(&DataKey::ActiveEnvironment, &e);
+}
+
+pub fn get_registered_address(env: &Env, e: &AddressEnvironment, name: &Symbol) -> Option<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::RegistryEntry(e.clone(), name.clone()))
+}
+pub fn set_registered_address(env: &Env, e: &AddressEnvironment, name: &Symbol, address: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::RegistryEntry(e.clone(), name.clone()), address);
+}
+pub fn remove_registered_address(env: &Env, e: &AddressEnvironment, name: &Symbol) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::RegistryEntry(e.clone(), name.clone()));
+}
+
+pub fn get_resolution_cache(
+    env: &Env,
+    e: &AddressEnvironment,
+    name: &Symbol,
+) -> Option<ResolutionCacheEntry> {
+    env.storage()
+        .instance()
+        .get(&DataKey::ResolutionCache(e.clone(), name.clone()))
+}
+pub fn set_resolution_cache(env: &Env, e: &AddressEnvironment, name: &Symbol, entry: &ResolutionCacheEntry) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ResolutionCache(e.clone(), name.clone()), entry);
+}
+pub fn remove_resolution_cache(env: &Env, e: &AddressEnvironment, name: &Symbol) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::ResolutionCache(e.clone(), name.clone()));
 // ── Advanced fee structures (#690) ─────────────────────────────────────────
 
 /// All configured fee tiers, sorted ascending by `min_volume`.

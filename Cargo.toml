@@ -16,6 +16,7 @@ members = [
     "contracts/revenue_sharing",
     "contracts/recruitment",
     "contracts/creator_fund",
+    "tests/framework",
     "tests/upgrade_testing",
 ]
 resolver = "2"

@@ -9,11 +9,31 @@ use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Bytes, E
 
 pub mod errors;
 pub mod storage;
+pub mod cross_contract;
+
+pub use cross_contract::{AtomicCommitMarker, AtomicCommitState};
 
 use errors::EscrowError;
 use storage::{CommissionStatus, EscrowRecord, escrow_exists, get_escrow, save_escrow};
 
 include!("../../semver_types.rs");
+
+/// Emit a correlated event `(domain, action, "corr")` carrying a deterministic
+/// correlation id derived from the shared operation key (#661).
+///
+/// Off-chain indexers join these events on the id + key to reconstruct the
+/// cross-contract trace of a logical operation.
+fn correlation_publish(
+    env: &Env,
+    domain: &str,
+    action: soroban_sdk::Symbol,
+    id: &Bytes,
+    key: &Bytes,
+) {
+    let scope = shared::correlation::scope(env, domain);
+    let cid = shared::correlation::CorrelationId::derive(env, &scope, &[id]);
+    shared::correlation::publish(env, soroban_sdk::Symbol::new(env, domain), action, &cid, key);
+}
 
 // ── Pause helpers (closes #594) ─────────────────────────────────────────────
 
@@ -88,7 +108,33 @@ impl EscrowContract {
         Ok(())
     }
 
-    impl_semver_queries!();
+    /// Return the contract semantic version (MAJOR.MINOR.PATCH) from Cargo.toml.
+    pub fn get_version(_env: Env) -> ContractVersion {
+        parse_pkg_semver(env!("CARGO_PKG_VERSION"))
+    }
+
+    /// Return crate name, semver, min-compatible client version, and storage schema.
+    pub fn get_version_metadata(env: Env) -> VersionMetadata {
+        let version = parse_pkg_semver(env!("CARGO_PKG_VERSION"));
+        VersionMetadata {
+            name: soroban_sdk::String::from_str(&env, env!("CARGO_PKG_NAME")),
+            min_compatible: min_compatible_for(&version),
+            version,
+            storage_schema: CURRENT_STORAGE_SCHEMA,
+        }
+    }
+
+    /// Return `true` if this WASM can serve a client that requires `(major, minor, patch)`.
+    pub fn is_version_compatible(_env: Env, major: u32, minor: u32, patch: u32) -> bool {
+        is_compatible(
+            &parse_pkg_semver(env!("CARGO_PKG_VERSION")),
+            &ContractVersion {
+                major,
+                minor,
+                patch,
+            },
+        )
+    }
 
     /// Pause the escrow contract — blocks `create_escrow` and `refund_client`.
     /// Only callable by the escrow admin set during `initialize`.
@@ -183,6 +229,7 @@ impl EscrowContract {
                 (symbol_short!("escrow"), symbol_short!("created")),
                 (commission_id.clone(), amount),
             );
+            correlation_publish(&env, "escrow", symbol_short!("created"), &commission_id, &commission_id);
             Ok(())
         })
     }
@@ -549,6 +596,93 @@ impl EscrowContract {
         Ok(storage::get_escrow(&env, &commission_id))
     }
 
+    // ── Atomic escrow-to-commission flow (closes #656) ────────────────────
+    //
+    // Public entry points over the orchestration in `cross_contract`. The
+    // multi-step begin/confirm/finalize/rollback markers coordinate the two
+    // sides across transactions; `atomic_escrow_to_commission` performs the
+    // single all-or-nothing fund migration guard with the host's atomicity.
+
+    /// Open a commit marker for an escrow that will migrate into a commission.
+    pub fn begin_atomic_commit(
+        env: Env,
+        commission_id: Bytes,
+    ) -> Result<AtomicCommitMarker, EscrowError> {
+        cross_contract::begin_atomic_commit(&env, &commission_id)
+    }
+
+    /// Record one participant’s readiness confirmation.
+    pub fn confirm_atomic_step(
+        env: Env,
+        commission_id: Bytes,
+        from: Address,
+    ) -> Result<u32, EscrowError> {
+        cross_contract::confirm_atomic_step(&env, &commission_id, from)
+    }
+
+    /// Aware both sides confirmed: mark the flow settled and the escrow released.
+    pub fn finalize_atomic_commit(
+        env: Env,
+        commission_id: Bytes,
+    ) -> Result<AtomicCommitMarker, EscrowError> {
+        cross_contract::finalize_atomic_commit(&env, &commission_id)
+    }
+
+    /// Abandon the flow before any funds moved; escrow stays intact.
+    pub fn rollback_atomic_commit(
+        env: Env,
+        commission_id: Bytes,
+    ) -> Result<AtomicCommitMarker, EscrowError> {
+        cross_contract::rollback_atomic_commit(&env, &commission_id)
+    }
+
+    /// Read the current commit marker.
+    pub fn get_atomic_commit(
+        env: Env,
+        commission_id: Bytes,
+    ) -> Result<AtomicCommitMarker, EscrowError> {
+        if !storage::atomic_marker_exists(&env, &commission_id) {
+            return Err(EscrowError::NotFound);
+        }
+        Ok(storage::get_atomic_marker(&env, &commission_id))
+    }
+
+    /// Cross-contract consistency probe: does the commission agreement expect
+    /// exactly `expected_amount` escrowed for this id?
+    pub fn verify_agreement_consistency(
+        env: Env,
+        commission_contract: Address,
+        commission_id: Bytes,
+        expected_amount: i128,
+    ) -> Result<bool, EscrowError> {
+        cross_contract::verify_agreement_consistency(
+            &env,
+            &commission_contract,
+            &commission_id,
+            expected_amount,
+        )
+    }
+
+    /// Atomic, single-transaction escrow→commission migration.
+    ///
+    /// Verifies the commission side agrees with the escrowed amount, then moves
+    /// the escrowed balance (minus the platform fee) to the commission contract
+    /// and the fee to the platform wallet. Any failed check or transfer aborts
+    /// the whole transaction — nothing is left half-migrated (#656).
+    pub fn atomic_escrow_to_commission(
+        env: Env,
+        commission_id: Bytes,
+        config_contract: Address,
+        commission_contract: Address,
+    ) -> Result<AtomicCommitMarker, EscrowError> {
+        cross_contract::atomic_escrow_to_commission(
+            &env,
+            &commission_id,
+            &config_contract,
+            &commission_contract,
+        )
+    }
+
     // ── Health monitoring (#678) and gradual rollout (#684) ──────────────
     pub fn health_check(env: Env) -> shared::health::HealthReport {
         let report = shared::health::health_check(&env);
@@ -627,3 +761,7 @@ mod storage_edge_tests;
 mod cancellation_tests;
 #[cfg(test)]
 mod integration_tests;
+#[cfg(test)]
+mod atomic_flow_tests;
+#[cfg(test)]
+mod correlation_tests;

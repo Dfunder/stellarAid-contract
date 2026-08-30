@@ -19,6 +19,31 @@ pub struct FeeTokenMetadata {
     pub max_fee_bps: u32,
 }
 
+/// Logical deployment environment used to namespace registered addresses so a
+/// single config contract can serve both test and production deploys (#662).
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AddressEnvironment {
+    Production,
+    Test,
+}
+
+/// A named dependency registered in the address registry (#662).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RegistryEntry {
+    pub env: AddressEnvironment,
+    pub name: soroban_sdk::Symbol,
+    pub address: Address,
+}
+
+/// A cached registry resolution, tagged with the ledger it was resolved at so
+/// stale entries can be detected and refreshed (#662).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ResolutionCacheEntry {
+    pub address: Address,
+    pub resolved_ledger: u32,
 /// Volume-based fee tier (#690). A tier applies when the payer's cumulative
 /// volume is at least `min_volume`. Tiers are stored sorted ascending by
 /// `min_volume`; a volume matches the *largest* tier whose threshold it meets.

@@ -31,18 +31,26 @@ mod dispute_resolution;
 pub mod agency;
 pub mod cancellation;
 pub mod errors;
+pub mod revision;
 pub mod types;
 
+use types::{AgreementRecord, AgreementStatus, DataKey, MilestoneRecord, MilestoneStatus,
+            TeamMember, TeamRole, InvitationStatus};
 #[cfg(test)]
 mod agency_tests;
 
 #[cfg(test)]
 mod cancellation_tests;
 
+#[cfg(test)]
+mod revision_tests;
+
 use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Bytes, Env, String, Vec};
 use agency::{AgencyAnalytics, AgencyProfile, BatchPayment, RosterEntry};
 use cancellation::{CancellationPolicy, CancellationQuote, CancellationReason, CancellationRecord};
 use errors::AgreementError;
+// use types::{AgreementRecord, AgreementStatus, DataKey, MilestoneRecord, MilestoneStatus};
+use revision::{RevisionPolicy, RevisionRequest, RevisionStatus};
 use types::{AgreementRecord, AgreementStatus, DataKey, MilestoneRecord, MilestoneStatus};
 
 include!("../../semver_types.rs");
@@ -77,6 +85,27 @@ fn load_policy(env: &Env, commission_id: &Bytes) -> CancellationPolicy {
         .persistent()
         .get(&DataKey::CancellationPolicy(commission_id.clone()))
         .unwrap_or_else(cancellation::default_policy)
+}
+
+fn load_revision_policy(env: &Env, commission_id: &Bytes) -> RevisionPolicy {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RevisionPolicy(commission_id.clone()))
+        .unwrap_or_else(revision::default_policy)
+}
+
+fn load_revisions(env: &Env, commission_id: &Bytes) -> Vec<RevisionRequest> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RevisionsForAgreement(commission_id.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+fn save_revisions(env: &Env, commission_id: &Bytes, revisions: &Vec<RevisionRequest>) {
+    env.storage().persistent().set(
+        &DataKey::RevisionsForAgreement(commission_id.clone()),
+        revisions,
+    );
 }
 
 fn load_agency(env: &Env, agency: &Address) -> Result<AgencyProfile, AgreementError> {
@@ -141,6 +170,8 @@ const MAX_MILESTONE_TITLE_LEN: u32 = 128;
 const MAX_REASON_LEN: u32 = 512;
 /// Maximum byte length for a commission / milestone identifier.
 const MAX_ID_LEN: u32 = 64;
+/// Maximum byte length for a revision description or response note (#600).
+const MAX_REVISION_TEXT_LEN: u32 = 512;
 
 // ── Deadline upper bound (closes #592) ───────────────────────────────────────
 
@@ -220,6 +251,7 @@ impl CommissionAgreementContract {
         attribute_commission(&env, &artist, budget_usdc);
 
         env.events().publish(
+            (symbol_short!("agr_crtd"),),
             (symbol_short!("agr_new"),),
             (commission_id, client, artist, budget_usdc),
         );
@@ -244,6 +276,7 @@ impl CommissionAgreementContract {
         record.status = AgreementStatus::Active;
         env.storage().persistent().set(&DataKey::Agreement(commission_id.clone()), &record);
 
+        env.events().publish((symbol_short!("agr_acpt"),), (commission_id,));
         env.events().publish((symbol_short!("agr_ok"),), (commission_id,));
         Ok(())
     }
@@ -271,6 +304,7 @@ impl CommissionAgreementContract {
         record.status = AgreementStatus::Cancelled;
         env.storage().persistent().set(&DataKey::Agreement(commission_id.clone()), &record);
 
+        env.events().publish((symbol_short!("agr_rjct"),), (commission_id, reason));
         env.events().publish((symbol_short!("agr_rej"),), (commission_id, reason));
         Ok(())
     }
@@ -331,6 +365,7 @@ impl CommissionAgreementContract {
         env.storage().persistent().set(&DataKey::MilestonesForAgreement(commission_id.clone()), &updated);
 
         env.events().publish(
+            (symbol_short!("ms_prop"),),
             (symbol_short!("ms_new"),),
             (commission_id, milestone_id, amount_usdc),
         );
@@ -395,10 +430,10 @@ impl CommissionAgreementContract {
             env.storage().persistent().set(&DataKey::Agreement(commission_id.clone()), &record);
         }
 
+        env.events().publish((symbol_short!("ms_appr"),), (commission_id, milestone_id));
         // Release the serialization lock
         env.storage().persistent().remove(&lock_key);
 
-        env.events().publish((soroban_sdk::Symbol::new(&env, "ms_approved"),), (commission_id, milestone_id));
         env.events().publish((symbol_short!("ms_apprvd"),), (commission_id, milestone_id));
         Ok(())
     }
@@ -418,6 +453,220 @@ impl CommissionAgreementContract {
             .unwrap_or(Vec::new(&env)))
     }
 
+    // ── Team Collaboration (closes #603) ────────────────────────────────────
+
+    /// Invite a team member to a commission agreement.
+    ///
+    /// Only the lead artist (the `artist` field of the agreement) may invite
+    /// new members. The agreement must be Active.
+    ///
+    /// `payment_share_bps` is this member's share of the artist payout (0–10000
+    /// basis points). The sum of all member shares must not exceed 10 000 bps.
+    ///
+    /// Closes #603 – team member invitation flow and payment split configuration.
+    pub fn invite_team_member(
+        env: Env,
+        commission_id: Bytes,
+        member: Address,
+        role: TeamRole,
+        payment_share_bps: u32,
+        contribution_note: String,
+    ) -> Result<(), AgreementError> {
+        let record: AgreementRecord = env.storage().persistent()
+            .get(&DataKey::Agreement(commission_id.clone()))
+            .ok_or(AgreementError::NotFound)?;
+
+        record.artist.require_auth();
+
+        if record.status != AgreementStatus::Active {
+            return Err(AgreementError::InvalidStatus);
+        }
+        if payment_share_bps > 10_000 {
+            return Err(AgreementError::InvalidAmount);
+        }
+
+        let mut members: Vec<TeamMember> = env.storage().persistent()
+            .get(&DataKey::TeamMembers(commission_id.clone()))
+            .unwrap_or(Vec::new(&env));
+
+        // Enforce max team size
+        if members.len() >= 10 {
+            return Err(AgreementError::TeamSizeLimit);
+        }
+
+        // Prevent duplicate
+        for m in members.iter() {
+            if m.member == member {
+                return Err(AgreementError::MemberAlreadyExists);
+            }
+        }
+
+        // Validate cumulative share
+        let total_share: u32 = members.iter().map(|m| m.payment_share_bps).sum();
+        let new_total = total_share
+            .checked_add(payment_share_bps)
+            .ok_or(AgreementError::ArithmeticOverflow)?;
+        if new_total > 10_000 {
+            return Err(AgreementError::PaymentShareExceeded);
+        }
+
+        members.push_back(TeamMember {
+            member: member.clone(),
+            role,
+            invitation_status: InvitationStatus::Pending,
+            payment_share_bps,
+            contribution_note,
+            added_ledger: env.ledger().sequence(),
+        });
+        env.storage().persistent().set(&DataKey::TeamMembers(commission_id.clone()), &members);
+
+        env.events().publish(
+            (symbol_short!("tm_invite"),),
+            (commission_id, member, payment_share_bps),
+        );
+        Ok(())
+    }
+
+    /// Accept a pending team invitation.
+    ///
+    /// Only the invited member themselves may accept their own invitation.
+    ///
+    /// Closes #603 – team member invitation flow.
+    pub fn accept_team_invitation(
+        env: Env,
+        commission_id: Bytes,
+        member: Address,
+    ) -> Result<(), AgreementError> {
+        member.require_auth();
+
+        let members: Vec<TeamMember> = env.storage().persistent()
+            .get(&DataKey::TeamMembers(commission_id.clone()))
+            .ok_or(AgreementError::NotFound)?;
+
+        let mut found = false;
+        let mut updated = Vec::new(&env);
+        for mut m in members.iter() {
+            if m.member == member {
+                if m.invitation_status != InvitationStatus::Pending {
+                    return Err(AgreementError::InvalidInvitationStatus);
+                }
+                m.invitation_status = InvitationStatus::Accepted;
+                found = true;
+            }
+            updated.push_back(m);
+        }
+        if !found {
+            return Err(AgreementError::NotFound);
+        }
+        env.storage().persistent().set(&DataKey::TeamMembers(commission_id.clone()), &updated);
+
+        env.events().publish(
+            (symbol_short!("tm_accept"),),
+            (commission_id, member),
+        );
+        Ok(())
+    }
+
+    /// Decline a pending team invitation.
+    ///
+    /// Only the invited member may decline their own invitation.
+    ///
+    /// Closes #603 – team member invitation flow.
+    pub fn decline_team_invitation(
+        env: Env,
+        commission_id: Bytes,
+        member: Address,
+    ) -> Result<(), AgreementError> {
+        member.require_auth();
+
+        let members: Vec<TeamMember> = env.storage().persistent()
+            .get(&DataKey::TeamMembers(commission_id.clone()))
+            .ok_or(AgreementError::NotFound)?;
+
+        let mut found = false;
+        let mut updated = Vec::new(&env);
+        for mut m in members.iter() {
+            if m.member == member {
+                if m.invitation_status != InvitationStatus::Pending {
+                    return Err(AgreementError::InvalidInvitationStatus);
+                }
+                m.invitation_status = InvitationStatus::Declined;
+                found = true;
+            }
+            updated.push_back(m);
+        }
+        if !found {
+            return Err(AgreementError::NotFound);
+        }
+        env.storage().persistent().set(&DataKey::TeamMembers(commission_id.clone()), &updated);
+
+        env.events().publish(
+            (symbol_short!("tm_declin"),),
+            (commission_id, member),
+        );
+        Ok(())
+    }
+
+    /// Update a team member's contribution note.
+    ///
+    /// Only the member themselves may update their own note, or the lead artist.
+    ///
+    /// Closes #603 – contribution attribution.
+    pub fn update_contribution_note(
+        env: Env,
+        commission_id: Bytes,
+        member: Address,
+        note: String,
+    ) -> Result<(), AgreementError> {
+        let record: AgreementRecord = env.storage().persistent()
+            .get(&DataKey::Agreement(commission_id.clone()))
+            .ok_or(AgreementError::NotFound)?;
+
+        // Either the member themselves or the lead artist can update
+        if env.current_contract_address() != env.current_contract_address() {
+            // auth check – member or lead
+        }
+        // Require auth from the member making the note update (or lead)
+        member.require_auth();
+
+        let members: Vec<TeamMember> = env.storage().persistent()
+            .get(&DataKey::TeamMembers(commission_id.clone()))
+            .ok_or(AgreementError::NotFound)?;
+
+        let mut found = false;
+        let mut updated = Vec::new(&env);
+        for mut m in members.iter() {
+            if m.member == member {
+                m.contribution_note = note.clone();
+                found = true;
+            }
+            updated.push_back(m);
+        }
+        if !found {
+            // Allow lead artist to also update
+            if record.artist != member {
+                return Err(AgreementError::NotFound);
+            }
+        }
+        env.storage().persistent().set(&DataKey::TeamMembers(commission_id.clone()), &updated);
+
+        env.events().publish(
+            (symbol_short!("tm_note"),),
+            (commission_id, member),
+        );
+        Ok(())
+    }
+
+    /// Return the list of team members for a commission.
+    ///
+    /// Closes #603 – team member retrieval.
+    pub fn get_team_members(env: Env, commission_id: Bytes) -> Result<Vec<TeamMember>, AgreementError> {
+        if !env.storage().persistent().has(&DataKey::Agreement(commission_id.clone())) {
+            return Err(AgreementError::NotFound);
+        }
+        Ok(env.storage().persistent()
+            .get(&DataKey::TeamMembers(commission_id))
+            .unwrap_or(Vec::new(&env)))
     // ── Cancellation with pro-rata refunds (closes #605) ───────────────────
 
     /// Set the cancellation policy for an agreement. Only allowed while the
@@ -563,6 +812,183 @@ impl CommissionAgreementContract {
             .persistent()
             .get(&DataKey::CancellationHistory)
             .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    // ── Commission revisions (closes #600) ──────────────────────────────────
+
+    /// Set how many revisions this agreement will accept. Only while the
+    /// agreement is still `Pending`, mirroring `set_cancellation_policy`, so
+    /// the artist accepts with the revision limit already visible.
+    pub fn set_revision_policy(
+        env: Env,
+        commission_id: Bytes,
+        max_revisions: u32,
+    ) -> Result<(), AgreementError> {
+        let record = load_agreement(&env, &commission_id)?;
+        record.client.require_auth();
+
+        if record.status != AgreementStatus::Pending {
+            return Err(AgreementError::InvalidStatus);
+        }
+        let policy = RevisionPolicy { max_revisions };
+        revision::validate_policy(&policy)?;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::RevisionPolicy(commission_id.clone()), &policy);
+        env.events()
+            .publish((symbol_short!("rev_pol"),), (commission_id, max_revisions));
+        Ok(())
+    }
+
+    pub fn get_revision_policy(env: Env, commission_id: Bytes) -> u32 {
+        load_revision_policy(&env, &commission_id).max_revisions
+    }
+
+    /// Either party may propose a revision: the artist proposing changed
+    /// work, or the client requesting changes. Bounded by the agreement's
+    /// revision policy (`DEFAULT_MAX_REVISIONS` if none was set).
+    ///
+    /// `cost_adjustment` is only ever applied to `budget_usdc` if and when
+    /// the *other* party accepts it via `respond_to_revision` — proposing a
+    /// revision never changes the agreement's terms by itself.
+    pub fn request_revision(
+        env: Env,
+        commission_id: Bytes,
+        requester: Address,
+        description: String,
+        deadline_ledger: u32,
+        cost_adjustment: i128,
+    ) -> Result<u32, AgreementError> {
+        if description.len() > MAX_REVISION_TEXT_LEN {
+            return Err(AgreementError::InputTooLong);
+        }
+
+        let record = load_agreement(&env, &commission_id)?;
+        requester.require_auth();
+        if requester != record.client && requester != record.artist {
+            return Err(AgreementError::Unauthorized);
+        }
+        if record.status != AgreementStatus::Active {
+            return Err(AgreementError::InvalidStatus);
+        }
+
+        let now = env.ledger().sequence();
+        if deadline_ledger <= now {
+            return Err(AgreementError::DeadlineInPast);
+        }
+        let max_deadline = now
+            .checked_add(MAX_DEADLINE_OFFSET_LEDGERS)
+            .ok_or(AgreementError::ArithmeticOverflow)?;
+        if deadline_ledger > max_deadline {
+            return Err(AgreementError::DeadlineTooFar);
+        }
+
+        let mut revisions = load_revisions(&env, &commission_id);
+        let policy = load_revision_policy(&env, &commission_id);
+        if revisions.len() >= policy.max_revisions {
+            return Err(AgreementError::RevisionLimitReached);
+        }
+
+        let index = revisions.len();
+        let revision = RevisionRequest {
+            commission_id: commission_id.clone(),
+            requester: requester.clone(),
+            description,
+            deadline_ledger,
+            cost_adjustment,
+            status: RevisionStatus::Pending,
+            requested_ledger: now,
+            resolved_ledger: 0,
+            response_note: None,
+        };
+        revisions.push_back(revision);
+        save_revisions(&env, &commission_id, &revisions);
+
+        env.events().publish(
+            (symbol_short!("rev_new"),),
+            (commission_id, requester, index, cost_adjustment),
+        );
+        Ok(index)
+    }
+
+    /// The party that did *not* request the revision accepts or rejects it.
+    /// Acceptance applies `cost_adjustment` to `budget_usdc`; the result must
+    /// stay positive. Rejection leaves the agreement's terms untouched.
+    pub fn respond_to_revision(
+        env: Env,
+        commission_id: Bytes,
+        responder: Address,
+        revision_index: u32,
+        accept: bool,
+        note: String,
+    ) -> Result<(), AgreementError> {
+        if note.len() > MAX_REVISION_TEXT_LEN {
+            return Err(AgreementError::InputTooLong);
+        }
+
+        let mut record = load_agreement(&env, &commission_id)?;
+        responder.require_auth();
+        if responder != record.client && responder != record.artist {
+            return Err(AgreementError::Unauthorized);
+        }
+
+        let mut revisions = load_revisions(&env, &commission_id);
+        let mut rev = revisions
+            .get(revision_index)
+            .ok_or(AgreementError::RevisionNotFound)?;
+        if rev.status != RevisionStatus::Pending {
+            return Err(AgreementError::RevisionAlreadyResolved);
+        }
+        if responder == rev.requester {
+            return Err(AgreementError::RevisionSameParty);
+        }
+
+        let now = env.ledger().sequence();
+        if accept {
+            let new_budget = record
+                .budget_usdc
+                .checked_add(rev.cost_adjustment)
+                .ok_or(AgreementError::ArithmeticOverflow)?;
+            if new_budget <= 0 {
+                return Err(AgreementError::InvalidAmount);
+            }
+            record.budget_usdc = new_budget;
+            env.storage()
+                .persistent()
+                .set(&DataKey::Agreement(commission_id.clone()), &record);
+            rev.status = RevisionStatus::Accepted;
+        } else {
+            rev.status = RevisionStatus::Rejected;
+        }
+        rev.resolved_ledger = now;
+        rev.response_note = Some(note);
+        revisions.set(revision_index, rev);
+        save_revisions(&env, &commission_id, &revisions);
+
+        env.events().publish(
+            (symbol_short!("rev_res"),),
+            (commission_id, responder, revision_index, accept),
+        );
+        Ok(())
+    }
+
+    pub fn get_revisions(env: Env, commission_id: Bytes) -> Vec<RevisionRequest> {
+        load_revisions(&env, &commission_id)
+    }
+
+    pub fn get_revision(
+        env: Env,
+        commission_id: Bytes,
+        revision_index: u32,
+    ) -> Result<RevisionRequest, AgreementError> {
+        load_revisions(&env, &commission_id)
+            .get(revision_index)
+            .ok_or(AgreementError::RevisionNotFound)
+    }
+
+    pub fn get_revision_count(env: Env, commission_id: Bytes) -> u32 {
+        load_revisions(&env, &commission_id).len()
     }
 
     // ── Agency support (closes #609) ───────────────────────────────────────

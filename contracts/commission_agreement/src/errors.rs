@@ -13,7 +13,14 @@ pub enum AgreementError {
     MilestoneBudgetExceeded = 7,
     NotAllMilestonesApproved = 8,
     ArithmeticOverflow = 9,
-    MilestoneLocked = 10,
+    /// Team member is already part of this agreement.
+    MemberAlreadyExists = 10,
+    /// The sum of payment shares would exceed 10 000 bps (100 %).
+    PaymentShareExceeded = 11,
+    /// Invitation is in a terminal state and cannot be changed.
+    InvalidInvitationStatus = 12,
+    /// Too many members (enforced at 10).
+    TeamSizeLimit = 13,
     /// Input string exceeds the allowed maximum length (closes #591).
     InputTooLong = 10,
     /// Deadline exceeds the maximum permitted future ledger (closes #592).
@@ -30,16 +37,11 @@ pub enum AgreementError {
     ArtistAlreadyRepresented = 19,
     InvalidSplitBps = 20,
     EmptyBatch = 21,
-    DeadlineTooFar = 12,
-    AgencyExists = 13,
-    AgencyNotFound = 14,
-    ArtistNotOnRoster = 15,
-    ArtistAlreadyRepresented = 16,
-    InvalidSplitBps = 17,
-    EmptyBatch = 18,
-    NotCancellable = 19,
-    AlreadyCancelled = 20,
-    InvalidPolicy = 21,
+    // Revisions (#600)
+    RevisionNotFound = 22,
+    RevisionLimitReached = 23,
+    RevisionAlreadyResolved = 24,
+    RevisionSameParty = 25,
 }
 
 impl core::fmt::Display for AgreementError {
@@ -54,6 +56,10 @@ impl core::fmt::Display for AgreementError {
             Self::MilestoneBudgetExceeded => write!(f, "milestone budget exceeded"),
             Self::NotAllMilestonesApproved => write!(f, "not all milestones approved"),
             Self::ArithmeticOverflow => write!(f, "arithmetic operation would overflow"),
+            Self::MemberAlreadyExists => write!(f, "member already in team"),
+            Self::PaymentShareExceeded => write!(f, "total payment shares would exceed 100 %"),
+            Self::InvalidInvitationStatus => write!(f, "invitation is in a terminal state"),
+            Self::TeamSizeLimit => write!(f, "team member limit reached (max 10)"),
             Self::InputTooLong => write!(f, "input string exceeds maximum allowed length"),
             Self::DeadlineTooFar => write!(f, "deadline exceeds the maximum permitted future date"),
             Self::MilestoneLocked => write!(f, "milestone is locked for concurrent update; retry"),
@@ -66,10 +72,15 @@ impl core::fmt::Display for AgreementError {
             Self::ArtistAlreadyRepresented => write!(f, "artist is already represented"),
             Self::InvalidSplitBps => write!(f, "split bps out of range"),
             Self::EmptyBatch => write!(f, "batch must contain at least one payment"),
+            Self::RevisionNotFound => write!(f, "revision not found"),
+            Self::RevisionLimitReached => write!(f, "revision limit reached for this agreement"),
+            Self::RevisionAlreadyResolved => write!(f, "revision has already been resolved"),
+            Self::RevisionSameParty => write!(f, "the requesting party cannot resolve their own revision"),
         }
     }
 }
 
+#[allow(dead_code)]
 pub fn get_suggestion(error: AgreementError) -> Symbol {
     match error {
         AgreementError::AlreadyExists => symbol_short!("DUP"),
@@ -81,6 +92,10 @@ pub fn get_suggestion(error: AgreementError) -> Symbol {
         AgreementError::MilestoneBudgetExceeded => symbol_short!("OVER_BUD"),
         AgreementError::NotAllMilestonesApproved => symbol_short!("NOT_ALL"),
         AgreementError::ArithmeticOverflow => symbol_short!("OVERFL"),
+        AgreementError::MemberAlreadyExists => symbol_short!("DUP_MBR"),
+        AgreementError::PaymentShareExceeded => symbol_short!("SHRE_LIM"),
+        AgreementError::InvalidInvitationStatus => symbol_short!("BAD_INV"),
+        AgreementError::TeamSizeLimit => symbol_short!("TEAM_LIM"),
         AgreementError::InputTooLong => symbol_short!("TOO_LONG"),
         AgreementError::DeadlineTooFar => symbol_short!("FAR_DDL"),
         AgreementError::MilestoneLocked => symbol_short!("MS_LOCK"),
@@ -93,5 +108,9 @@ pub fn get_suggestion(error: AgreementError) -> Symbol {
         AgreementError::ArtistAlreadyRepresented => symbol_short!("REPPED"),
         AgreementError::InvalidSplitBps => symbol_short!("BAD_BPS"),
         AgreementError::EmptyBatch => symbol_short!("NO_BATCH"),
+        AgreementError::RevisionNotFound => symbol_short!("NO_REV"),
+        AgreementError::RevisionLimitReached => symbol_short!("REV_MAX"),
+        AgreementError::RevisionAlreadyResolved => symbol_short!("REV_DONE"),
+        AgreementError::RevisionSameParty => symbol_short!("REV_SELF"),
     }
 }

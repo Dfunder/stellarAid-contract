@@ -1,5 +1,12 @@
-//! Compile-time semantic version helpers included by contracts that do not
-//! depend on `shared`. Keep in lockstep with `shared::version` (closes #682).
+// Compile-time semantic version helpers included by contracts that do not
+// depend on `shared`. Keep in lockstep with `shared::version` (closes #682).
+//
+// NOTE: this file is brought in via `include!("../../semver_types.rs")` from
+// an arbitrary position inside each contract's `lib.rs` (typically after some
+// `use` statements), so its module-level doc comment must use regular `//`
+// comments rather than inner doc comments (`//!`) — `//!` is only legal as
+// the very first item in a file/module, which does not hold once it is
+// textually spliced in mid-file.
 
 #[soroban_sdk::contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -75,6 +82,7 @@ pub(crate) fn is_compatible(current: &ContractVersion, required: &ContractVersio
 
 /// Install `get_version`, `get_version_metadata`, and `is_version_compatible`
 /// on a `#[contractimpl]` block. Uses this crate's Cargo.toml version.
+#[allow(unused_macros)]
 macro_rules! impl_semver_queries {
     () => {
         /// Return the contract semantic version (MAJOR.MINOR.PATCH) from Cargo.toml.

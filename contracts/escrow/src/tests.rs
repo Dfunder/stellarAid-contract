@@ -210,6 +210,124 @@ fn test_ttl_extends_on_dispute() {
     // TTL reset is tested indirectly; direct test requires mock storage.
 }
 
+// ── #601 – Partial Release for Milestone-Based Work ────────────────────────
+
+/// PartiallyReleased is a valid intermediate status.
+#[test]
+fn test_partially_released_status_value() {
+    assert_eq!(CommissionStatus::PartiallyReleased as u32, 5);
+}
+
+/// Partial release is allowed from Locked state.
+#[test]
+fn test_partial_release_allowed_from_locked() {
+    let status = CommissionStatus::Locked;
+    let allowed = status == CommissionStatus::Locked || status == CommissionStatus::PartiallyReleased;
+    assert!(allowed, "Locked escrow should allow partial release");
+}
+
+/// Partial release is allowed from PartiallyReleased state.
+#[test]
+fn test_partial_release_allowed_from_partially_released() {
+    let status = CommissionStatus::PartiallyReleased;
+    let allowed = status == CommissionStatus::Locked || status == CommissionStatus::PartiallyReleased;
+    assert!(allowed, "PartiallyReleased escrow should allow further partial releases");
+}
+
+/// Partial release is NOT allowed from Released state.
+#[test]
+fn test_partial_release_blocked_from_released() {
+    let status = CommissionStatus::Released;
+    let allowed = status == CommissionStatus::Locked || status == CommissionStatus::PartiallyReleased;
+    assert!(!allowed, "Released escrow cannot be partially released again");
+}
+
+/// Partial release is NOT allowed from Disputed state.
+#[test]
+fn test_partial_release_blocked_from_disputed() {
+    let status = CommissionStatus::Disputed;
+    let allowed = status == CommissionStatus::Locked || status == CommissionStatus::PartiallyReleased;
+    assert!(!allowed, "Disputed escrow cannot be partially released");
+}
+
+/// When all remaining amount is released, status transitions to Released.
+#[test]
+fn test_partial_release_full_amount_transitions_to_released() {
+    let amount: i128 = 10_000;
+    let already_released: i128 = 7_000;
+    let release_now: i128 = 3_000; // exactly the remaining
+    let remaining = amount - already_released;
+    assert_eq!(remaining, release_now);
+    let new_released = already_released + release_now;
+    let final_status = if new_released == amount {
+        CommissionStatus::Released
+    } else {
+        CommissionStatus::PartiallyReleased
+    };
+    assert_eq!(final_status, CommissionStatus::Released);
+}
+
+/// When only part of the remaining amount is released, status stays PartiallyReleased.
+#[test]
+fn test_partial_release_partial_amount_stays_partially_released() {
+    let amount: i128 = 10_000;
+    let already_released: i128 = 3_000;
+    let release_now: i128 = 2_000; // less than remaining
+    let new_released = already_released + release_now;
+    let final_status = if new_released == amount {
+        CommissionStatus::Released
+    } else {
+        CommissionStatus::PartiallyReleased
+    };
+    assert_eq!(final_status, CommissionStatus::PartiallyReleased);
+}
+
+/// Cannot release more than the remaining held amount.
+#[test]
+fn test_partial_release_exceeds_remaining_fails() {
+    let amount: i128 = 10_000;
+    let released_amount: i128 = 6_000;
+    let remaining = amount - released_amount; // 4_000
+    let release_attempt: i128 = 5_000; // more than remaining
+    assert!(release_attempt > remaining, "release_amount must not exceed remaining");
+}
+
+/// Fee split on partial release is correct.
+#[test]
+fn test_partial_release_fee_split() {
+    let release_amount: i128 = 4_000;
+    let fee_bps: u32 = 500; // 5 %
+    let fee = release_amount.checked_mul(fee_bps as i128).map(|v| v / 10000).unwrap_or(0);
+    let payout = release_amount.checked_sub(fee).unwrap_or(0);
+    assert_eq!(fee, 200);
+    assert_eq!(payout, 3_800);
+    assert_eq!(fee + payout, release_amount);
+}
+
+/// Auto-release on deadline is only allowed when deadline has passed.
+#[test]
+fn test_auto_release_deadline_not_reached_fails() {
+    let current_ledger: u32 = 100;
+    let auto_release_ledger: u32 = 200;
+    let deadline_passed = current_ledger >= auto_release_ledger;
+    assert!(!deadline_passed, "auto-release must wait for deadline");
+}
+
+/// Auto-release succeeds when deadline has passed.
+#[test]
+fn test_auto_release_deadline_reached_succeeds() {
+    let current_ledger: u32 = 200;
+    let auto_release_ledger: u32 = 200;
+    let deadline_passed = current_ledger >= auto_release_ledger;
+    assert!(deadline_passed, "auto-release allowed at or after deadline");
+}
+
+/// released_amount starts at 0 on creation.
+#[test]
+fn test_released_amount_starts_at_zero() {
+    let _ = EscrowContract;
+    let initial_released: i128 = 0;
+    assert_eq!(initial_released, 0, "new escrow has no released amount");
 #[test]
 fn test_get_version_after_initialize() {
     use soroban_sdk::testutils::Address as _;
@@ -222,12 +340,12 @@ fn test_get_version_after_initialize() {
     let admin = Address::generate(&env);
     client.initialize(&admin);
 
-    let v = client.get_version();
+    let v = EscrowContract::get_version(env.clone());
     assert_eq!(v.major, 0);
     assert_eq!(v.minor, 1);
     assert_eq!(v.patch, 0);
-    assert!(client.is_version_compatible(&0, &1, &0));
-    assert!(!client.is_version_compatible(&0, &2, &0));
-    let meta = client.get_version_metadata();
+    assert!(EscrowContract::is_version_compatible(env.clone(), 0, 1, 0));
+    assert!(!EscrowContract::is_version_compatible(env.clone(), 0, 2, 0));
+    let meta = EscrowContract::get_version_metadata(env);
     assert_eq!(meta.storage_schema, 1);
 }

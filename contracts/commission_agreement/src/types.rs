@@ -18,6 +18,49 @@ pub enum MilestoneStatus {
     Rejected = 2,
 }
 
+/// Role a team member holds in a commission agreement.
+///
+/// Closes #603 – role-based access for team collaboration.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TeamRole {
+    /// Full authority over the commission (typically the original artist).
+    Lead = 0,
+    /// Can submit work and propose milestones; cannot accept/reject agreements.
+    Contributor = 1,
+    /// Read-only access; no write operations permitted.
+    Viewer = 2,
+}
+
+/// Invitation status for a team member.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InvitationStatus {
+    /// Invitation sent but not yet accepted.
+    Pending = 0,
+    /// Invitation accepted; member is active.
+    Accepted = 1,
+    /// Invitation declined.
+    Declined = 2,
+}
+
+/// A team member record attached to a commission agreement.
+///
+/// Closes #603 – team member invitation flow and contribution attribution.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TeamMember {
+    pub member: Address,
+    pub role: TeamRole,
+    pub invitation_status: InvitationStatus,
+    /// Payment share in basis points (0–10000). Sum of all members must be ≤ 10000.
+    pub payment_share_bps: u32,
+    /// Description of this member's contribution.
+    pub contribution_note: String,
+    /// Ledger when this member was added.
+    pub added_ledger: u32,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgreementRecord {
@@ -46,6 +89,8 @@ pub enum DataKey {
     Agreement(Bytes),
     Milestone(Bytes, Bytes), // (commission_id, milestone_id)
     MilestonesForAgreement(Bytes),
+    /// List of team members for a commission.  Key: commission_id.
+    TeamMembers(Bytes),
     /// Serialization lock for milestone state transitions (closes #589).
     /// Key: (commission_id, milestone_id) — value: `true` when locked.
     MilestoneLock(Bytes, Bytes),
@@ -59,4 +104,7 @@ pub enum DataKey {
     RosterEntry(Address, Address),
     ArtistAgency(Address),
     AgencyAnalytics(Address),
+    // Revisions (#600)
+    RevisionPolicy(Bytes),
+    RevisionsForAgreement(Bytes),
 }

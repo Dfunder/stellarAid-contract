@@ -15,11 +15,15 @@ pub enum EscrowError {
     InvalidAddress = 10,
     InsufficientBalance = 11,
     ArithmeticOverflow = 12,
-    /// Contract is paused — operation not permitted (closes #594).
-    ContractPaused = 14,
     InvalidSplit = 13,
     /// Contract is paused — operation not permitted (closes #594).
     ContractPaused = 14,
+    /// Atomic commit cannot proceed until all participants confirm (#656).
+    AtomicCommitNotReady = 15,
+    /// Atomic commit marker is in a state that forbids this operation (#656).
+    AtomicCommitStateInvalid = 16,
+    /// Cross-contract consistency check with the commission agreement failed (#656).
+    CrossContractConsistencyFailed = 17,
 }
 
 impl core::fmt::Display for EscrowError {
@@ -39,6 +43,9 @@ impl core::fmt::Display for EscrowError {
             Self::ArithmeticOverflow => write!(f, "arithmetic operation would overflow"),
             Self::ContractPaused => write!(f, "contract is paused; operation not permitted"),
             Self::InvalidSplit => write!(f, "cancellation split must equal the escrowed amount"),
+            Self::AtomicCommitNotReady => write!(f, "atomic commit not ready until all participants confirm"),
+            Self::AtomicCommitStateInvalid => write!(f, "atomic commit marker state does not permit this operation"),
+            Self::CrossContractConsistencyFailed => write!(f, "commission agreement total disagrees with the escrowed amount"),
         }
     }
 }
@@ -59,5 +66,8 @@ pub fn get_suggestion(error: EscrowError) -> Symbol {
         EscrowError::ArithmeticOverflow => symbol_short!("OVERFL"),
         EscrowError::ContractPaused => symbol_short!("PAUSED"),
         EscrowError::InvalidSplit => symbol_short!("BAD_SPLIT"),
+        EscrowError::AtomicCommitNotReady => symbol_short!("NOT_READY"),
+        EscrowError::AtomicCommitStateInvalid => symbol_short!("BAD_STS"),
+        EscrowError::CrossContractConsistencyFailed => symbol_short!("CONSIST"),
     }
 }

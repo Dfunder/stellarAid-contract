@@ -1,5 +1,6 @@
 use soroban_sdk::{contracttype, Address, Bytes, Env};
 
+use crate::cross_contract::AtomicCommitMarker;
 use crate::errors::EscrowError;
 
 #[contracttype]
@@ -10,6 +11,8 @@ pub enum CommissionStatus {
     Refunded = 2,
     Disputed = 3,
     Expired = 4,
+    /// Partially released — some milestones paid, remaining amount still held.
+    PartiallyReleased = 5,
     /// Settled early under a commission cancellation (#605).
     Cancelled = 5,
 }
@@ -24,6 +27,8 @@ pub struct EscrowRecord {
     pub fee_bps: u32,
     pub status: CommissionStatus,
     pub created_ledger: u32,
+    /// Total amount already released via partial releases. Starts at 0.
+    pub released_amount: i128,
 }
 
 #[contracttype]
@@ -33,6 +38,8 @@ pub enum DataKey {
     ReentrancyLock,
     /// Configurable dispute-period TTL extension in ledgers (#586).
     DisputeTtlLedgers,
+    /// Progress marker for atomic escrow→commission commits (#656).
+    AtomicCommit(Bytes),
 }
 
 pub fn escrow_exists(env: &Env, id: &Bytes) -> bool {
@@ -43,6 +50,26 @@ pub fn get_escrow(env: &Env, id: &Bytes) -> EscrowRecord {
 }
 pub fn save_escrow(env: &Env, r: &EscrowRecord) {
     env.storage().persistent().set(&DataKey::Escrow(r.commission_id.clone()), r);
+}
+
+// ── Atomic commit markers (#656) ────────────────────────────────────────────
+
+/// `true` when a commit marker exists for `id`.
+pub fn atomic_marker_exists(env: &Env, id: &Bytes) -> bool {
+    env.storage().persistent().has(&DataKey::AtomicCommit(id.clone()))
+}
+
+/// Load the commit marker for `id`.
+pub fn get_atomic_marker(env: &Env, id: &Bytes) -> AtomicCommitMarker {
+    env.storage().persistent().get(&DataKey::AtomicCommit(id.clone())).unwrap()
+}
+
+/// Persist a commit marker.
+pub fn save_atomic_marker(env: &Env, marker: &AtomicCommitMarker) {
+    env.storage().persistent().set(
+        &DataKey::AtomicCommit(marker.commission_id.clone()),
+        marker,
+    );
 }
 
 // ── Re-entrancy lock helpers (#484) ────────────────────────────────────────

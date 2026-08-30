@@ -14,6 +14,10 @@ pub enum VerificationError {
     InvalidWorkCount = 8,
     InvalidInterval = 9,
     UpdateNotDue = 10,
+    /// No badge of the requested type exists for this artist (#598).
+    BadgeNotFound = 11,
+    /// The badge has already been revoked (#598).
+    BadgeAlreadyRevoked = 12,
 }
 
 impl core::fmt::Display for VerificationError {
@@ -29,6 +33,8 @@ impl core::fmt::Display for VerificationError {
             Self::InvalidWorkCount => write!(f, "work count below minimum"),
             Self::InvalidInterval => write!(f, "invalid update interval"),
             Self::UpdateNotDue => write!(f, "portfolio update not yet due"),
+            Self::BadgeNotFound => write!(f, "badge not found"),
+            Self::BadgeAlreadyRevoked => write!(f, "badge is already revoked"),
         }
     }
 }
@@ -45,5 +51,7 @@ pub fn get_suggestion(error: VerificationError) -> Symbol {
         VerificationError::InvalidWorkCount => symbol_short!("BAD_WORK"),
         VerificationError::InvalidInterval => symbol_short!("BAD_INTVL"),
         VerificationError::UpdateNotDue => symbol_short!("NOT_DUE"),
+        VerificationError::BadgeNotFound => symbol_short!("NO_BADGE"),
+        VerificationError::BadgeAlreadyRevoked => symbol_short!("REVOKED"),
     }
 }

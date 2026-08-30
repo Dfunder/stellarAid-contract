@@ -9,11 +9,31 @@ use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Bytes, E
 
 pub mod errors;
 pub mod storage;
+pub mod cross_contract;
+
+pub use cross_contract::{AtomicCommitMarker, AtomicCommitState};
 
 use errors::EscrowError;
 use storage::{CommissionStatus, EscrowRecord, escrow_exists, get_escrow, save_escrow};
 
 include!("../../semver_types.rs");
+
+/// Emit a correlated event `(domain, action, "corr")` carrying a deterministic
+/// correlation id derived from the shared operation key (#661).
+///
+/// Off-chain indexers join these events on the id + key to reconstruct the
+/// cross-contract trace of a logical operation.
+fn correlation_publish(
+    env: &Env,
+    domain: &str,
+    action: soroban_sdk::Symbol,
+    id: &Bytes,
+    key: &Bytes,
+) {
+    let scope = shared::correlation::scope(env, domain);
+    let cid = shared::correlation::CorrelationId::derive(env, &scope, &[id]);
+    shared::correlation::publish(env, soroban_sdk::Symbol::new(env, domain), action, &cid, key);
+}
 
 // ── Pause helpers (closes #594) ─────────────────────────────────────────────
 
@@ -88,7 +108,33 @@ impl EscrowContract {
         Ok(())
     }
 
-    impl_semver_queries!();
+    /// Return the contract semantic version (MAJOR.MINOR.PATCH) from Cargo.toml.
+    pub fn get_version(_env: Env) -> ContractVersion {
+        parse_pkg_semver(env!("CARGO_PKG_VERSION"))
+    }
+
+    /// Return crate name, semver, min-compatible client version, and storage schema.
+    pub fn get_version_metadata(env: Env) -> VersionMetadata {
+        let version = parse_pkg_semver(env!("CARGO_PKG_VERSION"));
+        VersionMetadata {
+            name: soroban_sdk::String::from_str(&env, env!("CARGO_PKG_NAME")),
+            min_compatible: min_compatible_for(&version),
+            version,
+            storage_schema: CURRENT_STORAGE_SCHEMA,
+        }
+    }
+
+    /// Return `true` if this WASM can serve a client that requires `(major, minor, patch)`.
+    pub fn is_version_compatible(_env: Env, major: u32, minor: u32, patch: u32) -> bool {
+        is_compatible(
+            &parse_pkg_semver(env!("CARGO_PKG_VERSION")),
+            &ContractVersion {
+                major,
+                minor,
+                patch,
+            },
+        )
+    }
 
     /// Pause the escrow contract — blocks `create_escrow` and `refund_client`.
     /// Only callable by the escrow admin set during `initialize`.
@@ -168,6 +214,7 @@ impl EscrowContract {
                 fee_bps,
                 status: CommissionStatus::Locked,
                 created_ledger: env.ledger().sequence(),
+                released_amount: 0,
             };
             save_escrow(&env, &record);
             extend_escrow_ttl_default(&env, &record);
@@ -182,6 +229,7 @@ impl EscrowContract {
                 (symbol_short!("escrow"), symbol_short!("created")),
                 (commission_id.clone(), amount),
             );
+            correlation_publish(&env, "escrow", symbol_short!("created"), &commission_id, &commission_id);
             Ok(())
         })
     }
@@ -342,6 +390,134 @@ impl EscrowContract {
         storage::get_dispute_ttl_ledgers(&env)
     }
 
+    /// Partially release funds for a completed milestone.
+    ///
+    /// Releases `release_amount` USDC from the escrow to the artist (minus
+    /// platform fee). The escrow remains in `Locked` (or `PartiallyReleased`)
+    /// state until the full amount is paid out, at which point it transitions
+    /// to `Released`.
+    ///
+    /// Closes #601 – escrow partial release for milestone-based work.
+    ///
+    /// # Errors
+    /// - [`EscrowError::InvalidStatus`] if escrow is not Locked or PartiallyReleased
+    /// - [`EscrowError::InvalidAmount`] if `release_amount <= 0` or exceeds remaining
+    /// - [`EscrowError::Unauthorized`] if caller is not the admin
+    pub fn partial_release(
+        env: Env,
+        commission_id: Bytes,
+        release_amount: i128,
+        config_contract: Address,
+    ) -> Result<(), EscrowError> {
+        // CHECKS
+        let mut r = get_escrow(&env, &commission_id);
+        if r.status != CommissionStatus::Locked && r.status != CommissionStatus::PartiallyReleased {
+            return Err(EscrowError::InvalidStatus);
+        }
+        if release_amount <= 0 {
+            return Err(EscrowError::InvalidAmount);
+        }
+
+        let remaining = r.amount
+            .checked_sub(r.released_amount)
+            .ok_or(EscrowError::ArithmeticOverflow)?;
+        if release_amount > remaining {
+            return Err(EscrowError::InvalidAmount);
+        }
+
+        let admin: Address = env.invoke_contract(
+            &config_contract, &symbol_short!("get_adm"), soroban_sdk::vec![&env],
+        );
+        admin.require_auth();
+        let usdc: Address = env.invoke_contract(
+            &config_contract, &symbol_short!("get_usdc"), soroban_sdk::vec![&env],
+        );
+        let pw: Address = env.invoke_contract(
+            &config_contract, &symbol_short!("get_pw"), soroban_sdk::vec![&env],
+        );
+
+        let artist = r.artist.clone();
+
+        storage::with_reentrancy_guard(&env, || {
+            let (fee, payout) = calculate_fee_split(release_amount, r.fee_bps)?;
+
+            // EFFECTS – update released_amount and status before external calls
+            r.released_amount = r.released_amount
+                .checked_add(release_amount)
+                .ok_or(EscrowError::ArithmeticOverflow)?;
+
+            let new_remaining = r.amount
+                .checked_sub(r.released_amount)
+                .ok_or(EscrowError::ArithmeticOverflow)?;
+
+            r.status = if new_remaining == 0 {
+                CommissionStatus::Released
+            } else {
+                CommissionStatus::PartiallyReleased
+            };
+
+            save_escrow(&env, &r);
+            extend_escrow_ttl_default(&env, &r);
+
+            // INTERACTIONS
+            let tc = token::Client::new(&env, &usdc);
+            tc.transfer(&env.current_contract_address(), &artist, &payout);
+            tc.transfer(&env.current_contract_address(), &pw, &fee);
+
+            // EVENT
+            env.events().publish(
+                (symbol_short!("escrow"), symbol_short!("partial")),
+                (commission_id.clone(), release_amount, payout, fee, r.released_amount),
+            );
+            Ok(())
+        })
+    }
+
+    /// Auto-release remaining escrow funds when a deadline has passed.
+    ///
+    /// If `auto_release_ledger` has been reached and the escrow is still in
+    /// `Locked` or `PartiallyReleased` state, the remaining balance is released
+    /// to the artist. This implements the auto-release on deadline requirement
+    /// from issue #601.
+    ///
+    /// Closes #601 – auto-release on deadline.
+    pub fn auto_release_on_deadline(
+        env: Env,
+        commission_id: Bytes,
+        auto_release_ledger: u32,
+        config_contract: Address,
+    ) -> Result<(), EscrowError> {
+        // CHECKS
+        let mut r = get_escrow(&env, &commission_id);
+        if r.status != CommissionStatus::Locked && r.status != CommissionStatus::PartiallyReleased {
+            return Err(EscrowError::InvalidStatus);
+        }
+        if env.ledger().sequence() < auto_release_ledger {
+            return Err(EscrowError::NotExpired);
+        }
+
+        let remaining = r.amount
+            .checked_sub(r.released_amount)
+            .ok_or(EscrowError::ArithmeticOverflow)?;
+        if remaining <= 0 {
+            return Err(EscrowError::InvalidAmount);
+        }
+
+        let usdc: Address = env.invoke_contract(
+            &config_contract, &symbol_short!("get_usdc"), soroban_sdk::vec![&env],
+        );
+        let pw: Address = env.invoke_contract(
+            &config_contract, &symbol_short!("get_pw"), soroban_sdk::vec![&env],
+        );
+
+        let artist = r.artist.clone();
+
+        storage::with_reentrancy_guard(&env, || {
+            let (fee, payout) = calculate_fee_split(remaining, r.fee_bps)?;
+
+            // EFFECTS
+            r.released_amount = r.amount;
+            r.status = CommissionStatus::Released;
     /// Settle a cancelled commission (#605).
     ///
     /// The split is computed off-contract by the commission agreement's
@@ -389,6 +565,13 @@ impl EscrowContract {
 
             // INTERACTIONS
             let tc = token::Client::new(&env, &usdc);
+            tc.transfer(&env.current_contract_address(), &artist, &payout);
+            tc.transfer(&env.current_contract_address(), &pw, &fee);
+
+            // EVENT
+            env.events().publish(
+                (symbol_short!("escrow"), symbol_short!("autorls")),
+                (commission_id.clone(), auto_release_ledger, remaining, payout, fee),
             if payout > 0 {
                 tc.transfer(&env.current_contract_address(), &artist, &payout);
             }
@@ -411,6 +594,93 @@ impl EscrowContract {
     pub fn get_escrow(env: Env, commission_id: Bytes) -> Result<EscrowRecord, EscrowError> {
         if !escrow_exists(&env, &commission_id) { return Err(EscrowError::NotFound); }
         Ok(storage::get_escrow(&env, &commission_id))
+    }
+
+    // ── Atomic escrow-to-commission flow (closes #656) ────────────────────
+    //
+    // Public entry points over the orchestration in `cross_contract`. The
+    // multi-step begin/confirm/finalize/rollback markers coordinate the two
+    // sides across transactions; `atomic_escrow_to_commission` performs the
+    // single all-or-nothing fund migration guard with the host's atomicity.
+
+    /// Open a commit marker for an escrow that will migrate into a commission.
+    pub fn begin_atomic_commit(
+        env: Env,
+        commission_id: Bytes,
+    ) -> Result<AtomicCommitMarker, EscrowError> {
+        cross_contract::begin_atomic_commit(&env, &commission_id)
+    }
+
+    /// Record one participant’s readiness confirmation.
+    pub fn confirm_atomic_step(
+        env: Env,
+        commission_id: Bytes,
+        from: Address,
+    ) -> Result<u32, EscrowError> {
+        cross_contract::confirm_atomic_step(&env, &commission_id, from)
+    }
+
+    /// Aware both sides confirmed: mark the flow settled and the escrow released.
+    pub fn finalize_atomic_commit(
+        env: Env,
+        commission_id: Bytes,
+    ) -> Result<AtomicCommitMarker, EscrowError> {
+        cross_contract::finalize_atomic_commit(&env, &commission_id)
+    }
+
+    /// Abandon the flow before any funds moved; escrow stays intact.
+    pub fn rollback_atomic_commit(
+        env: Env,
+        commission_id: Bytes,
+    ) -> Result<AtomicCommitMarker, EscrowError> {
+        cross_contract::rollback_atomic_commit(&env, &commission_id)
+    }
+
+    /// Read the current commit marker.
+    pub fn get_atomic_commit(
+        env: Env,
+        commission_id: Bytes,
+    ) -> Result<AtomicCommitMarker, EscrowError> {
+        if !storage::atomic_marker_exists(&env, &commission_id) {
+            return Err(EscrowError::NotFound);
+        }
+        Ok(storage::get_atomic_marker(&env, &commission_id))
+    }
+
+    /// Cross-contract consistency probe: does the commission agreement expect
+    /// exactly `expected_amount` escrowed for this id?
+    pub fn verify_agreement_consistency(
+        env: Env,
+        commission_contract: Address,
+        commission_id: Bytes,
+        expected_amount: i128,
+    ) -> Result<bool, EscrowError> {
+        cross_contract::verify_agreement_consistency(
+            &env,
+            &commission_contract,
+            &commission_id,
+            expected_amount,
+        )
+    }
+
+    /// Atomic, single-transaction escrow→commission migration.
+    ///
+    /// Verifies the commission side agrees with the escrowed amount, then moves
+    /// the escrowed balance (minus the platform fee) to the commission contract
+    /// and the fee to the platform wallet. Any failed check or transfer aborts
+    /// the whole transaction — nothing is left half-migrated (#656).
+    pub fn atomic_escrow_to_commission(
+        env: Env,
+        commission_id: Bytes,
+        config_contract: Address,
+        commission_contract: Address,
+    ) -> Result<AtomicCommitMarker, EscrowError> {
+        cross_contract::atomic_escrow_to_commission(
+            &env,
+            &commission_id,
+            &config_contract,
+            &commission_contract,
+        )
     }
 
     // ── Health monitoring (#678) and gradual rollout (#684) ──────────────
@@ -491,3 +761,7 @@ mod storage_edge_tests;
 mod cancellation_tests;
 #[cfg(test)]
 mod integration_tests;
+#[cfg(test)]
+mod atomic_flow_tests;
+#[cfg(test)]
+mod correlation_tests;

@@ -26,6 +26,12 @@ pub enum StellarAidError {
 
     #[error("Wallet connection error: {0}")]
     WalletConnection(String),
+
+    #[error("Compression error: {0}")]
+    Compression(String),
+
+    #[error("Batch error: {0}")]
+    Batch(String),
 }
 
 impl StellarAidError {
@@ -51,6 +57,14 @@ impl StellarAidError {
 
     pub fn contract(msg: impl Into<String>) -> Self {
         Self::ContractError(msg.into())
+    }
+
+    pub fn compression(msg: impl Into<String>) -> Self {
+        Self::Compression(msg.into())
+    }
+
+    pub fn batch(msg: impl Into<String>) -> Self {
+        Self::Batch(msg.into())
     }
 }
 

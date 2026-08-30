@@ -1,6 +1,9 @@
+use crate::compression::{self, CompressionFormat, CompressionStats};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use thiserror::Error;
+use tokio::sync::Mutex;
 
 #[derive(Debug, Error)]
 pub enum RpcError {
@@ -60,6 +63,10 @@ struct TxStatusResult {
 pub struct SorobanRpcClient {
     client: Client,
     rpc_url: String,
+    /// Default compression format for query results.
+    compression_format: CompressionFormat,
+    /// Shared compression statistics.
+    compression_stats: Arc<Mutex<CompressionStats>>,
 }
 
 impl SorobanRpcClient {
@@ -67,7 +74,51 @@ impl SorobanRpcClient {
         Self {
             client: Client::new(),
             rpc_url: rpc_url.into(),
+            compression_format: CompressionFormat::None,
+            compression_stats: Arc::new(Mutex::new(CompressionStats::default())),
         }
+    }
+
+    /// Create a new client with a specific compression format for query results.
+    pub fn with_compression(
+        rpc_url: impl Into<String>,
+        format: CompressionFormat,
+    ) -> Self {
+        Self {
+            client: Client::new(),
+            rpc_url: rpc_url.into(),
+            compression_format: format,
+            compression_stats: Arc::new(Mutex::new(CompressionStats::default())),
+        }
+    }
+
+    /// Set the default compression format.
+    pub fn set_compression(&mut self, format: CompressionFormat) {
+        self.compression_format = format;
+    }
+
+    /// Get the current compression format.
+    pub fn compression_format(&self) -> CompressionFormat {
+        self.compression_format
+    }
+
+    /// Get a snapshot of compression statistics.
+    pub async fn compression_stats(&self) -> CompressionStats {
+        self.compression_stats.lock().await.clone()
+    }
+
+    /// Compress query result bytes using the client's configured format.
+    pub async fn compress_response(&self, data: &[u8]) -> Result<Vec<u8>, RpcError> {
+        let mut stats = self.compression_stats.lock().await;
+        compression::compress(data, self.compression_format, Some(&mut stats))
+            .map_err(|e| RpcError::Rpc(format!("compression failed: {}", e)))
+    }
+
+    /// Decompress query result bytes using the client's configured format.
+    pub async fn decompress_response(&self, data: &[u8]) -> Result<Vec<u8>, RpcError> {
+        let mut stats = self.compression_stats.lock().await;
+        compression::decompress(data, self.compression_format, Some(&mut stats))
+            .map_err(|e| RpcError::Rpc(format!("decompression failed: {}", e)))
     }
 
     async fn call<T: for<'de> Deserialize<'de>>(

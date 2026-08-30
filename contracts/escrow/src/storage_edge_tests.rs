@@ -32,6 +32,7 @@ fn make_record(env: &Env, id: &Bytes, amount: i128) -> EscrowRecord {
         fee_bps: 500,
         status: CommissionStatus::Locked,
         created_ledger: env.ledger().sequence(),
+        released_amount: 0,
     }
 }
 

@@ -13,6 +13,14 @@ pub enum AgreementError {
     MilestoneBudgetExceeded = 7,
     NotAllMilestonesApproved = 8,
     ArithmeticOverflow = 9,
+    /// Team member is already part of this agreement.
+    MemberAlreadyExists = 10,
+    /// The sum of payment shares would exceed 10 000 bps (100 %).
+    PaymentShareExceeded = 11,
+    /// Invitation is in a terminal state and cannot be changed.
+    InvalidInvitationStatus = 12,
+    /// Too many members (enforced at 10).
+    TeamSizeLimit = 13,
     /// Input string exceeds the allowed maximum length (closes #591).
     InputTooLong = 10,
     /// Deadline exceeds the maximum permitted future ledger (closes #592).
@@ -48,6 +56,10 @@ impl core::fmt::Display for AgreementError {
             Self::MilestoneBudgetExceeded => write!(f, "milestone budget exceeded"),
             Self::NotAllMilestonesApproved => write!(f, "not all milestones approved"),
             Self::ArithmeticOverflow => write!(f, "arithmetic operation would overflow"),
+            Self::MemberAlreadyExists => write!(f, "member already in team"),
+            Self::PaymentShareExceeded => write!(f, "total payment shares would exceed 100 %"),
+            Self::InvalidInvitationStatus => write!(f, "invitation is in a terminal state"),
+            Self::TeamSizeLimit => write!(f, "team member limit reached (max 10)"),
             Self::InputTooLong => write!(f, "input string exceeds maximum allowed length"),
             Self::DeadlineTooFar => write!(f, "deadline exceeds the maximum permitted future date"),
             Self::MilestoneLocked => write!(f, "milestone is locked for concurrent update; retry"),
@@ -68,6 +80,7 @@ impl core::fmt::Display for AgreementError {
     }
 }
 
+#[allow(dead_code)]
 pub fn get_suggestion(error: AgreementError) -> Symbol {
     match error {
         AgreementError::AlreadyExists => symbol_short!("DUP"),
@@ -79,6 +92,10 @@ pub fn get_suggestion(error: AgreementError) -> Symbol {
         AgreementError::MilestoneBudgetExceeded => symbol_short!("OVER_BUD"),
         AgreementError::NotAllMilestonesApproved => symbol_short!("NOT_ALL"),
         AgreementError::ArithmeticOverflow => symbol_short!("OVERFL"),
+        AgreementError::MemberAlreadyExists => symbol_short!("DUP_MBR"),
+        AgreementError::PaymentShareExceeded => symbol_short!("SHRE_LIM"),
+        AgreementError::InvalidInvitationStatus => symbol_short!("BAD_INV"),
+        AgreementError::TeamSizeLimit => symbol_short!("TEAM_LIM"),
         AgreementError::InputTooLong => symbol_short!("TOO_LONG"),
         AgreementError::DeadlineTooFar => symbol_short!("FAR_DDL"),
         AgreementError::MilestoneLocked => symbol_short!("MS_LOCK"),

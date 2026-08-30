@@ -214,6 +214,7 @@ impl EscrowContract {
                 fee_bps,
                 status: CommissionStatus::Locked,
                 created_ledger: env.ledger().sequence(),
+                released_amount: 0,
             };
             save_escrow(&env, &record);
             extend_escrow_ttl_default(&env, &record);
@@ -389,6 +390,134 @@ impl EscrowContract {
         storage::get_dispute_ttl_ledgers(&env)
     }
 
+    /// Partially release funds for a completed milestone.
+    ///
+    /// Releases `release_amount` USDC from the escrow to the artist (minus
+    /// platform fee). The escrow remains in `Locked` (or `PartiallyReleased`)
+    /// state until the full amount is paid out, at which point it transitions
+    /// to `Released`.
+    ///
+    /// Closes #601 – escrow partial release for milestone-based work.
+    ///
+    /// # Errors
+    /// - [`EscrowError::InvalidStatus`] if escrow is not Locked or PartiallyReleased
+    /// - [`EscrowError::InvalidAmount`] if `release_amount <= 0` or exceeds remaining
+    /// - [`EscrowError::Unauthorized`] if caller is not the admin
+    pub fn partial_release(
+        env: Env,
+        commission_id: Bytes,
+        release_amount: i128,
+        config_contract: Address,
+    ) -> Result<(), EscrowError> {
+        // CHECKS
+        let mut r = get_escrow(&env, &commission_id);
+        if r.status != CommissionStatus::Locked && r.status != CommissionStatus::PartiallyReleased {
+            return Err(EscrowError::InvalidStatus);
+        }
+        if release_amount <= 0 {
+            return Err(EscrowError::InvalidAmount);
+        }
+
+        let remaining = r.amount
+            .checked_sub(r.released_amount)
+            .ok_or(EscrowError::ArithmeticOverflow)?;
+        if release_amount > remaining {
+            return Err(EscrowError::InvalidAmount);
+        }
+
+        let admin: Address = env.invoke_contract(
+            &config_contract, &symbol_short!("get_adm"), soroban_sdk::vec![&env],
+        );
+        admin.require_auth();
+        let usdc: Address = env.invoke_contract(
+            &config_contract, &symbol_short!("get_usdc"), soroban_sdk::vec![&env],
+        );
+        let pw: Address = env.invoke_contract(
+            &config_contract, &symbol_short!("get_pw"), soroban_sdk::vec![&env],
+        );
+
+        let artist = r.artist.clone();
+
+        storage::with_reentrancy_guard(&env, || {
+            let (fee, payout) = calculate_fee_split(release_amount, r.fee_bps)?;
+
+            // EFFECTS – update released_amount and status before external calls
+            r.released_amount = r.released_amount
+                .checked_add(release_amount)
+                .ok_or(EscrowError::ArithmeticOverflow)?;
+
+            let new_remaining = r.amount
+                .checked_sub(r.released_amount)
+                .ok_or(EscrowError::ArithmeticOverflow)?;
+
+            r.status = if new_remaining == 0 {
+                CommissionStatus::Released
+            } else {
+                CommissionStatus::PartiallyReleased
+            };
+
+            save_escrow(&env, &r);
+            extend_escrow_ttl_default(&env, &r);
+
+            // INTERACTIONS
+            let tc = token::Client::new(&env, &usdc);
+            tc.transfer(&env.current_contract_address(), &artist, &payout);
+            tc.transfer(&env.current_contract_address(), &pw, &fee);
+
+            // EVENT
+            env.events().publish(
+                (symbol_short!("escrow"), symbol_short!("partial")),
+                (commission_id.clone(), release_amount, payout, fee, r.released_amount),
+            );
+            Ok(())
+        })
+    }
+
+    /// Auto-release remaining escrow funds when a deadline has passed.
+    ///
+    /// If `auto_release_ledger` has been reached and the escrow is still in
+    /// `Locked` or `PartiallyReleased` state, the remaining balance is released
+    /// to the artist. This implements the auto-release on deadline requirement
+    /// from issue #601.
+    ///
+    /// Closes #601 – auto-release on deadline.
+    pub fn auto_release_on_deadline(
+        env: Env,
+        commission_id: Bytes,
+        auto_release_ledger: u32,
+        config_contract: Address,
+    ) -> Result<(), EscrowError> {
+        // CHECKS
+        let mut r = get_escrow(&env, &commission_id);
+        if r.status != CommissionStatus::Locked && r.status != CommissionStatus::PartiallyReleased {
+            return Err(EscrowError::InvalidStatus);
+        }
+        if env.ledger().sequence() < auto_release_ledger {
+            return Err(EscrowError::NotExpired);
+        }
+
+        let remaining = r.amount
+            .checked_sub(r.released_amount)
+            .ok_or(EscrowError::ArithmeticOverflow)?;
+        if remaining <= 0 {
+            return Err(EscrowError::InvalidAmount);
+        }
+
+        let usdc: Address = env.invoke_contract(
+            &config_contract, &symbol_short!("get_usdc"), soroban_sdk::vec![&env],
+        );
+        let pw: Address = env.invoke_contract(
+            &config_contract, &symbol_short!("get_pw"), soroban_sdk::vec![&env],
+        );
+
+        let artist = r.artist.clone();
+
+        storage::with_reentrancy_guard(&env, || {
+            let (fee, payout) = calculate_fee_split(remaining, r.fee_bps)?;
+
+            // EFFECTS
+            r.released_amount = r.amount;
+            r.status = CommissionStatus::Released;
     /// Settle a cancelled commission (#605).
     ///
     /// The split is computed off-contract by the commission agreement's
@@ -436,6 +565,13 @@ impl EscrowContract {
 
             // INTERACTIONS
             let tc = token::Client::new(&env, &usdc);
+            tc.transfer(&env.current_contract_address(), &artist, &payout);
+            tc.transfer(&env.current_contract_address(), &pw, &fee);
+
+            // EVENT
+            env.events().publish(
+                (symbol_short!("escrow"), symbol_short!("autorls")),
+                (commission_id.clone(), auto_release_ledger, remaining, payout, fee),
             if payout > 0 {
                 tc.transfer(&env.current_contract_address(), &artist, &payout);
             }

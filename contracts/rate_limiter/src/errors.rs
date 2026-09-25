@@ -1,97 +1,57 @@
 //! Rate Limiter Errors
 //!
-//! Error definitions for the rate limiter module.
+//! Error definitions for the rate limiter module (closes #710).
+//!
+//! Follows the house pattern used by `contracts/escrow/src/errors.rs`: a
+//! `#[contracterror]` enum of unit variants with explicit `= N` discriminants,
+//! a `core::fmt::Display` impl, and a `symbol_short!` suggestion mapping.
+//!
+//! The old file here declared a `Diagnostic`-carrying struct (an API that does
+//! not exist in `soroban-sdk`) and used it as the error type inside a
+//! `#[contractimpl]` block, which cannot compile — a `#[contracterror]` enum is
+//! required. Because a `#[contracterror]` enum cannot carry a payload, the
+//! limit / window / count numbers that the old code tried to smuggle through
+//! the error are now published in the `rl_check` and `rl_exceeded` events
+//! instead.
+//!
+//! Discriminants are kept stable so that already-deployed error codes do not
+//! change meaning.
 
-use soroban_sdk::{Diagnostic, Symbol, String, IntoVal, Env};
+use soroban_sdk::{contracterror, symbol_short, Symbol};
 
-/// Custom error types for the rate limiter
-#[derive(Debug, Clone)]
-#[repr(u32)]
-pub enum RateLimitErrorType {
+#[contracterror]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RateLimitError {
+    /// No configuration exists for the requested rate limit key.
     NotInitialized = 1,
+    /// `initialize` has already run; the limiter is single-shot.
     AlreadyInitialized = 2,
+    /// A limit of zero would block every action, including recovery.
     InvalidLimit = 3,
+    /// A zero-length window would expire on the very next ledger.
     InvalidWindow = 4,
+    /// The account has used up its allowance for the current window.
     LimitExceeded = 5,
 }
 
-/// Rate limiter errors
-#[derive(Debug)]
-pub struct RateLimitError {
-    pub error_type: RateLimitErrorType,
-    pub message: String,
-}
-
-impl RateLimitError {
-    pub fn not_initialized() -> Self {
-        Self {
-            error_type: RateLimitErrorType::NotInitialized,
-            message: String::from_str(&Env::default(), "Rate limiter not initialized"),
-        }
-    }
-
-    pub fn already_initialized() -> Self {
-        Self {
-            error_type: RateLimitErrorType::AlreadyInitialized,
-            message: String::from_str(&Env::default(), "Rate limiter already initialized"),
-        }
-    }
-
-    pub fn invalid_limit() -> Self {
-        Self {
-            error_type: RateLimitErrorType::InvalidLimit,
-            message: String::from_str(&Env::default(), "Invalid rate limit value"),
-        }
-    }
-
-    pub fn invalid_window() -> Self {
-        Self {
-            error_type: RateLimitErrorType::InvalidWindow,
-            message: String::from_str(&Env::default(), "Invalid rate limit window"),
-        }
-    }
-
-    pub fn limit_exceeded(key: types::RateLimitKey, limit: u32, window_ledgers: u32, current_count: u32) -> Self {
-        Self {
-            error_type: RateLimitErrorType::LimitExceeded,
-            message: String::from_str(&Env::default(), &format!(
-                "Rate limit exceeded for {:?}: {} actions in {} ledgers (limit: {})",
-                key, current_count, window_ledgers, limit
-            )),
+impl core::fmt::Display for RateLimitError {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        match self {
+            Self::NotInitialized => write!(f, "no rate limit configured for this key"),
+            Self::AlreadyInitialized => write!(f, "rate limiter already initialized"),
+            Self::InvalidLimit => write!(f, "rate limit must be greater than zero"),
+            Self::InvalidWindow => write!(f, "rate limit window must be greater than zero"),
+            Self::LimitExceeded => write!(f, "rate limit exceeded for the current window"),
         }
     }
 }
 
-// Convert the error to a Soroban error
-impl soroban_sdk::TryFromVal<Env, RateLimitError> for soroban_sdk::Error {
-    type Error = RateLimitError;
-
-    fn try_from_val(_env: &Env, val: &RateLimitError) -> Result<Self, Self::Error> {
-        Ok(soroban_sdk::Error::Contract(soroban_sdk::ContractError {
-            code: val.error_type as u32,
-            message: val.message.clone(),
-        }))
-    }
-}
-
-// Convert the error to a diagnostic
-impl std::fmt::Display for RateLimitError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{:?}: {}", self.error_type, self.message)
-    }
-}
-
-// Convert the error to a diagnostic
-impl Diagnostic for RateLimitError {
-    fn description(&self) -> &str {
-        &self.message
-    }
-
-    fn symbol(&self) -> Symbol {
-        Symbol::new(&Env::default(), "rate_limit_error")
-    }
-
-    fn end_user_message(&self) -> Option<String> {
-        Some(self.message.clone())
+pub fn get_suggestion(error: RateLimitError) -> Symbol {
+    match error {
+        RateLimitError::NotInitialized => symbol_short!("NO_LIMIT"),
+        RateLimitError::AlreadyInitialized => symbol_short!("DUP"),
+        RateLimitError::InvalidLimit => symbol_short!("BAD_LIMIT"),
+        RateLimitError::InvalidWindow => symbol_short!("NO_WINDOW"),
+        RateLimitError::LimitExceeded => symbol_short!("LIMIT"),
     }
 }

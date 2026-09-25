@@ -1,5 +1,5 @@
 [package]
-name = "rate_limiter"
+name = "multi_sig"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,8 +8,6 @@ versioning = "semver"
 storage-schema = 1
 min-compatible = "0.1.0"
 
-# `rlib` is required in addition to `cdylib` so the unit tests in
-# `src/test.rs` can link against the crate (closes #710).
 [lib]
 crate-type = ["cdylib", "rlib"]
 

@@ -45,6 +45,14 @@ pub enum SharedErrorCode {
     RolloutRolledBack = 12,
     InvalidAlertConfig = 13,
     InvalidCanaryBps = 14,
+    /// A scheduled pause recovery has not matured yet (#711).
+    RecoveryPending = 15,
+    /// No pause recovery is scheduled, so there is nothing to cancel (#711).
+    RecoveryNotScheduled = 16,
+    /// A pause recovery delay is zero or beyond the allowed maximum (#711).
+    InvalidRecoveryDelay = 17,
+    /// The contract is not paused (#711).
+    ContractNotPaused = 18,
 
     // ── Escrow (100–199) ─────────────────────────────────────────────────────
     EscrowAlreadyExists = 100,
@@ -124,6 +132,10 @@ impl SharedErrorCode {
             Self::RolloutRolledBack => "rollout has been rolled back",
             Self::InvalidAlertConfig => "invalid health alert configuration",
             Self::InvalidCanaryBps => "canary traffic share exceeds 10000 bps",
+            Self::RecoveryPending => "pause recovery is time-locked and has not matured",
+            Self::RecoveryNotScheduled => "no pause recovery is scheduled",
+            Self::InvalidRecoveryDelay => "pause recovery delay is out of range",
+            Self::ContractNotPaused => "contract is not paused",
 
             Self::EscrowAlreadyExists => "escrow: already exists",
             Self::EscrowNotFound => "escrow: not found",

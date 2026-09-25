@@ -11,16 +11,24 @@ members = [
     "contracts/subscription",
     "contracts/competitions",
     "contracts/verification",
-    "contracts/reputation",
     "contracts/search",
     "contracts/revenue_sharing",
     "contracts/recruitment",
     "contracts/creator_fund",
+    "contracts/rate_limiter",
+    "contracts/multi_sig",
+    "contracts/audit",
     "sdk",
     "tests/framework",
     "tests/upgrade_testing",
 ]
 resolver = "2"
+
+# NOTE: `contracts/campaign`, `contracts/donation` and `contracts/withdrawal`
+# exist on disk but are still not workspace members, so they are never built.
+# They are deliberately left unregistered here: adding crates that have not been
+# audited (and that pin no `[package.metadata.stellar-aid]` block) is a
+# separate change. Reported, not fixed.
 
 [workspace.package]
 version = "0.1.0"

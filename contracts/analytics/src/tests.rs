@@ -1,7 +1,7 @@
 extern crate std;
 
 use soroban_sdk::{
-    testutils::Address as _,
+    testutils::{Address as _, Ledger as _},
     Address, Bytes, Env, String,
 };
 
@@ -292,4 +292,212 @@ fn test_get_metrics_not_found() {
     let artist = Address::generate(&env);
     let result = client.try_get_metrics(&artist);
     assert_eq!(result, Err(Ok(AnalyticsError::NotFound)));
+}
+
+// ── Bounded page reads (#650) ───────────────────────────────────────────────
+
+#[test]
+fn test_get_earnings_returns_bounded_page() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+
+    let artist = Address::generate(&env);
+    let client_addr = Address::generate(&env);
+    let cat = make_string(&env, "ui");
+
+    // Distinct amounts so page ordering is observable.
+    for i in 1..=5u32 {
+        client.record_earning(
+            &artist,
+            &make_bytes(&env, &format!("c{}", i)),
+            &cat,
+            &client_addr,
+            &(i as i128 * 100),
+        );
+    }
+
+    let first = client.get_earnings(&artist, &0, &2);
+    assert_eq!(first.len(), 2, "limit must bound the page size");
+    assert_eq!(first.get(0).unwrap().amount, 100);
+    assert_eq!(first.get(1).unwrap().amount, 200);
+
+    let second = client.get_earnings(&artist, &2, &2);
+    assert_eq!(second.len(), 2);
+    assert_eq!(second.get(0).unwrap().amount, 300);
+    assert_eq!(second.get(1).unwrap().amount, 400);
+
+    // Past the end is an empty page, not an error, so a client can page to the
+    // end without first reading get_earning_count.
+    assert_eq!(client.get_earnings(&artist, &99, &2).len(), 0);
+
+    // A limit of 0 is an empty page rather than an unbounded read.
+    assert_eq!(client.get_earnings(&artist, &0, &0).len(), 0);
+}
+
+// ── Retention / pruning (#651) ──────────────────────────────────────────────
+
+/// Record `n` earnings of 1_000 each for `artist`, each carrying a distinct
+/// `commission_id` so a record can be looked up individually.
+///
+/// The caller positions the ledger first: `EarningsRecord.ledger` is stamped
+/// from `env.ledger().sequence()`, and that stamp is what the retention check
+/// keys off.
+fn seed_earnings(env: &Env, client: &AnalyticsContractClient, artist: &Address, n: u32) {
+    assert!(n > 0, "seed_earnings needs at least one record");
+    let client_addr = Address::generate(env);
+    let cat = make_string(env, "seed");
+    for i in 0..n {
+        client.record_earning(
+            artist,
+            &make_bytes(env, &format!("seed-{}", i)),
+            &cat,
+            &client_addr,
+            &1_000,
+        );
+    }
+}
+
+/// Move the ledger forward far enough that every entry recorded at
+/// `recorded_at` has aged out of the retention window.
+fn age_out(env: &Env, recorded_at: u32) {
+    env.ledger()
+        .set_sequence_number(recorded_at.saturating_add(crate::ANALYTICS_TTL_LEDGERS));
+}
+
+/// A ledger sequence at which an entry recorded *now* is still comfortably
+/// inside the retention window, so a prune at this ledger must not touch it.
+///
+/// The default `Env` starts at ledger 0, where `cutoff` saturates to 0 and a
+/// record stamped at 0 would be immediately prunable. Every prune test
+/// therefore positions the ledger explicitly first.
+fn ledger_inside_window() -> u32 {
+    crate::ANALYTICS_TTL_LEDGERS + 100
+}
+
+#[test]
+fn test_prune_earnings_respects_retention_window() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+
+    // The view entry point reports the same numbers the implementation uses.
+    let (retention, batch) = client.get_retention_policy();
+    assert_eq!(retention, crate::ANALYTICS_TTL_LEDGERS);
+    assert_eq!(batch, crate::PRUNE_MAX_BATCH);
+
+    let artist = Address::generate(&env);
+    env.ledger().set_sequence_number(ledger_inside_window());
+    seed_earnings(&env, &client, &artist, 3);
+
+    // Every record is inside the window, so nothing may be removed — not even
+    // with the widest window and the largest batch the implementation allows.
+    assert_eq!(client.prune_earnings(&artist, &10, &batch), Ok(0));
+    assert_eq!(client.get_earning_count(&artist), 3);
+    assert!(client.try_get_earning(&artist, &0).is_ok());
+
+    // Age the records out, then the same call succeeds.
+    age_out(&env, ledger_inside_window());
+    assert_eq!(client.prune_earnings(&artist, &10, &batch), Ok(3));
+
+    // Records are gone, but the monotonic count is intentionally not lowered —
+    // decrementing it would let a later record_earning reuse a live index.
+    assert_eq!(
+        client.try_get_earning(&artist, &0),
+        Err(Ok(AnalyticsError::NotFound)),
+    );
+    assert_eq!(client.get_earning_count(&artist), 3);
+}
+
+#[test]
+fn test_prune_earnings_is_bounded_by_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+
+    let artist = Address::generate(&env);
+    env.ledger().set_sequence_number(ledger_inside_window());
+    seed_earnings(&env, &client, &artist, 6);
+    age_out(&env, ledger_inside_window());
+
+    // One call removes at most `limit` records; progress is made by repetition.
+    assert_eq!(client.prune_earnings(&artist, &6, &2), Ok(2));
+    assert_eq!(client.prune_earnings(&artist, &6, &2), Ok(2));
+    assert_eq!(client.prune_earnings(&artist, &6, &2), Ok(2));
+    // Nothing left to remove.
+    assert_eq!(client.prune_earnings(&artist, &6, &2), Ok(0));
+
+    // The lifetime aggregate is never pruned.
+    let metrics = client.get_metrics(&artist);
+    assert_eq!(metrics.completed_count, 6);
+    assert_eq!(metrics.total_earnings, 6_000);
+}
+
+#[test]
+fn test_prune_earnings_rejects_out_of_range_arguments() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+
+    let artist = Address::generate(&env);
+    env.ledger().set_sequence_number(ledger_inside_window());
+    seed_earnings(&env, &client, &artist, 2);
+    age_out(&env, ledger_inside_window());
+
+    let (_retention, batch) = client.get_retention_policy();
+
+    // A zero window is meaningless.
+    assert_eq!(
+        client.try_prune_earnings(&artist, &0, &10),
+        Err(Ok(AnalyticsError::InvalidAmount)),
+    );
+    // A zero limit would be an unbounded-looking call.
+    assert_eq!(
+        client.try_prune_earnings(&artist, &10, &0),
+        Err(Ok(AnalyticsError::InvalidAmount)),
+    );
+    // A limit above the batch cap is rejected outright rather than clamped, so
+    // an operator asking for a huge sweep gets an error instead of a surprise.
+    assert_eq!(
+        client.try_prune_earnings(&artist, &10, &(batch + 1)),
+        Err(Ok(AnalyticsError::InvalidAmount)),
+    );
+    // Rejected calls remove nothing.
+    assert!(client.try_get_earning(&artist, &0).is_ok());
+    assert_eq!(client.get_earning_count(&artist), 2);
+}
+
+#[test]
+fn test_prune_earnings_stops_at_a_protected_record() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+
+    let artist = Address::generate(&env);
+    env.ledger().set_sequence_number(ledger_inside_window());
+    seed_earnings(&env, &client, &artist, 2);
+    age_out(&env, ledger_inside_window());
+
+    // One record written *after* ageing — so it is inside the retention window.
+    let client_addr = Address::generate(&env);
+    let cat = make_string(&env, "recent");
+    client.record_earning(
+        &artist,
+        &make_bytes(&env, "recent"),
+        &cat,
+        &client_addr,
+        &1_000,
+    );
+
+    // A wide window and a wide batch must still stop at the protected record
+    // rather than reaching past it.
+    assert_eq!(
+        client.prune_earnings(&artist, &100, &100),
+        Ok(2),
+        "prune must stop at the retention boundary",
+    );
+
+    // The in-window record survives.
+    assert!(client.try_get_earning(&artist, &2).is_ok());
+    assert_eq!(client.get_earning_count(&artist), 3);
 }

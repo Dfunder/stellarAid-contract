@@ -2,6 +2,15 @@
 
 This document outlines the storage strategy and Time-to-Live (TTL) management for the stellarAid Soroban contracts.
 
+> - **Retention and pruning policy:** [RETENTION_AND_PRUNING.md](./RETENTION_AND_PRUNING.md)
+>   — what may be pruned, what must never be, the retention windows, and the
+>   bounded prune entry point that exists today. Read this before adding any
+>   `remove()` call.
+> - **Query patterns and read costs:** [QUERY_OPTIMIZATION.md](./QUERY_OPTIMIZATION.md)
+>   — the bounded-page convention every view entry point follows, and the
+>   storage-layout observations behind it.
+> - **Design rationale:** [ADR-0007](./ADRs/0007-storage-data-model-and-ttl-management.md).
+
 ## Storage Philosophy
 
 Our goal is to ensure data persistence while managing costs and adhering to Soroban's storage model. We primarily use `Persistent` storage for data that must be long-lived, such as campaign details and donation records.

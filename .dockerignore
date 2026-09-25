@@ -1,0 +1,91 @@
+# .dockerignore — keep the Docker build context small and free of secrets.
+#
+# Closes #708. Anything listed here is NOT copied into the image by
+# `COPY . .`, so it cannot be captured in a layer, a cache entry, or an image
+# tarball.
+
+# ── Version control history ────────────────────────────────────────────────
+# The whole history is far larger than the workspace and can carry keys that
+# were committed and later removed.
+.git
+.gitignore
+.github
+.githubignore
+
+# ── Build output ───────────────────────────────────────────────────────────
+# A host `target/` is platform- and path-dependent; baking it in makes the
+# image non-reproducible and can be multiple gigabytes. The image builds its
+# own target/ inside the build stage.
+target
+**/target
+Cargo.toml.optimization
+
+# ── Secrets and credentials ────────────────────────────────────────────────
+# Never let a local secret file, a Soroban identity directory, or a key
+# material file enter the context. The scripts read credentials from the
+# environment (or an external secret source) at RUN time instead.
+.env
+.env.*
+*.env
+!.env.example
+.soroban/accounts
+.soroban/contracts
+soroban.log
+test_snapshots
+*.pem
+*.key
+*.keystore
+secret*
+private*
+mnemonic.txt
+seed*
+*.seed
+
+# ── Generated WASM ─────────────────────────────────────────────────────────
+# Rebuilt inside the image; host artefacts may be stale or for another target.
+*.wasm
+*.wasm.gz
+
+# ── Local state, backups and reports ───────────────────────────────────────
+backups
+archives
+reports
+config/local_*.json
+config/mainnet_contracts.json
+local-*.json
+deployment-local.json
+*.log
+*.pid
+*.db
+*.sqlite
+*.sql
+*.csv
+coverage
+.nyc_output
+lcov.info
+
+# ── Node / editor / OS noise ───────────────────────────────────────────────
+node_modules
+dist
+build
+out
+.next
+.yarn
+.pnpm-store
+
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── Documentation and container definitions ────────────────────────────────
+# The image is built from source; the repo's own docs and container files are
+# not needed inside it.
+docs
+Dockerfile
+.dockerignore
+docker-compose*.yml

@@ -42,6 +42,7 @@ pub enum AgreementError {
     RevisionLimitReached = 23,
     RevisionAlreadyResolved = 24,
     RevisionSameParty = 25,
+    RateLimiterNotConfigured = 26,
 }
 
 impl core::fmt::Display for AgreementError {
@@ -76,6 +77,7 @@ impl core::fmt::Display for AgreementError {
             Self::RevisionLimitReached => write!(f, "revision limit reached for this agreement"),
             Self::RevisionAlreadyResolved => write!(f, "revision has already been resolved"),
             Self::RevisionSameParty => write!(f, "the requesting party cannot resolve their own revision"),
+            Self::RateLimiterNotConfigured => write!(f, "rate limiter contract not configured"),
         }
     }
 }
@@ -112,5 +114,6 @@ pub fn get_suggestion(error: AgreementError) -> Symbol {
         AgreementError::RevisionLimitReached => symbol_short!("REV_MAX"),
         AgreementError::RevisionAlreadyResolved => symbol_short!("REV_DONE"),
         AgreementError::RevisionSameParty => symbol_short!("REV_SELF"),
+        AgreementError::RateLimiterNotConfigured => symbol_short!("NO_RL"),
     }
 }

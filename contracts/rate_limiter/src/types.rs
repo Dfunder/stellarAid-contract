@@ -2,7 +2,7 @@
 //!
 //! Type definitions for the rate limiter module.
 
-use soroban_sdk::{Address, Bytes, String, Symbol, Env};
+use soroban_sdk::Address;
 
 /// Different types of rate limits that can be configured
 #[derive(Clone, Debug, Eq, PartialEq, Copy)]

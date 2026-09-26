@@ -1,5 +1,12 @@
 # Deployment Guide
 
+> **Full runbook:** [DEPLOYMENT.md](./DEPLOYMENT.md) is the end-to-end
+> deployment runbook — prerequisites, the container build, the pre-deployment
+> checklist, testnet deploy, verification, the gated mainnet path, rollback, and
+> the credential policy. It also lists what in this repository has and has not
+> actually been executed. This page is the short reference; that one is the
+> procedure.
+
 ## Prerequisites
 
 - Rust + `wasm32-unknown-unknown` target: `rustup target add wasm32-unknown-unknown`

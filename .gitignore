@@ -79,6 +79,14 @@ config/local_*.json
 local-*.json
 deployment-local.json
 
+# Mainnet contract ids are recorded by an operator during a gated deploy and
+# are not committed (docs/DEPLOYMENT.md §5). The example file above stays
+# committable.
+config/mainnet_contracts.json
+
+# Config backups written by scripts/deploy/deploy.sh before it rewrites ids.
+config/*.json.bak.*
+
 # Secrets & keys
 *.pem
 *.key

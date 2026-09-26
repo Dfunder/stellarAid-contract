@@ -25,6 +25,22 @@ use types::{ArtistMetrics, DataKey, EarningsRecord};
 /// Ledger TTL for persistent analytics data (~90 days at 6 s/ledger).
 const ANALYTICS_TTL_LEDGERS: u32 = 1_296_000;
 
+/// Hard cap on a single page of earnings records, bounding per-call read cost
+/// (#650). Mirrors the bounds already used elsewhere in the workspace:
+/// `search::MAX_PAGE_SIZE` and `messaging::MAX_HISTORY`.
+const MAX_EARNING_PAGE: u32 = 50;
+
+/// Records younger than this are never eligible for pruning (#651). Equal to
+/// the analytics retention TTL: a record inside the window is still inside the
+/// period the network can restore it from the bucket list, so removing it would
+/// destroy data that is not yet safe to discard.
+const MIN_RETENTION_LEDGERS: u32 = ANALYTICS_TTL_LEDGERS;
+
+/// Hard cap on how many records one `prune_earnings` call may remove (#651).
+/// A prune is always explicitly bounded — see the doc comment on that entry
+/// point for why.
+const PRUNE_MAX_BATCH: u32 = 100;
+
 #[contract]
 pub struct AnalyticsContract;
 
@@ -330,6 +346,145 @@ impl AnalyticsContract {
             .persistent()
             .get(&DataKey::EarningCount(artist))
             .unwrap_or(0u32)
+    }
+
+    /// Return one bounded page of earnings records for an artist (#650).
+    ///
+    /// Reads `[from_index, from_index + limit)`, capped at
+    /// [`MAX_EARNING_PAGE`]. This is the ranged counterpart to
+    /// [`get_earning`]: a caller that needs ten records pays one invocation
+    /// instead of ten round trips.
+    ///
+    /// Pruned indexes are skipped rather than surfaced, so a page can be
+    /// shorter than `limit`. `from_index` beyond the end yields an empty page
+    /// rather than an error, so a client can page to the end without first
+    /// reading `get_earning_count`.
+    pub fn get_earnings(
+        env: Env,
+        artist: Address,
+        from_index: u32,
+        limit: u32,
+    ) -> Result<soroban_sdk::Vec<EarningsRecord>, AnalyticsError> {
+        let cap = limit.min(MAX_EARNING_PAGE);
+        let end = from_index.saturating_add(cap);
+        let mut out: soroban_sdk::Vec<EarningsRecord> = soroban_sdk::Vec::new(&env);
+        let mut idx = from_index;
+        while idx < end {
+            if let Some(record) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, EarningsRecord>(&DataKey::Earning(artist.clone(), idx))
+            {
+                out.push_back(record);
+            }
+            idx = idx.saturating_add(1);
+        }
+        Ok(out)
+    }
+
+    // ── Retention / pruning (#651) ───────────────────────────────────────
+    //
+    // Pruning in this contract is deliberately conservative and bounded:
+    //
+    //   * It only ever touches `DataKey::Earning` — the per-record earnings
+    //     history. The `DataKey::Metrics` aggregate is never pruned, because
+    //     lifetime earnings totals are the point of the contract.
+    //   * It is admin-only: the stored admin is the only address that passes
+    //     `require_auth`.
+    //   * It is bounded twice over: `limit` is mandatory, capped at
+    //     [`PRUNE_MAX_BATCH`], and additionally bounds how many indexes are
+    //     *scanned* — so holes left by earlier prunes cannot turn one call
+    //     into an unbounded walk of the whole log.
+    //   * It refuses to touch a record younger than
+    //     [`MIN_RETENTION_LEDGERS`], and stops at the first such record rather
+    //     than skipping over it, so a prune can never reach past protected
+    //     data.
+    //
+    // What pruning must never reach, in any contract in this workspace, is
+    // audit-relevant or dispute-relevant state: escrows, disputes, claims,
+    // payments, agreements, milestones. Those are money movement and dispute
+    // evidence. `docs/RETENTION_AND_PRUNING.md` sets out the full rule; this
+    // function is safe only because `EarningsRecord` is a derived analytics
+    // log and holds none of it.
+
+    /// Remove a bounded batch of expired earnings records for an artist (#651).
+    ///
+    /// Removes at most `limit` records, and only those at index `< upto_index`
+    /// whose `ledger` is at least [`MIN_RETENTION_LEDGERS`] in the past.
+    /// Returns the number of records actually removed.
+    ///
+    /// The scan stops at the first record that is still inside the retention
+    /// window, so a prune can never reach past protected data. `limit` bounds
+    /// both the number of removals and the number of indexes examined, so this
+    /// can never run unbounded over the log in a single call. Call it
+    /// repeatedly to make progress; a single call is expected to be slow and
+    /// cheap on purpose.
+    ///
+    /// `upto_index` is intentionally explicit rather than "everything": an
+    /// operator must state the window they intend to act on.
+    ///
+    /// `DataKey::EarningCount` is deliberately *not* decremented. It is a
+    /// monotonic total, and lowering it would let a later `record_earning`
+    /// reuse an index whose record still exists.
+    pub fn prune_earnings(
+        env: Env,
+        artist: Address,
+        upto_index: u32,
+        limit: u32,
+    ) -> Result<u32, AnalyticsError> {
+        let admin = Self::require_admin(&env)?;
+        admin.require_auth();
+
+        if upto_index == 0 || limit == 0 || limit > PRUNE_MAX_BATCH {
+            return Err(AnalyticsError::InvalidAmount);
+        }
+
+        let cutoff = env.ledger().sequence().saturating_sub(MIN_RETENTION_LEDGERS);
+        // Read the count directly rather than through the entry point, so the
+        // prune does not re-enter a `#[contractimpl]` function.
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EarningCount(artist.clone()))
+            .unwrap_or(0u32);
+        let end = upto_index.min(count);
+
+        let mut removed = 0u32;
+        let mut scanned = 0u32;
+        let mut idx = 0u32;
+        while idx < end && scanned < limit {
+            let key = DataKey::Earning(artist.clone(), idx);
+            if let Some(record) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, EarningsRecord>(&key)
+            {
+                // Records are appended in ledger order, so the first record
+                // inside the window marks the end of the prunable range.
+                if record.ledger > cutoff {
+                    break;
+                }
+                env.storage().persistent().remove(&key);
+                removed = removed.saturating_add(1);
+            }
+            scanned = scanned.saturating_add(1);
+            idx = idx.saturating_add(1);
+        }
+
+        env.events().publish(
+            (symbol_short!("prune"),),
+            (artist, removed, scanned, cutoff),
+        );
+        Ok(removed)
+    }
+
+    /// Read the configured retention window and batch cap (#651).
+    ///
+    /// Exposed so an operator can check what a prune is bounded by without
+    /// reading the source.
+    pub fn get_retention_policy(env: Env) -> (u32, u32) {
+        let _ = env;
+        (MIN_RETENTION_LEDGERS, PRUNE_MAX_BATCH)
     }
 
     // ── Internal helpers ───────────────────────────────────────────────────

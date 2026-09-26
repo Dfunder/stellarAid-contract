@@ -2,6 +2,12 @@
 
 This document describes how operators can pause and unpause contracts, and the escalation path for emergency situations.
 
+> **Operator runbook:** [EMERGENCY_PROCEDURES.md](./EMERGENCY_PROCEDURES.md) is
+> the full incident runbook — detection, pause/resume order, authorised roles,
+> post-resume verification, escalation path and the post-incident checklist.
+> This page is the short mechanism reference; that one is what you follow
+> during an incident.
+
 ## Overview
 
 Contracts in this workspace implement a standard pause mechanism via the shared `pause` module (`contracts/shared/src/pause.rs`). When a contract is paused, all non-admin operations are blocked with a `"contract is paused"` panic.
@@ -57,10 +63,23 @@ soroban contract invoke \
 For severe security incidents, an emergency stop extends the pause mechanism with:
 
 - **Multi-sig requirement**: requires approval from 2 of N designated addresses.
-- **Timelock**: pausing is immediate; emergency unpause has a 24-hour delay.
+- **Timelock**: pausing is immediate; emergency unpause has a recovery delay.
 - **Events**: `emergency_pause_initiated`, `emergency_pause_executed`, `emergency_unpause_scheduled`.
 
-This mechanism is not yet implemented. Track issue #TBD for progress.
+**This mechanism is not implemented.** It is issue **#711**, and it is being
+built in a companion pull request that owns `contracts/shared/src/pause.rs`.
+
+The *procedures* side of the same problem — issue **#707** — is a separate
+duplicate issue, closed by [EMERGENCY_PROCEDURES.md](./EMERGENCY_PROCEDURES.md)
+and the pause/resume tests in `tests/framework/tests/pause_recovery.rs`. That
+work deliberately does not touch `contracts/shared/src/pause.rs`, so the two
+changes do not conflict.
+
+The recovery delay the mechanism will enforce is specified in
+[EMERGENCY_PROCEDURES.md §5](./EMERGENCY_PROCEDURES.md) as an intent for the
+companion PR. Until #711 lands, **`unpause` is immediate** — there is no delay
+to wait out, and no second signature required. Do not plan an incident response
+around a delay that does not exist yet.
 
 ## Post-Action Validation
 

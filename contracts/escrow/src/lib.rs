@@ -42,6 +42,9 @@ fn correlation_publish(
 enum PauseKey {
     Paused,
     Admin,
+    /// Admin address proposed via `transfer_admin`, awaiting `accept_admin`
+    /// (closes #635 — two-step admin key rotation).
+    PendingAdmin,
 }
 
 /// Require the escrow contract is not paused.
@@ -176,6 +179,81 @@ impl EscrowContract {
     /// Returns `true` when the contract is currently paused.
     pub fn is_paused(env: Env) -> bool {
         env.storage().instance().get(&PauseKey::Paused).unwrap_or(false)
+    }
+
+    // ── Admin key rotation (closes #635) ─────────────────────────────────────
+    //
+    // Two-step transfer so rotating the admin key can never brick the
+    // contract by pointing it at an unreachable/mistyped address: the
+    // current admin proposes a successor, and only that successor's own
+    // signature can complete the handover by calling `accept_admin`.
+
+    /// Step 1 — current admin proposes `new_admin` as the successor.
+    /// Does not change the active admin; `new_admin` must call
+    /// `accept_admin` to complete the rotation.
+    pub fn transfer_admin(env: Env, admin: Address, new_admin: Address) -> Result<(), EscrowError> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&PauseKey::Admin)
+            .ok_or(EscrowError::Unauthorized)?;
+        if stored != admin {
+            return Err(EscrowError::Unauthorized);
+        }
+        env.storage().instance().set(&PauseKey::PendingAdmin, &new_admin);
+        env.events().publish(
+            (symbol_short!("esc"), symbol_short!("adm_prop")),
+            (admin, new_admin),
+        );
+        Ok(())
+    }
+
+    /// Step 2 — the proposed successor accepts and becomes the active admin.
+    /// Only `new_admin`'s own signature can complete this; the current
+    /// admin cannot force it through on the successor's behalf.
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), EscrowError> {
+        new_admin.require_auth();
+        let pending: Address = env
+            .storage()
+            .instance()
+            .get(&PauseKey::PendingAdmin)
+            .ok_or(EscrowError::Unauthorized)?;
+        if pending != new_admin {
+            return Err(EscrowError::Unauthorized);
+        }
+        let previous: Address = env
+            .storage()
+            .instance()
+            .get(&PauseKey::Admin)
+            .ok_or(EscrowError::Unauthorized)?;
+        env.storage().instance().set(&PauseKey::Admin, &new_admin);
+        env.storage().instance().remove(&PauseKey::PendingAdmin);
+        env.events().publish(
+            (symbol_short!("esc"), symbol_short!("adm_rot")),
+            (previous, new_admin),
+        );
+        Ok(())
+    }
+
+    /// Current admin withdraws an in-flight proposal without completing it.
+    pub fn cancel_admin_transfer(env: Env, admin: Address) -> Result<(), EscrowError> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&PauseKey::Admin)
+            .ok_or(EscrowError::Unauthorized)?;
+        if stored != admin {
+            return Err(EscrowError::Unauthorized);
+        }
+        env.storage().instance().remove(&PauseKey::PendingAdmin);
+        Ok(())
+    }
+
+    /// The proposed successor admin awaiting acceptance, if any.
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&PauseKey::PendingAdmin)
     }
 
     /// Closes #482 (CEI), #486 (events), #487 (TTL), #587 (reentrancy guard).

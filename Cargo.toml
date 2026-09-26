@@ -19,6 +19,8 @@ members = [
     "contracts/nft",
     "contracts/dao",
     "contracts/ecosystem_funding",
+    "contracts/licensing",
+    "contracts/mentorship",
     "sdk",
     "tests/framework",
     "tests/upgrade_testing",

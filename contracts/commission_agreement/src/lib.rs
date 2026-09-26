@@ -209,6 +209,21 @@ impl CommissionAgreementContract {
     ) -> Result<(), AgreementError> {
         client.require_auth();
 
+        // ── Rate limiting for commission creation (closes #XXX) ─────────────
+        // Check rate limit for commission creation per artist
+        let rate_limiter_contract: Address = env.storage().instance()
+            .get(&DataKey::RateLimiter)
+            .ok_or(AgreementError::RateLimiterNotConfigured)?;
+        env.invoke_contract::<()>(
+            &rate_limiter_contract,
+            &symbol_short!("check_rate_limit"),
+            soroban_sdk::vec![
+                &env,
+                types::RateLimitKey::CommissionsPerArtist.into_val(&env),
+                artist.clone().into_val(&env),
+            ],
+        )?;
+
         // ── Input length validation (closes #591) ──────────────────────────
         if commission_id.len() > MAX_ID_LEN {
             return Err(AgreementError::InputTooLong);

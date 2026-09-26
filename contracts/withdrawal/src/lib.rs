@@ -16,8 +16,8 @@ pub enum DataKey {
     WithdrawalsByCampaign(u64) = 1,
     Admin = 2,
     Initialized = 3,
-    DonationContract = 3,
-    WithdrawnAmount(u64) = 4,
+    DonationContract = 4,
+    WithdrawnAmount(u64) = 5,
 }
 
 #[contracttype]

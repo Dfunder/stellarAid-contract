@@ -49,13 +49,35 @@ impl PlatformConfigContract {
 
     impl_semver_queries!();
 
+    /// Returns the assembled platform config, caching the result in instance
+    /// storage so repeated calls (e.g. from cross-contract fee lookups) skip
+    /// four separate storage reads in favor of one, until any setter below
+    /// invalidates the cache (closes #648).
     pub fn get_config(env: Env) -> PlatformConfig {
-        PlatformConfig {
+        if let Some(cached) = env
+            .storage()
+            .instance()
+            .get::<Symbol, PlatformConfig>(&symbol_short!("cfgcache"))
+        {
+            return cached;
+        }
+        let config = PlatformConfig {
             admin: get_admin(&env),
             fee_bps: get_fee_bps(&env),
             platform_wallet: get_platform_wallet(&env),
             usdc_token: get_usdc_token(&env),
-        }
+        };
+        env.storage()
+            .instance()
+            .set(&symbol_short!("cfgcache"), &config);
+        config
+    }
+
+    /// Drops the cached config so the next `get_config` call rebuilds it
+    /// from current storage. Called by every setter that changes a field
+    /// `get_config` assembles.
+    fn invalidate_config_cache(env: &Env) {
+        env.storage().instance().remove(&symbol_short!("cfgcache"));
     }
 
     pub fn set_fee_bps(env: Env, fee_bps: u32) -> Result<(), ConfigError> {
@@ -66,6 +88,7 @@ impl PlatformConfigContract {
         }
         let old_fee = get_fee_bps(&env);
         set_fee_bps_val(&env, fee_bps);
+        Self::invalidate_config_cache(&env);
         env.events()
             .publish((symbol_short!("feeupdtd"),), (old_fee, fee_bps));
         Ok(())
@@ -75,6 +98,7 @@ impl PlatformConfigContract {
         let admin = get_admin(&env);
         admin.require_auth();
         set_platform_wallet(&env, &platform_wallet);
+        Self::invalidate_config_cache(&env);
         Ok(())
     }
 
@@ -91,6 +115,7 @@ impl PlatformConfigContract {
         let pending = get_pending_admin(&env).ok_or(ConfigError::NoPendingAdmin)?;
         pending.require_auth();
         set_admin(&env, &pending);
+        Self::invalidate_config_cache(&env);
         env.events().publish((symbol_short!("admtxfrd"),), pending);
         Ok(())
     }

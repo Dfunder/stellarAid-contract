@@ -452,6 +452,29 @@ impl Recruitment {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    /// Bounded form of [`Self::get_applicants`] (closes #876).
+    ///
+    /// Every application appends to the applicant list (`lib.rs:249`), rejected
+    /// only against the admin-set `MaxApplicants` (`lib.rs:227-229`) — bounded
+    /// by configuration rather than by a code constant. This bounds the
+    /// response so a heavily-applied-to job cannot blow the data-entry limit;
+    /// the list is still read in full first.
+    pub fn get_applicants_page(
+        env: Env,
+        job_id: Bytes,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<Address>, shared::pagination::PageInfo) {
+        let all: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Applicants(job_id))
+            .unwrap_or_else(|| Vec::new(&env));
+        let page = shared::pagination::paginate(&env, all, start, limit);
+        let info = page.info();
+        (page.into_items(), info)
+    }
+
     pub fn get_pipeline(env: Env, job_id: Bytes) -> Pipeline {
         load_pipeline(&env, &job_id)
     }

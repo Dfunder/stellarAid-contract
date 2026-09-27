@@ -472,6 +472,26 @@ impl MentorshipProgram {
             .expect("milestones not found")
     }
 
+    /// Bounded form of [`Self::get_milestones`] (closes #876).
+    ///
+    /// Milestones are appended as the engagement progresses with no write-time
+    /// cap, so the unbounded getter's cost grows with engagement length.
+    pub fn get_milestones_page(
+        env: Env,
+        engagement_id: u64,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<MentoringMilestone>, shared::pagination::PageInfo) {
+        let all: Vec<MentoringMilestone> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Milestones(engagement_id))
+            .unwrap_or_else(|| Vec::new(&env));
+        let page = shared::pagination::paginate(&env, all, start, limit);
+        let info = page.info();
+        (page.into_items(), info)
+    }
+
     /// Retrieve all feedback entries for an engagement.
     pub fn get_feedback(env: Env, engagement_id: u64) -> Vec<FeedbackEntry> {
         let count: u64 = env
@@ -493,6 +513,24 @@ impl MentorshipProgram {
             i += 1;
         }
         result
+    }
+
+    /// Bounded form of [`Self::get_feedback`] (closes #876).
+    ///
+    /// `get_feedback` walks every feedback key for the engagement and collects
+    /// them all before returning, so its cost grows with the number of entries
+    /// even though the list is stored per-index. This variant bounds the
+    /// response, not that walk — see the `shared::pagination` module docs.
+    pub fn get_feedback_page(
+        env: Env,
+        engagement_id: u64,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<FeedbackEntry>, shared::pagination::PageInfo) {
+        let all = Self::get_feedback(env.clone(), engagement_id);
+        let page = shared::pagination::paginate(&env, all, start, limit);
+        let info = page.info();
+        (page.into_items(), info)
     }
 
     // ── Internal ──────────────────────────────────────────────────────────

@@ -459,6 +459,29 @@ impl SubscriptionContract {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    /// Bounded form of [`Self::get_payments`] (closes #876).
+    ///
+    /// Every renewal appends a `PaymentRecord`, trimmed to the admin-set
+    /// `HistoryLimit` on write (`lib.rs:98-100`) — bounded by configuration
+    /// rather than by a code constant. This bounds the response so a subscriber
+    /// with a very long tenure cannot blow the data-entry limit; the list is
+    /// still read in full first.
+    pub fn get_payments_page(
+        env: Env,
+        subscriber: Address,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<PaymentRecord>, shared::pagination::PageInfo) {
+        let all: Vec<PaymentRecord> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Payments(subscriber))
+            .unwrap_or_else(|| Vec::new(&env));
+        let page = shared::pagination::paginate(&env, all, start, limit);
+        let info = page.info();
+        (page.into_items(), info)
+    }
+
     // ── Health monitoring (#678) and gradual rollout (#684) ──────────────
     pub fn health_check(env: Env) -> shared::health::HealthReport {
         let report = shared::health::health_check(&env);

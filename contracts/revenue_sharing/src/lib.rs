@@ -297,6 +297,23 @@ impl RevenueSharing {
         load_splits(&env, &id)
     }
 
+    /// Bounded form of [`Self::get_splits`] (closes #876).
+    ///
+    /// The participant roster is bounded by the agreement's own participant cap
+    /// today, but it has no independent write-time cap, so this keeps the
+    /// *response* inside the data-entry limit as that cap changes. The roster is
+    /// still read in full first.
+    pub fn get_splits_page(
+        env: Env,
+        id: Bytes,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<Participant>, shared::pagination::PageInfo) {
+        let page = shared::pagination::paginate(&env, load_splits(&env, &id), start, limit);
+        let info = page.info();
+        (page.into_items(), info)
+    }
+
     /// Lifetime amount attributed to `account` under this agreement.
     pub fn get_earnings(env: Env, id: Bytes, account: Address) -> i128 {
         env.storage()
@@ -310,6 +327,27 @@ impl RevenueSharing {
             .persistent()
             .get(&DataKey::History(id))
             .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Bounded form of [`Self::get_history`] (closes #876).
+    ///
+    /// The revenue history is appended to on every distribution with no
+    /// write-time cap, so the unbounded getter's cost grows with the number of
+    /// distributions under the agreement.
+    pub fn get_history_page(
+        env: Env,
+        id: Bytes,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<RevenueEntry>, shared::pagination::PageInfo) {
+        let all: Vec<RevenueEntry> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::History(id))
+            .unwrap_or_else(|| Vec::new(&env));
+        let page = shared::pagination::paginate(&env, all, start, limit);
+        let info = page.info();
+        (page.into_items(), info)
     }
 
     pub fn get_report(env: Env, id: Bytes) -> Result<RevenueReport, RevenueError> {

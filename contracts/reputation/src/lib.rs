@@ -787,6 +787,23 @@ impl Reputation {
         load_reviews(&env, &artist)
     }
 
+    /// Bounded form of [`Self::get_reviews`] (closes #876).
+    ///
+    /// The review list has no write-time cap, so the unbounded getter's cost
+    /// grows with the number of reviews an artist has accumulated. Page at most
+    /// [`shared::pagination::MAX_PAGE_SIZE`] reviews and follow
+    /// `info.next_start` to walk the rest.
+    pub fn get_reviews_page(
+        env: Env,
+        artist: Address,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<Review>, shared::pagination::PageInfo) {
+        let page = shared::pagination::paginate(&env, load_reviews(&env, &artist), start, limit);
+        let info = page.info();
+        (page.into_items(), info)
+    }
+
     pub fn get_review(env: Env, artist: Address, review_index: u32) -> Result<Review, ReputationError> {
         load_reviews(&env, &artist)
             .get(review_index)

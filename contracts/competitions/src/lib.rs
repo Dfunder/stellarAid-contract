@@ -480,6 +480,24 @@ impl Competitions {
         entrants_of(&env, &competition_id)
     }
 
+    /// Bounded form of [`Self::get_entrants`] (closes #876).
+    ///
+    /// `entrants_of` reads the whole roster, so its cost grows with the number
+    /// of entrants and is paid on every participant lookup. Page at most
+    /// [`shared::pagination::MAX_PAGE_SIZE`] entrants and follow
+    /// `info.next_start` to walk the rest.
+    pub fn get_entrants_page(
+        env: Env,
+        competition_id: Bytes,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<Address>, shared::pagination::PageInfo) {
+        let page =
+            shared::pagination::paginate(&env, entrants_of(&env, &competition_id), start, limit);
+        let info = page.info();
+        (page.into_items(), info)
+    }
+
     pub fn get_winners(env: Env, competition_id: Bytes) -> Vec<Winner> {
         env.storage()
             .persistent()
@@ -487,11 +505,50 @@ impl Competitions {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    /// Bounded form of [`Self::get_winners`] (closes #876).
+    pub fn get_winners_page(
+        env: Env,
+        competition_id: Bytes,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<Winner>, shared::pagination::PageInfo) {
+        let all: Vec<Winner> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Winners(competition_id))
+            .unwrap_or_else(|| Vec::new(&env));
+        let page = shared::pagination::paginate(&env, all, start, limit);
+        let info = page.info();
+        (page.into_items(), info)
+    }
+
     pub fn get_history(env: Env) -> Vec<CompetitionSummary> {
         env.storage()
             .persistent()
             .get(&DataKey::History)
             .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Bounded form of [`Self::get_history`] (closes #876).
+    ///
+    /// The global competition history is appended to on every state change and
+    /// trimmed to the admin-set `HistoryLimit` on write (`lib.rs:395-398`), so
+    /// it is bounded today by configuration rather than by a code constant.
+    /// This bounds the response so it stays inside the data-entry limit if that
+    /// configured limit is raised; the history is still read in full first.
+    pub fn get_history_page(
+        env: Env,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<CompetitionSummary>, shared::pagination::PageInfo) {
+        let all: Vec<CompetitionSummary> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::History)
+            .unwrap_or_else(|| Vec::new(&env));
+        let page = shared::pagination::paginate(&env, all, start, limit);
+        let info = page.info();
+        (page.into_items(), info)
     }
 
     // ── Health monitoring (#678) and gradual rollout (#684) ──────────────

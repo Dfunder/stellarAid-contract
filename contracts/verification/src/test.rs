@@ -1,6 +1,6 @@
 extern crate std;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Events as _, Ledger},
     Address, Env, String,
 };
 
@@ -478,4 +478,225 @@ fn admin_can_tighten_the_minimum_score() {
         f.client.get_portfolio(&f.artist).status,
         PortfolioStatus::Rejected
     );
+}
+
+// ── Gas / CPU regression guards (#873) ───────────────────────────────────────
+
+/// How many contract events one call published.
+///
+/// `env.events().all()` hands back the test host's whole event log, not just the
+/// most recent invocation, so a raw length grows with every call on the same
+/// `Env` and says nothing about the call being measured. Only the difference
+/// taken around it is an event count. `tests/framework/tests/pause_recovery.rs`
+/// budgets its events the same way.
+fn events_emitted_by<F: FnOnce()>(env: &Env, call: F) -> u32 {
+    let before = env.events().all().len();
+    call();
+    (env.events().all().len() - before) as u32
+}
+
+/// Mirrors the `BUDGETS` table in `benches/verification_benchmark.rs`; keep the
+/// two in sync. The benchmark enforces that budget, and this test makes a change
+/// that breaks it fail under a plain `cargo test` with no benchmark run needed.
+///
+/// Each of these operations publishes exactly one event. A second `publish`
+/// added for logging or indexing shows up here as a failing assertion before it
+/// shows up as a fee regression on-chain.
+#[test]
+fn event_budgets_match_benchmark() {
+    let f = setup();
+
+    assert_eq!(
+        events_emitted_by(&f.env, || {
+            f.client.submit_portfolio(&f.artist, &uri(&f.env), &5);
+        }),
+        1
+    );
+
+    assert_eq!(
+        events_emitted_by(&f.env, || {
+            f.client.start_review(&f.reviewer, &f.artist);
+        }),
+        1
+    );
+
+    assert_eq!(
+        events_emitted_by(&f.env, || {
+            f.client
+                .review_portfolio(&f.reviewer, &f.artist, &quality(90), &note(&f.env));
+        }),
+        1
+    );
+
+    assert_eq!(
+        events_emitted_by(&f.env, || {
+            f.client.issue_badge(
+                &f.reviewer,
+                &f.artist,
+                &BadgeType::IdVerified,
+                &0,
+                &note(&f.env),
+            );
+        }),
+        1
+    );
+
+    assert_eq!(
+        events_emitted_by(&f.env, || {
+            f.client.revoke_badge(
+                &f.reviewer,
+                &f.artist,
+                &BadgeType::IdVerified,
+                &note(&f.env),
+            );
+        }),
+        1
+    );
+}
+
+// ── Bounded list queries (#876) ──────────────────────────────────────────────
+
+#[test]
+fn history_page_bounds_the_returned_records() {
+    let f = setup();
+    f.client.submit_portfolio(&f.artist, &uri(&f.env), &5);
+    f.client.start_review(&f.reviewer, &f.artist);
+    f.client
+        .review_portfolio(&f.reviewer, &f.artist, &quality(90), &note(&f.env));
+
+    let (items, info) = f.client.get_history_page(&f.artist, &0, &10);
+    assert_eq!(items.len(), 1);
+    assert_eq!(info.start, 0);
+    assert_eq!(info.returned, 1);
+    assert_eq!(info.total, 1);
+    assert!(!info.has_more);
+    assert_eq!(info.next_start, None);
+}
+
+#[test]
+fn history_page_walks_every_record_exactly_once() {
+    let f = setup();
+    f.client.submit_portfolio(&f.artist, &uri(&f.env), &5);
+    // HISTORY_LIMIT trims the list, so this stops adding records after
+    // HISTORY_LIMIT revisions.
+    for _ in 0..5 {
+        f.client.update_portfolio(&f.artist, &uri(&f.env), &5);
+        f.client.start_review(&f.reviewer, &f.artist);
+        f.client
+            .review_portfolio(&f.reviewer, &f.artist, &quality(90), &note(&f.env));
+    }
+    assert_eq!(f.client.get_history(&f.artist).len(), HISTORY_LIMIT);
+
+    let mut seen = 0u32;
+    let mut cursor = 0u32;
+    loop {
+        let (items, info) = f.client.get_history_page(&f.artist, &cursor, &1);
+        seen += items.len();
+        match info.next_start {
+            Some(next) => cursor = next,
+            None => break,
+        }
+    }
+    assert_eq!(seen, HISTORY_LIMIT);
+}
+
+#[test]
+fn history_page_beyond_the_end_is_empty_not_an_error() {
+    let f = setup();
+    let (items, info) = f.client.get_history_page(&f.artist, &0, &10);
+    assert_eq!(items.len(), 0);
+    assert_eq!(info.total, 0);
+
+    f.client.submit_portfolio(&f.artist, &uri(&f.env), &5);
+    f.client.start_review(&f.reviewer, &f.artist);
+    f.client
+        .review_portfolio(&f.reviewer, &f.artist, &quality(90), &note(&f.env));
+
+    let (items, info) = f.client.get_history_page(&f.artist, &99, &10);
+    assert_eq!(items.len(), 0);
+    assert_eq!(info.total, 1);
+    // start is clamped to the end so the caller still gets a valid cursor.
+    assert_eq!(info.start, 1);
+    assert!(!info.has_more);
+    assert_eq!(info.next_start, None);
+}
+
+#[test]
+fn history_page_with_zero_limit_returns_nothing() {
+    let f = setup();
+    f.client.submit_portfolio(&f.artist, &uri(&f.env), &5);
+    f.client.start_review(&f.reviewer, &f.artist);
+    f.client
+        .review_portfolio(&f.reviewer, &f.artist, &quality(90), &note(&f.env));
+
+    let (items, info) = f.client.get_history_page(&f.artist, &0, &0);
+    assert_eq!(items.len(), 0);
+    // `total` is still reported, so a caller can tell "no page requested" from
+    // "nothing recorded" without a second round trip.
+    assert_eq!(info.total, 1);
+}
+
+#[test]
+fn badge_history_page_is_bounded() {
+    let f = setup();
+    for _ in 0..4 {
+        f.client.issue_badge(
+            &f.reviewer,
+            &f.artist,
+            &BadgeType::IdVerified,
+            &0,
+            &note(&f.env),
+        );
+    }
+    // HISTORY_LIMIT trims the badge history on write.
+    assert_eq!(f.client.get_badge_history(&f.artist).len(), HISTORY_LIMIT);
+
+    let (page, info) = f.client.get_badge_history_page(&f.artist, &1, &2);
+    assert_eq!(page.len(), 2);
+    assert_eq!(info.start, 1);
+    assert_eq!(info.returned, 2);
+    assert_eq!(info.total, HISTORY_LIMIT);
+    assert!(!info.has_more);
+}
+
+#[test]
+fn badge_type_page_is_bounded() {
+    let f = setup();
+    f.client.issue_badge(
+        &f.reviewer,
+        &f.artist,
+        &BadgeType::PortfolioVerified,
+        &0,
+        &note(&f.env),
+    );
+    f.client.issue_badge(
+        &f.reviewer,
+        &f.artist,
+        &BadgeType::IdVerified,
+        &0,
+        &note(&f.env),
+    );
+    f.client.issue_badge(
+        &f.reviewer,
+        &f.artist,
+        &BadgeType::TopRated,
+        &0,
+        &note(&f.env),
+    );
+
+    // Unbounded getter still agrees with the paged one.
+    let (all, info) = f.client.get_artist_badge_types_page(&f.artist, &0, &10);
+    assert_eq!(all.len(), 3);
+    assert_eq!(info.total, 3);
+
+    let (first, info) = f.client.get_artist_badge_types_page(&f.artist, &0, &2);
+    assert_eq!(first.len(), 2);
+    assert_eq!(info.returned, 2);
+    assert!(info.has_more);
+    assert_eq!(info.next_start, Some(2));
+
+    let (rest, info) = f.client.get_artist_badge_types_page(&f.artist, &2, &2);
+    assert_eq!(rest.len(), 1);
+    assert!(!info.has_more);
+    assert_eq!(info.next_start, None);
 }

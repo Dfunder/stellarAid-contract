@@ -2,6 +2,7 @@
 name = "subscription"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [package.metadata.stellar-aid]
 versioning = "semver"
@@ -13,7 +14,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 soroban-sdk.workspace = true
-shared = { path = "../shared" }
+shared = { path = "../shared", version = "0.1.0" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }

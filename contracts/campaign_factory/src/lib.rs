@@ -1,6 +1,7 @@
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Vec};
+use campaign::{CampaignContract, CampaignContractClient};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec};
 
 include!("../../semver_types.rs");
 
@@ -11,16 +12,22 @@ pub enum DataKey {
     Campaigns,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CampaignDeployedEvent {
+    pub creator: Address,
+    pub contract: Address,
+}
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum CampaignFactoryError {
     AlreadyInitialized = 1,
     NotInitialized = 2,
-    ContractAlreadyRegistered = 3,
 }
 
-fn read_campaigns(env: &Env) -> Vec<(Address, Address)> {
+fn read_campaigns(env: &Env) -> Vec<Address> {
     env.storage()
         .instance()
         .get(&DataKey::Campaigns)
@@ -36,12 +43,13 @@ impl CampaignFactory {
         if env.storage().instance().has(&DataKey::Initialized) {
             return Err(CampaignFactoryError::AlreadyInitialized);
         }
+
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Initialized, &true);
         env.storage()
             .instance()
-            .set(&DataKey::Campaigns, &Vec::<(Address, Address)>::new(&env));
+            .set(&DataKey::Campaigns, &Vec::<Address>::new(&env));
         Ok(())
     }
 
@@ -50,47 +58,49 @@ impl CampaignFactory {
     pub fn deploy_campaign(
         env: Env,
         creator: Address,
-        contract: Address,
-    ) -> Result<(), CampaignFactoryError> {
-        Self::register_campaign(env, creator, contract)
-    }
-
-    pub fn register_campaign(
-        env: Env,
-        creator: Address,
-        contract: Address,
-    ) -> Result<(), CampaignFactoryError> {
+        _params: Bytes,
+    ) -> Result<Address, CampaignFactoryError> {
         if !env.storage().instance().has(&DataKey::Initialized) {
             return Err(CampaignFactoryError::NotInitialized);
         }
+
         creator.require_auth();
 
-        let mut campaigns = read_campaigns(&env);
-        for pair in campaigns.iter() {
-            let (existing_creator, existing_contract) = pair;
-            if existing_creator == creator && existing_contract == contract {
-                return Err(CampaignFactoryError::ContractAlreadyRegistered);
-            }
-        }
+        let contract_id = env.register_contract(None, CampaignContract);
+        let client = CampaignContractClient::new(&env, &contract_id);
+        client.initialize(&creator);
 
-        campaigns.push_back((creator, contract));
+        let mut campaigns = read_campaigns(&env);
+        campaigns.push_back(contract_id.clone());
         env.storage().instance().set(&DataKey::Campaigns, &campaigns);
-        Ok(())
+
+        env.events().publish(
+            (Symbol::new(&env, "campaign_deployed"),),
+            CampaignDeployedEvent {
+                creator: creator.clone(),
+                contract: contract_id.clone(),
+            },
+        );
+
+        Ok(contract_id)
     }
 
-    pub fn get_all_campaigns(env: Env) -> Vec<(Address, Address)> {
+    pub fn get_all_campaigns(env: Env) -> Vec<Address> {
         read_campaigns(&env)
     }
 
-    pub fn get_campaigns_by_creator(env: Env, creator: Address) -> Vec<(Address, Address)> {
+    pub fn get_campaigns_by_creator(env: Env, creator: Address) -> Vec<Address> {
         let campaigns = read_campaigns(&env);
         let mut filtered = Vec::new(&env);
-        for pair in campaigns.iter() {
-            let (existing_creator, contract) = pair;
-            if existing_creator == creator {
-                filtered.push_back((existing_creator, contract));
+
+        for campaign in campaigns.iter() {
+            let contract_id = campaign;
+            let client = CampaignContractClient::new(&env, &contract_id);
+            if client.get_admin() == creator {
+                filtered.push_back(contract_id);
             }
         }
+
         filtered
     }
 }

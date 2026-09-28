@@ -15,6 +15,7 @@ crate-type = ["cdylib", "rlib"]
 testutils = ["soroban-sdk/testutils"]
 
 [dependencies]
+campaign = { path = "../campaign" }
 soroban-sdk = { workspace = true }
 
 [dev-dependencies]

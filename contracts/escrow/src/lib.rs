@@ -10,8 +10,10 @@ use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Bytes, E
 pub mod errors;
 pub mod storage;
 pub mod cross_contract;
+pub mod invariants;
 
 pub use cross_contract::{AtomicCommitMarker, AtomicCommitState};
+pub use invariants::InvariantError;
 
 use errors::EscrowError;
 use storage::{CommissionStatus, EscrowRecord, escrow_exists, get_escrow, save_escrow};
@@ -271,6 +273,7 @@ impl EscrowContract {
 
         // CHECKS
         require_not_paused(&env)?;
+        shared::circuit_breaker::require_not_halted(&env)?;
         if amount <= 0 { return Err(EscrowError::InvalidAmount); }
         if escrow_exists(&env, &commission_id) { return Err(EscrowError::AlreadyExists); }
 
@@ -297,6 +300,10 @@ impl EscrowContract {
             save_escrow(&env, &record);
             extend_escrow_ttl_default(&env, &record);
 
+            // INVARIANT: balance consistency — released starts at 0, amount is positive (#770)
+            invariants::verify_balance_consistency(&env, &record)
+                .map_err(EscrowError::from)?;
+
             // INTERACTIONS – external call after effects
             token::Client::new(&env, &usdc_token).transfer(
                 &client, &env.current_contract_address(), &amount,
@@ -320,6 +327,7 @@ impl EscrowContract {
         config_contract: Address,
     ) -> Result<(), EscrowError> {
         // CHECKS
+        shared::circuit_breaker::require_not_halted(&env)?;
         let mut r = get_escrow(&env, &commission_id);
         if r.status != CommissionStatus::Locked { return Err(EscrowError::InvalidStatus); }
 
@@ -334,7 +342,14 @@ impl EscrowContract {
             let (fee, payout) = calculate_fee_split(r.amount, r.fee_bps)?;
 
             // EFFECTS
+            let prev_status = r.status;
             r.status = CommissionStatus::Released;
+
+            // Invariant: validate state transition and balance consistency (#770)
+            if !invariants::is_valid_transition(prev_status, r.status) {
+                return Err(EscrowError::InvalidStateTransition);
+            }
+            invariants::verify_balance_consistency(&env, &r).map_err(EscrowError::from)?;
             save_escrow(&env, &r);
 
             // INTERACTIONS
@@ -361,6 +376,7 @@ impl EscrowContract {
     ) -> Result<(), EscrowError> {
         // CHECKS
         require_not_paused(&env)?;
+        shared::circuit_breaker::require_not_halted(&env)?;
         let mut r = get_escrow(&env, &commission_id);
         if r.status != CommissionStatus::Locked && r.status != CommissionStatus::Disputed {
             return Err(EscrowError::InvalidStatus);
@@ -374,7 +390,13 @@ impl EscrowContract {
 
         storage::with_reentrancy_guard(&env, || {
             // EFFECTS
+            let prev_status = r.status;
             r.status = CommissionStatus::Refunded;
+
+            // Invariant: validate state transition (#770)
+            if !invariants::is_valid_transition(prev_status, r.status) {
+                return Err(EscrowError::InvalidStateTransition);
+            }
             save_escrow(&env, &r);
 
             // INTERACTIONS
@@ -392,12 +414,19 @@ impl EscrowContract {
     /// Closes #482 (CEI), #486 (events).
     pub fn expire_escrow(env: Env, commission_id: Bytes, expiry_ledger: u32) -> Result<(), EscrowError> {
         // CHECKS
+        shared::circuit_breaker::require_not_halted(&env)?;
         let mut r = get_escrow(&env, &commission_id);
         if r.status != CommissionStatus::Locked { return Err(EscrowError::InvalidStatus); }
         if env.ledger().sequence() < expiry_ledger { return Err(EscrowError::NotExpired); }
 
         // EFFECTS
+        let prev_status = r.status;
         r.status = CommissionStatus::Expired;
+
+        // Invariant: validate state transition (#770)
+        if !invariants::is_valid_transition(prev_status, r.status) {
+            return Err(EscrowError::InvalidStateTransition);
+        }
         save_escrow(&env, &r);
 
         // EVENT
@@ -413,6 +442,7 @@ impl EscrowContract {
         initiator.require_auth();
 
         // CHECKS
+        shared::circuit_breaker::require_not_halted(&env)?;
         let mut r = get_escrow(&env, &commission_id);
         if r.status == CommissionStatus::Disputed { return Err(EscrowError::DisputeAlreadyOpen); }
         if r.status != CommissionStatus::Locked { return Err(EscrowError::InvalidStatus); }
@@ -420,7 +450,13 @@ impl EscrowContract {
 
         // EFFECTS – extend the record TTL with the dispute-period length so the
         // escrow cannot expire mid-arbitration (#586).
+        let prev_status = r.status;
         r.status = CommissionStatus::Disputed;
+
+        // Invariant: validate state transition (#770)
+        if !invariants::is_valid_transition(prev_status, r.status) {
+            return Err(EscrowError::InvalidStateTransition);
+        }
         save_escrow(&env, &r);
         extend_escrow_ttl(&env, &r, storage::get_dispute_ttl_ledgers(&env));
 
@@ -520,6 +556,7 @@ impl EscrowContract {
             let (fee, payout) = calculate_fee_split(release_amount, r.fee_bps)?;
 
             // EFFECTS – update released_amount and status before external calls
+            let prev_status = r.status;
             r.released_amount = r.released_amount
                 .checked_add(release_amount)
                 .ok_or(EscrowError::ArithmeticOverflow)?;
@@ -534,6 +571,11 @@ impl EscrowContract {
                 CommissionStatus::PartiallyReleased
             };
 
+            // Invariant: validate state transition and balance consistency (#770)
+            if !invariants::is_valid_transition(prev_status, r.status) {
+                return Err(EscrowError::InvalidStateTransition);
+            }
+            invariants::verify_balance_consistency(&env, &r).map_err(EscrowError::from)?;
             save_escrow(&env, &r);
             extend_escrow_ttl_default(&env, &r);
 
@@ -566,6 +608,7 @@ impl EscrowContract {
         config_contract: Address,
     ) -> Result<(), EscrowError> {
         // CHECKS
+        shared::circuit_breaker::require_not_halted(&env)?;
         let mut r = get_escrow(&env, &commission_id);
         if r.status != CommissionStatus::Locked && r.status != CommissionStatus::PartiallyReleased {
             return Err(EscrowError::InvalidStatus);
@@ -594,8 +637,39 @@ impl EscrowContract {
             let (fee, payout) = calculate_fee_split(remaining, r.fee_bps)?;
 
             // EFFECTS
+            let prev_status = r.status;
             r.released_amount = r.amount;
             r.status = CommissionStatus::Released;
+
+            // INVARIANT: validate the state transition is legal (#770)
+            if !invariants::is_valid_transition(prev_status, r.status) {
+                return Err(invariants::InvariantError::InvalidStateTransition.into());
+            }
+            // INVARIANT: released must equal amount when fully released
+            if r.released_amount != r.amount {
+                return Err(invariants::InvariantError::BalanceMismatch.into());
+            }
+            save_escrow(&env, &r);
+            extend_escrow_ttl_default(&env, &r);
+
+            // INTERACTIONS
+            let tc = token::Client::new(&env, &usdc);
+            if payout > 0 {
+                tc.transfer(&env.current_contract_address(), &artist, &payout);
+            }
+            if fee > 0 {
+                tc.transfer(&env.current_contract_address(), &pw, &fee);
+            }
+
+            // EVENT
+            env.events().publish(
+                (symbol_short!("escrow"), symbol_short!("autorls")),
+                (commission_id.clone(), auto_release_ledger, remaining, payout, fee),
+            );
+            Ok(())
+        })
+    }
+
     /// Settle a cancelled commission (#605).
     ///
     /// The split is computed off-contract by the commission agreement's
@@ -604,6 +678,7 @@ impl EscrowContract {
     /// charged only on the artist's share — the client's refund is not taxed.
     ///
     /// CEI: Checks → Effects (status update) → Interactions (transfers).
+    /// Closes #770 — balance and state consistency invariants are verified.
     pub fn cancel_escrow(
         env: Env,
         commission_id: Bytes,
@@ -612,8 +687,9 @@ impl EscrowContract {
         client_refund: i128,
     ) -> Result<(), EscrowError> {
         // CHECKS
+        shared::circuit_breaker::require_not_halted(&env)?;
         let mut r = get_escrow(&env, &commission_id);
-        if r.status != CommissionStatus::Locked && r.status != CommissionStatus::Disputed {
+        if r.status != CommissionStatus::Locked && r.status != CommissionStatus::PartiallyReleased {
             return Err(EscrowError::InvalidStatus);
         }
         if artist_amount < 0 || client_refund < 0 {
@@ -638,18 +714,17 @@ impl EscrowContract {
             let (fee, payout) = calculate_fee_split(artist_amount, r.fee_bps)?;
 
             // EFFECTS
+            let prev_status = r.status;
             r.status = CommissionStatus::Cancelled;
+
+            // Invariant: validate the state transition is legal (#770)
+            if !invariants::is_valid_transition(prev_status, r.status) {
+                return Err(invariants::InvariantError::InvalidStateTransition.into());
+            }
             save_escrow(&env, &r);
 
             // INTERACTIONS
             let tc = token::Client::new(&env, &usdc);
-            tc.transfer(&env.current_contract_address(), &artist, &payout);
-            tc.transfer(&env.current_contract_address(), &pw, &fee);
-
-            // EVENT
-            env.events().publish(
-                (symbol_short!("escrow"), symbol_short!("autorls")),
-                (commission_id.clone(), auto_release_ledger, remaining, payout, fee),
             if payout > 0 {
                 tc.transfer(&env.current_contract_address(), &artist, &payout);
             }
@@ -746,7 +821,7 @@ impl EscrowContract {
     /// Verifies the commission side agrees with the escrowed amount, then moves
     /// the escrowed balance (minus the platform fee) to the commission contract
     /// and the fee to the platform wallet. Any failed check or transfer aborts
-    /// the whole transaction — nothing is left half-migrated (#656).
+    /// the whole transaction — nothing is left half-migrated (#656, #770).
     pub fn atomic_escrow_to_commission(
         env: Env,
         commission_id: Bytes,
@@ -759,6 +834,42 @@ impl EscrowContract {
             &config_contract,
             &commission_contract,
         )
+    }
+
+    // ── Invariant checks (#770) ──────────────────────────────────────────────
+
+    /// Verify balance and state invariants for a single escrow record.
+    ///
+    /// Checks that `released_amount + remaining == amount` and that the stored
+    /// status is one of the valid terminal/intermediate states. Does not touch
+    /// the token contract — for on-chain balance verification use
+    /// [`Self::verify_contract_balance`].
+    pub fn verify_escrow_invariants(
+        env: Env,
+        commission_id: Bytes,
+    ) -> Result<bool, EscrowError> {
+        let record = get_escrow(&env, &commission_id);
+        invariants::verify_balance_consistency(&env, &record)?;
+        Ok(true)
+    }
+
+    /// Cross-contract escrow amount verification (#770).
+    ///
+    /// Queries the commission agreement contract's `get_agreement_escrow_amount`
+    /// and checks the result matches the escrowed record's `amount`.
+    pub fn verify_escrow_amount(
+        env: Env,
+        commission_id: Bytes,
+        commission_contract: Address,
+    ) -> Result<bool, EscrowError> {
+        let record = get_escrow(&env, &commission_id);
+        let result = invariants::verify_escrow_amount(
+            &env,
+            &commission_contract,
+            &commission_id,
+            &record,
+        )?;
+        Ok(result.is_some())
     }
 
     // ── Health monitoring (#678) and gradual rollout (#684) ──────────────
@@ -822,6 +933,82 @@ impl EscrowContract {
         admin.require_auth();
         shared::rollout::trigger_rollback(&env, &admin);
     }
+
+    // ── Circuit breaker (#771) ────────────────────────────────────────────
+
+    /// Manually halt the escrow contract (admin only).
+    ///
+    /// Halting prevents `create_escrow`, `release_payment`, `refund_client`,
+    /// `partial_release`, `cancel_escrow`, `auto_release_on_deadline`, and
+    /// `open_dispute` from executing. The pause flag and time-locked recovery
+    /// from [`shared::pause`] are reused.
+    pub fn halt(env: Env, admin: Address) -> Result<(), EscrowError> {
+        admin.require_auth();
+        let stored: Address = env.storage().instance()
+            .get(&PauseKey::Admin)
+            .ok_or(EscrowError::Unauthorized)?;
+        if stored != admin {
+            return Err(EscrowError::Unauthorized);
+        }
+        shared::circuit_breaker::halt(&env, &admin)
+            .map_err(|_| EscrowError::CircuitBreakerTripped)?;
+        Ok(())
+    }
+
+    /// Manually resume the escrow contract after a halt (admin only).
+    ///
+    /// If a time-locked recovery was scheduled via `schedule_recovery`, the
+    /// lock must have matured first.
+    pub fn resume(env: Env, admin: Address) -> Result<(), EscrowError> {
+        admin.require_auth();
+        let stored: Address = env.storage().instance()
+            .get(&PauseKey::Admin)
+            .ok_or(EscrowError::Unauthorized)?;
+        if stored != admin {
+            return Err(EscrowError::Unauthorized);
+        }
+        shared::circuit_breaker::resume(&env, &admin)
+            .map_err(|_| EscrowError::CircuitBreakerTripped)?;
+        Ok(())
+    }
+
+    /// `true` when the circuit breaker is currently tripped.
+    pub fn is_halted(env: Env) -> bool {
+        shared::circuit_breaker::is_halted(&env)
+    }
+
+    /// Current snapshot of the circuit-breaker state: halt flag, error rate,
+    /// threshold, and any pending recovery time-lock.
+    pub fn get_circuit_breaker_state(env: Env) -> shared::circuit_breaker::CircuitBreakerState {
+        shared::circuit_breaker::get_state(&env)
+    }
+
+    /// Configure the automatic-halt threshold (admin only).
+    ///
+    /// `halt_error_bps` is the error rate (in 1/100ths of a percent, 0–10 000)
+    /// at or above which [`maybe_auto_halt`](shared::circuit_breaker::maybe_auto_halt)
+    /// will pause the contract.
+    pub fn set_circuit_breaker_config(
+        env: Env,
+        admin: Address,
+        halt_error_bps: u32,
+    ) -> Result<(), EscrowError> {
+        admin.require_auth();
+        let stored: Address = env.storage().instance()
+            .get(&PauseKey::Admin)
+            .ok_or(EscrowError::Unauthorized)?;
+        if stored != admin {
+            return Err(EscrowError::Unauthorized);
+        }
+        shared::circuit_breaker::set_config(
+            &env,
+            &shared::circuit_breaker::CircuitBreakerConfig {
+                admin: admin.clone(),
+                halt_error_bps,
+            },
+        );
+        Ok(())
+    }
 }
 
 
@@ -843,3 +1030,5 @@ mod integration_tests;
 mod atomic_flow_tests;
 #[cfg(test)]
 mod correlation_tests;
+#[cfg(test)]
+mod invariant_tests;

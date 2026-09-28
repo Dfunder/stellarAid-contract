@@ -2,6 +2,7 @@
 name = "platform_config"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [package.metadata.stellar-aid]
 versioning = "semver"
@@ -16,7 +17,7 @@ testutils = ["soroban-sdk/testutils"]
 
 [dependencies]
 soroban-sdk = { version = "21.0.0" }
-shared = { path = "../shared" }
+shared = { path = "../shared", version = "0.1.0" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }

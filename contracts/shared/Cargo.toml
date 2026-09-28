@@ -13,3 +13,12 @@ crate-type = ["lib"]
 
 [dependencies]
 soroban-sdk = { workspace = true }
+
+# The pagination helper is exercised through the SDK's in-memory test Env
+# (Env::default / Vec), which lives behind the `testutils` feature.
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+
+[features]
+default = []
+testutils = ["soroban-sdk/testutils"]

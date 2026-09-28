@@ -8,6 +8,7 @@ pub mod types;
 mod test;
 
 use errors::VerificationError;
+use shared::pagination::{paginate, PageInfo};
 use types::{
     Badge, BadgeAction, BadgeEvent, BadgeStatus, BadgeType, DataKey, Portfolio, PortfolioStatus,
     QualityScore, ReviewOutcome, VerificationRecord,
@@ -424,6 +425,31 @@ impl Verification {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    /// Bounded form of [`Self::get_history`] (closes #876).
+    ///
+    /// `get_history` returns the whole revision list, and the list is capped at
+    /// `HistoryLimit` on write, so it stays small today. This entry point bounds
+    /// the response so it stays inside the data-entry limit as soon as that cap
+    /// is raised; the list is still read in full first, so it does not by
+    /// itself make the read cheaper.
+    /// Page at most [`shared::pagination::MAX_PAGE_SIZE`] records; follow
+    /// `info.next_start` to walk the rest.
+    pub fn get_history_page(
+        env: Env,
+        artist: Address,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<VerificationRecord>, PageInfo) {
+        let all: Vec<VerificationRecord> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::History(artist))
+            .unwrap_or_else(|| Vec::new(&env));
+        let page = paginate(&env, all, start, limit);
+        let info = page.info();
+        (page.into_items(), info)
+    }
+
     /// Badge eligibility: approved and not past its refresh deadline.
     pub fn is_verified(env: Env, artist: Address) -> bool {
         match load_portfolio(&env, &artist) {
@@ -576,6 +602,54 @@ impl Verification {
             .persistent()
             .get(&DataKey::BadgeHistory(artist))
             .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Bounded form of [`Self::get_badge_history`] (closes #876).
+    ///
+    /// Badge history is capped at `HistoryLimit` on write, so the unbounded
+    /// getter is bounded *today*; this entry point bounds the response so a
+    /// caller paging a long history does not have to decode all of it. The list
+    /// is still read in full first, so this does not make the read cheaper.
+    pub fn get_badge_history_page(
+        env: Env,
+        artist: Address,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<BadgeEvent>, PageInfo) {
+        let all: Vec<BadgeEvent> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::BadgeHistory(artist))
+            .unwrap_or_else(|| Vec::new(&env));
+        let page = paginate(&env, all, start, limit);
+        let info = page.info();
+        (page.into_items(), info)
+    }
+
+    /// Bounded form of [`Self::get_artist_badge_types`] (closes #876).
+    ///
+    /// `BadgeTypes` is the only list in this contract with no write-time trim
+    /// at all (`lib.rs:132-134` only dedups on insert). It is in practice
+    /// bounded by the number of `BadgeType` variants, so it cannot grow without
+    /// limit, but it has no storage-side cap and a new variant would land in
+    /// every existing artist's list. This bounds the response to
+    /// [`shared::pagination::MAX_PAGE_SIZE`] so adding variants cannot push the
+    /// return value past the data-entry limit; the list is still read in full
+    /// first.
+    pub fn get_artist_badge_types_page(
+        env: Env,
+        artist: Address,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<BadgeType>, PageInfo) {
+        let all: Vec<BadgeType> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::BadgeTypes(artist))
+            .unwrap_or_else(|| Vec::new(&env));
+        let page = paginate(&env, all, start, limit);
+        let info = page.info();
+        (page.into_items(), info)
     }
 
     pub fn set_min_score(env: Env, min_score: u32) -> Result<(), VerificationError> {

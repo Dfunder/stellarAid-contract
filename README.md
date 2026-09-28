@@ -1,5 +1,14 @@
 # 🌟 Lumora
 
+[![CI](https://github.com/Dfunder/stellarAid-contract/actions/workflows/ci.yml/badge.svg)](https://github.com/Dfunder/stellarAid-contract/actions/workflows/ci.yml)
+[![Security](https://github.com/Dfunder/stellarAid-contract/actions/workflows/security.yml/badge.svg)](https://github.com/Dfunder/stellarAid-contract/actions/workflows/security.yml)
+[![TypeScript](https://github.com/Dfunder/stellarAid-contract/actions/workflows/typescript-ci.yml/badge.svg)](https://github.com/Dfunder/stellarAid-contract/actions/workflows/typescript-ci.yml)
+[![codecov](https://img.shields.io/codecov/c/github/Dfunder/stellarAid-contract?style=flat&logo=codecov&label=coverage)](https://codecov.io/gh/Dfunder/stellarAid-contract)
+[![rustfmt](https://img.shields.io/badge/rustfmt-checking-informational?logo=rust)](https://github.com/rust-lang/rustfmt)
+[![clippy](https://img.shields.io/badge/clippy-checking-informational?logo=rust)](https://github.com/rust-lang/clippy)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![soroban](https://img.shields.io/badge/soroban--sdk%2021-informational?logo=stellar)](https://developers.stellar.org/docs/build/smart-contracts/getting-started)
+
 **Lumora** is a Stellar-powered creative marketplace where artists, designers, and creative professionals showcase their work, connect with clients, receive secure payments, and build sustainable careers in the global digital economy.
 
 ---

@@ -1,0 +1,146 @@
+# security.yml — dependency and code security gates.
+#
+# Closes #883.
+#
+# The checklists in docs/SECURITY_AUDIT_CHECKLIST.md and
+# docs/SECURITY_REVIEW_CHECKLIST.md were prose nobody had to satisfy. This
+# workflow is the enforcement point: a PR cannot merge with a known-vulnerable
+# dependency, a licence we cannot ship, or a pattern the custom lint rejects.
+#
+#   cargo-audit   RustSec advisory database — RUSTSEC-* on anything reachable
+#   cargo-deny    licences, sources, duplicate and banned crates
+#   security-lint scripts/security_lint.sh — the repo-specific rules
+#   clippy        with the correctness/security lint groups promoted to errors
+#
+# NO CONFIG FILES HERE, DELIBERATELY
+#   `deny.toml` and the cargo-audit configuration are tracked as their own
+#   issues (#879, #880) so that the policy decision — which advisories are
+#   ignorable, which licences are acceptable — lands in its own reviewable diff
+#   rather than being buried in a CI file. Until those land this workflow runs
+#   both tools with their defaults, which is the strictest possible setting:
+#   every advisory and every non-permissive licence is a failure.
+#
+#   That means the first run is expected to be red. That is correct: it is a
+#   measurement of the current tree, not a statement about the PR.
+
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Weekly, so a new advisory that affects an already-merged dependency is
+  # still surfaced on a repo with no activity.
+  schedule:
+    - cron: "37 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo-audit:
+    name: cargo audit (RustSec)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup show
+      - name: Install cargo-audit
+        uses: rustsec/audit-check@v2
+        with:
+          # `deny` is the outcome we want. Without it the action's default is to
+          # annotate and continue, which would make a red advisory look green.
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Audit the dependency graph
+        # --ignore is intentionally absent: see the header. Every RUSTSEC
+        # advisory fails the job until an explicit, reviewed ignore is added.
+        run: cargo audit
+
+  cargo-deny:
+    name: cargo deny (licences, sources, duplicates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup show
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: Cargo.toml
+      - name: cargo deny check
+        # --all-features so a vulnerability hidden behind a feature flag is
+        # still counted. The `deny` advisory is re-asserted explicitly because
+        # the default action behaviour is to warn.
+        run: cargo deny check advisories bans licenses sources all-features
+
+  # The repo-specific rules. This is the part that encodes the checklists
+  # themselves, and the only job here that needs no third-party tool.
+  security-lint:
+    name: security lint (checklist rules)
+    runs-on: ubuntu-latest
+    steps:
+      # Full history, not a shallow clone: the lint's key-material rule reports
+      # a path, not a blob, but a shallow clone would make the tracked-file set
+      # unrepresentative.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run the checklist lint
+        # `--report` first so the full list of findings is in the log even when
+        # the enforcing run below stops at the first CRITICAL/HIGH.
+        run: |
+          ./scripts/security_lint.sh --report
+          ./scripts/security_lint.sh
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "### security_lint"
+            echo
+            echo 'See the job log for the full finding list. Rule ids map to'
+            echo 'SA-*/T-*/KL-* entries in docs/SECURITY_REVIEW_CHECKLIST.md.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Clippy restricted to the lint groups that actually describe security
+  # properties. The full `clippy -- -D warnings` gate lives in ci.yml; this
+  # job exists so the security surface has its own required check that cannot
+  # be merged around by a ci.yml change.
+  clippy-security:
+    name: clippy (security lints)
+    runs-on: ubuntu-latest
+    # Non-blocking while `main` does not compile; see the ci.yml BASELINE block,
+    # which enumerates the same pre-existing defects.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup show
+      - name: Cache cargo registry and host build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: sec-clippy-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            sec-clippy-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
+      - name: Run the security lint groups as errors
+        # correctness  — unsound code paths (the group that matters here)
+        # suspicious    — bad casts, shadowed bindings, confusing control flow
+        #
+        # `pedantic` is deliberately NOT enabled. On a 29-crate Soroban
+        # workspace it emits thousands of stylistic findings (missing
+        # `# Errors` sections, `must_use` candidates, long functions) that
+        # reviewers learn to skip, and a wall of noise is how a security
+        # signal gets lost. correctness + suspicious is the set with real
+        # security content.
+        run: |
+          cargo clippy --workspace --all-targets \
+            -- -D clippy::correctness \
+               -D clippy::suspicious

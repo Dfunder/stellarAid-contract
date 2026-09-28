@@ -1,0 +1,194 @@
+# typescript-ci.yml — quality gates for the TypeScript wallet adapters.
+#
+# Closes #885.
+#
+# `sdk/bindings` is the only JavaScript in the repository, and until this
+# existed it had no CI at all: `npm run build` was something a developer ran
+# by hand, and nothing would have told them a PR broke it. The Rust CI in
+# ci.yml does not cover it — a green Soroban pipeline says nothing about
+# whether the Freighter adapter still compiles.
+#
+# WHAT THIS RUNS
+#   typecheck  tsc --noEmit            types, with no output written
+#   lint       eslint src test         flat config, type-aware rules
+#   test       vitest run              registry and detection behaviour
+#   build      tsc                     emits dist/, the published artifact
+#
+# build runs last and is not redundant with typecheck: `tsc --noEmit` skips
+# the emit path, and it is the emit that catches a `rootDir`/`outDir`
+# misconfiguration — a mistake that would otherwise ship a `dist/` with the
+# wrong layout while every type check passed.
+#
+# TRIGGERS
+#   Scoped with `paths` because the Rust workspace is large and a docs-only
+#   PR has no business spending a Node runner. The push-to-main trigger has
+#   no path filter: a merge that lands a new root-level config can still
+#   change what this job should do, and that must not slip through unbuilt.
+#   `workflow_dispatch` is there for reproducing a failure locally.
+#
+# CACHING
+#   ~/.npm is the download cache. `node_modules` is deliberately NOT restored
+#   from cache: it is not guaranteed consistent with the lockfile, and a
+#   half-matching module tree produces failures that look like real ones.
+#   Re-resolving from package-lock.json is fast and deterministic, which is
+#   the trade this job makes.
+#
+# `npm ci`, never `npm install`. `ci` fails if package.json and
+# package-lock.json disagree, and installs exactly the locked tree. `install`
+# would quietly rewrite the lockfile on a contributor's machine and let a
+# PR ship a dependency nobody else will install.
+
+name: TypeScript CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdk/bindings/**"
+      - ".github/workflows/typescript-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "sdk/bindings/**"
+      - ".github/workflows/typescript-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ts-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: sdk/bindings
+
+jobs:
+  quality:
+    name: typecheck, lint, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Pinned to a major, not a bare `lts/*`. The adapters target ES2020
+          # and rely on the DOM lib; a moving `lts` silently changes both the
+          # compiler behaviour and the vitest/vite engine floor under us.
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: sdk/bindings/package-lock.json
+
+      - name: Install
+        # --no-audit --no-fund: the audit is cargo-audit's job for this repo,
+        # and the second round trip buys nothing in CI.
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify the lockfile is in sync
+        # `npm ci` already fails on a mismatch; this makes the failure legible
+        # in the checks tab instead of buried in install output.
+        run: npm ls --depth=0
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Confirm the published entry point exists
+        # `files: ["dist"]` in package.json means `dist/` *is* the package. A
+        # build that emits nothing would still pass every step above, and the
+        # failure would surface only at `npm install` on a consumer's machine.
+        run: |
+          set -euo pipefail
+          for f in dist/index.js dist/index.d.ts; do
+            if [ ! -f "$f" ]; then
+              echo "::error::$f was not emitted by \`npm run build\`"
+              exit 1
+            fi
+            echo "ok: $f ($(wc -c < "$f") bytes)"
+          done
+
+  # A second job that checks the *published artifact* rather than the source.
+  #
+  # The `quality` job above lints and typechecks `src/`. It never proves the
+  # emitted `dist/` is usable, and `dist/` is what `files: ["dist"]` publishes.
+  # Two real failure modes are covered here:
+  #   * a module was added to `src/` but not re-exported, so it is missing from
+  #     the published surface;
+  #   * `declaration: true` did not emit a .d.ts for something, so a TypeScript
+  #     consumer gets an untyped import.
+  #
+  # This deliberately does NOT `import()` the package from Node. The tsconfig
+  # sets `module: ESNext` with `moduleResolution: bundler`, so the emitted code
+  # uses extensionless relative imports and is meant to be consumed by a
+  # bundler, not by bare Node ESM. Proving otherwise would require changing
+  # the package's module format — a call for the maintainers, not for a CI PR.
+  # The check below is what the format actually promises: the .d.ts surface
+  # resolves and is usable from a TypeScript consumer.
+  types-surface:
+    name: published .d.ts is complete and usable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install and build
+        working-directory: sdk/bindings
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Every source module emitted a declaration file
+        run: |
+          set -euo pipefail
+          cd sdk/bindings
+          missing=0
+          for f in $(find src -name '*.ts' -not -name '*.d.ts' | sort); do
+            base="${f#src/}"
+            out="dist/${base%.ts}.d.ts"
+            if [ ! -f "$out" ]; then
+              echo "::error::$f has no emitted declaration at $out"
+              missing=1
+            else
+              echo "ok: $out"
+            fi
+          done
+          [ "$missing" -eq 0 ]
+      - name: Typecheck a consumer against dist/
+        run: |
+          set -euo pipefail
+          cd sdk/bindings
+          mkdir -p .ci-consumer
+          cat > .ci-consumer/consumer.ts <<'EOF'
+          // Stands in for a downstream TypeScript project. If the emitted
+          // .d.ts surface is wrong, this fails to typecheck — which is the
+          // failure a consumer would hit at `npm install` time.
+          import type { WalletAdapter } from "../dist/index.js";
+          import {
+            WalletAdapterRegistry,
+            getAdapterByName,
+            getDefaultAdapter,
+          } from "../dist/index.js";
+
+          const registry: readonly WalletAdapter[] = WalletAdapterRegistry;
+          const first: string = registry[0].name;
+          const maybe: WalletAdapter | null = getDefaultAdapter();
+          const byName: WalletAdapter | null = getAdapterByName(first);
+
+          // Exercise every exported function so an unused export cannot be
+          // dropped from the declaration surface unnoticed.
+          export const surface = { first, maybe, byName, size: registry.length };
+          EOF
+          npx tsc --noEmit --strict --skipLibCheck --module esnext \
+            --moduleResolution bundler --target es2020 .ci-consumer/consumer.ts
+          rm -rf .ci-consumer

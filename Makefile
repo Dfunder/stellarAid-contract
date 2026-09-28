@@ -20,17 +20,31 @@ docker-build:
 docker-test:
 	docker build --target test -t stelleraid-contracts:test .
 
-# ── Deployment pipeline (closes #708) ─────────────────────────────────────
+# ── Deployment pipeline (closes #708, #888) ─────────────────────────────────
 # Wrappers around scripts/deploy/. These read credentials from the
 # environment; see docs/DEPLOYMENT.md §7.
+#
+# `preflight` is the full gate: fmt, clippy, tests, the WASM build, the
+# required environment variables, a reachability probe of the target network,
+# and then the deploy-environment checks. It is slow and it is supposed to
+# be — it is the last thing that runs before anything is signed.
+#
+# `preflight-env` is only the environment and network half. It is the quick
+# "is this machine set up" probe; it does NOT validate the commit, so it is
+# not a substitute for `preflight` before a real deploy.
+NETWORK ?= testnet
+
 preflight:
-	./scripts/deploy/preflight.sh testnet
+	./scripts/preflight.sh $(NETWORK)
+
+preflight-env:
+	./scripts/deploy/preflight.sh $(NETWORK)
 
 deploy-dry-run:
 	./scripts/deploy/deploy_testnet.sh --dry-run
 
 deploy-verify:
-	./scripts/deploy/verify_deploy.sh testnet
+	./scripts/deploy/verify_deploy.sh $(NETWORK)
 
 # Refuses to run without all three mainnet gates. See docs/DEPLOYMENT.md §5.
 deploy-mainnet:
@@ -58,4 +72,4 @@ validate-cross-contract:
 clean:
 	cargo clean
 
-.PHONY: build test fmt lint deploy-testnet clean validate validate-testnet validate-config validate-contracts validate-operations validate-cross-contract docker-build docker-test preflight deploy-dry-run deploy-verify deploy-mainnet
+.PHONY: build test fmt lint deploy-testnet clean validate validate-testnet validate-config validate-contracts validate-operations validate-cross-contract docker-build docker-test preflight preflight-env deploy-dry-run deploy-verify deploy-mainnet

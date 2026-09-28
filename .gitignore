@@ -109,6 +109,9 @@ coverage/
 lcov.info
 junit.xml
 
+# Scratch dir created by the typescript-ci "published .d.ts" job
+sdk/bindings/.ci-consumer/
+
 # Miscellaneous
 .freebuff/local-project-id
 !.freebuff/project-id

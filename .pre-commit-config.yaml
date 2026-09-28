@@ -1,0 +1,152 @@
+# pre-commit hooks for the Lumora / StellarAid Soroban workspace.
+#
+# Closes #886.
+#
+# WHY THIS EXISTS
+#   CONTRIBUTING.md says "All PRs must pass `cargo clippy -- -D warnings`" and
+#   "One issue per PR". Until now the only enforcement was a reviewer noticing
+#   on the PR. A hook moves that check to the moment it costs nothing: before
+#   the commit exists, while the author still has the context loaded. The
+#   expensive part of review is not finding the problem, it is
+#   re-establishing what the author was thinking.
+#
+# INSTALL
+#   pipx install pre-commit        # or: brew install pre-commit
+#   pre-commit install
+#   pre-commit run --all-files     # check the whole tree once
+#   pre-commit run --all-files --hook-stage manual   # including the slow ones
+#
+# BYPASSING
+#   Every hook id is a SKIP keyword, so an emergency commit is:
+#     SKIP=clippy git commit -m "..."
+#   Bypassing is not free: `git commit` prints the skipped ids, and CI re-runs
+#   the same gates, so a skipped hook fails the PR rather than quietly
+#   shipping. The hooks are a fast local loop, never the only line of defence.
+#
+# DESIGN RULES
+#   1. No hook downloads a Rust toolchain. rust-toolchain.toml already
+#      installs rustfmt and clippy, and a hook that fetches a second copy of
+#      the compiler is a hook that eventually fails on a machine with no
+#      network. This is why the rust hooks are `local`, not fetched repos.
+#   2. Hooks are scoped to what changed. A full-workspace clippy on 29 crates
+#      takes minutes; a per-crate clippy on the crates you touched takes
+#      seconds. Same lint set, an order of magnitude cheaper.
+#   3. `stages: [manual]` marks a check as opt-in. It still runs in
+#      `--all-files` and can be invoked directly; it just does not gate every
+#      commit.
+
+minimum_pre_commit_version: "3.0.0"
+default_stages: [pre-commit]
+
+repos:
+  # ── File hygiene ─────────────────────────────────────────────────────────
+  # Fast, language-agnostic, and the class of thing that is trivially
+  # avoidable but generates real review noise when it slips through.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        # Markdown uses two trailing spaces for a hard line break and several
+        # docs/*.md files rely on it, so they are excluded rather than
+        # silently reflowed.
+        args: [--markdown-linebreak-ext=md]
+        exclude: \.md$
+
+      - id: end-of-file-fixer
+        # Exactly one trailing newline. Without it, git prints
+        # "\ No newline at end of file" in every future diff that touches the
+        # last line of the file. The two lockfiles are excluded: cargo and npm
+        # own their formatting and regenerate them.
+        exclude: ^(Cargo\.lock|sdk/bindings/package-lock\.json)$
+
+      - id: mixed-line-ending
+        # A file that picked up CRLF makes `git diff` report the whole file as
+        # changed on the next commit, on any platform.
+        args: [--fix=lf]
+
+      - id: check-merge-conflict
+        # A conflicted lib.rs that still happens to parse is the dangerous
+        # case; this is the only thing that reliably catches it.
+
+      - id: check-yaml
+        # Catches the malformed workflow file that would otherwise only fail
+        # once someone opens a PR — by which point it is a broken pipeline on
+        # main and a red X on every unrelated PR.
+        files: ^(\.github/|\.pre-commit-config\.yaml)
+
+      - id: check-json
+        # tsconfig*.json is excluded: TypeScript explicitly supports comments
+        # in those files, and they are the one place in this repository where
+        # recording a *why* is worth more than the bytes. Stripping the
+        # comments to satisfy a linter would be the wrong trade, so the
+        # linter is narrowed instead.
+        files: ^(config/|sdk/bindings/)
+        exclude: tsconfig.*\.json$
+
+      - id: check-toml
+
+      - id: check-added-large-files
+        # Catches a committed target/ directory or a built .wasm. .gitignore
+        # already lists both, but `git add -f` and a stale cache defeat it.
+        args: [--maxkb=512]
+        exclude: ^Cargo\.lock$
+
+      - id: check-executables-have-shebangs
+        # scripts/ is entirely shell. A file that lost its shebang in an
+        # editor round-trip is a broken deployment tool that fails only when
+        # someone is trying to deploy.
+
+      - id: detect-private-key
+        # Catches a PEM or OpenSSH key being added to the repository. This is
+        # the same class of check as SL002/SL003 in scripts/security_lint.sh,
+        # but running before the commit rather than in CI. Layered, not
+        # redundant: a secret that never reaches git needs no rotation.
+
+  # ── Rust ─────────────────────────────────────────────────────────────────
+  #
+  # Both rust hooks are `local` on purpose. Every community rustfmt/clippy
+  # pre-commit repo works by provisioning its own Rust environment to install
+  # the tool into — a second copy of the toolchain next to the one
+  # rust-toolchain.toml already installs, and a hook that fails on a machine
+  # with no network. These call the rustfmt and clippy already on PATH, so
+  # the hook, the Docker image and CI all run the identical binaries.
+  - repo: local
+    hooks:
+      - id: fmt
+        name: rustfmt (staged files)
+        # Only staged .rs files are formatted, so an unrelated unformatted
+        # file elsewhere in the tree cannot hijack your commit — which is how
+        # a formatting change ends up touching 60 files in a PR about
+        # something else. The edition is read from [workspace.package] in
+        # Cargo.toml rather than hardcoded.
+        entry: scripts/precommit_fmt.sh
+        language: script
+        pass_filenames: false
+        files: \.rs$
+
+      - id: clippy
+        name: cargo clippy (staged crates)
+        # Scoped to the crates the staged files belong to. CI runs the full
+        # `cargo clippy --workspace --all-targets -- -D warnings`; this is the
+        # fast local approximation and uses the identical lint set.
+        #
+        # Deliberately a separate script from scripts/clippy_check.sh, which
+        # lints the whole workspace and is tracked as #792. Different scope
+        # semantics; they must not be merged.
+        entry: scripts/precommit_clippy.sh
+        language: script
+        pass_filenames: false
+        files: \.rs$
+
+  # ── TypeScript ───────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: ts-lint
+        name: eslint (sdk/bindings)
+        # Skips itself when Node or node_modules is absent. A contributor
+        # working purely in Rust should not be blocked by a missing
+        # toolchain for a directory they are not touching.
+        entry: scripts/precommit_ts_lint.sh
+        language: script
+        pass_filenames: false
+        files: ^sdk/bindings/.*\.(ts|mjs)$

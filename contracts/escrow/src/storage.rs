@@ -14,7 +14,7 @@ pub enum CommissionStatus {
     /// Partially released — some milestones paid, remaining amount still held.
     PartiallyReleased = 5,
     /// Settled early under a commission cancellation (#605).
-    Cancelled = 5,
+    Cancelled = 6,
 }
 
 #[contracttype]

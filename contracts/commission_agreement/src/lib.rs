@@ -468,6 +468,19 @@ impl CommissionAgreementContract {
             .unwrap_or(Vec::new(&env)))
     }
 
+    /// Return the expected escrow amount for a commission agreement, used by the
+    /// escrow contract's cross-contract consistency check (#656, #770).
+    ///
+    /// Returns the agreement's `budget_usdc`. If the agreement does not exist,
+    /// returns 0 so the escrow's invariant check knows the agreement side has
+    /// not yet registered the commission.
+    pub fn get_agreement_escrow_amount(env: Env, commission_id: Bytes) -> i128 {
+        match env.storage().persistent().get(&DataKey::Agreement(commission_id)) {
+            Some(record) => record.budget_usdc,
+            None => 0,
+        }
+    }
+
     // ── Team Collaboration (closes #603) ────────────────────────────────────
 
     /// Invite a team member to a commission agreement.
@@ -682,6 +695,8 @@ impl CommissionAgreementContract {
         Ok(env.storage().persistent()
             .get(&DataKey::TeamMembers(commission_id))
             .unwrap_or(Vec::new(&env)))
+    }
+
     // ── Cancellation with pro-rata refunds (closes #605) ───────────────────
 
     /// Set the cancellation policy for an agreement. Only allowed while the

@@ -24,6 +24,14 @@ pub enum EscrowError {
     AtomicCommitStateInvalid = 16,
     /// Cross-contract consistency check with the commission agreement failed (#656).
     CrossContractConsistencyFailed = 17,
+    /// Balance invariant violated: released + remaining != amount (#770).
+    BalanceMismatch = 18,
+    /// State transition is not permitted by the escrow state machine (#770).
+    InvalidStateTransition = 19,
+    /// Contract token balance does not match escrowed-record accounting (#770).
+    TokenBalanceMismatch = 20,
+    /// Circuit breaker is tripped; operations are temporarily halted (#771).
+    CircuitBreakerTripped = 21,
 }
 
 impl core::fmt::Display for EscrowError {
@@ -46,6 +54,10 @@ impl core::fmt::Display for EscrowError {
             Self::AtomicCommitNotReady => write!(f, "atomic commit not ready until all participants confirm"),
             Self::AtomicCommitStateInvalid => write!(f, "atomic commit marker state does not permit this operation"),
             Self::CrossContractConsistencyFailed => write!(f, "commission agreement total disagrees with the escrowed amount"),
+            Self::BalanceMismatch => write!(f, "balance invariant violated: released + remaining != amount"),
+            Self::InvalidStateTransition => write!(f, "escrow status transition is not permitted"),
+            Self::TokenBalanceMismatch => write!(f, "contract token balance does not match escrowed accounting"),
+            Self::CircuitBreakerTripped => write!(f, "circuit breaker is tripped; operations are temporarily halted"),
         }
     }
 }
@@ -69,5 +81,9 @@ pub fn get_suggestion(error: EscrowError) -> Symbol {
         EscrowError::AtomicCommitNotReady => symbol_short!("NOT_READY"),
         EscrowError::AtomicCommitStateInvalid => symbol_short!("BAD_STS"),
         EscrowError::CrossContractConsistencyFailed => symbol_short!("CONSIST"),
+        EscrowError::BalanceMismatch => symbol_short!("INV_BAL"),
+        EscrowError::InvalidStateTransition => symbol_short!("BAD_TRS"),
+        EscrowError::TokenBalanceMismatch => symbol_short!("BAD_BAL"),
+        EscrowError::CircuitBreakerTripped => symbol_short!("CB_TRIP"),
     }
 }

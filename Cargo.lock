@@ -176,6 +176,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "campaign-factory"
+version = "0.1.0"
+dependencies = [
+ "campaign",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "campaign_factory"
 version = "0.1.0"
 dependencies = [

@@ -112,6 +112,30 @@ pub enum SharedErrorCode {
     DisputeAlreadyOpen = 601,
     DisputeInvalidStatus = 602,
     DisputeUnauthorized = 603,
+
+    // ── Circuit breaker (700–709) ────────────────────────────────────────────
+    /// Circuit breaker is tripped; operations are temporarily halted.
+    CircuitBreakerTripped = 700,
+    /// Automatic halt threshold was exceeded and the contract was halted.
+    CircuitBreakerAutoHalted = 701,
+    /// Manual halt requested but the contract is already halted.
+    CircuitBreakerAlreadyHalted = 702,
+    /// Manual reset requested but the contract is not halted.
+    CircuitBreakerNotHalted = 703,
+    /// Recovery is not yet available (time-lock or window not elapsed).
+    CircuitBreakerRecoveryPending = 704,
+}
+
+impl SharedErrorCode {
+    fn circuit_description(self) -> Option<&'static str> {
+        match self {
+            Self::CircuitBreakerTripped => Some("circuit breaker is tripped"),
+            Self::CircuitBreakerAutoHalted => Some("auto-halt threshold exceeded"),
+            Self::CircuitBreakerAlreadyHalted => Some("circuit breaker is already halted"),
+            Self::CircuitBreakerNotHalted => Some("circuit breaker is not halted"),
+            _ => None,
+        }
+    }
 }
 
 impl SharedErrorCode {
@@ -189,6 +213,12 @@ impl SharedErrorCode {
             Self::DisputeAlreadyOpen => "dispute: already open",
             Self::DisputeInvalidStatus => "dispute: invalid status",
             Self::DisputeUnauthorized => "dispute: unauthorized",
+
+            Self::CircuitBreakerTripped => "circuit breaker is tripped; operations halted",
+            Self::CircuitBreakerAutoHalted => "circuit breaker auto-halted: error threshold exceeded",
+            Self::CircuitBreakerAlreadyHalted => "circuit breaker is already halted",
+            Self::CircuitBreakerNotHalted => "circuit breaker is not halted; cannot reset",
+            Self::CircuitBreakerRecoveryPending => "circuit breaker recovery is time-locked",
         }
     }
 }

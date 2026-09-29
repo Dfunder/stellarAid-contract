@@ -44,7 +44,7 @@ use soroban_sdk::{contracterror, contracttype, panic_with_error, symbol_short, E
 /// Named `Locked` so the flag is `DataKey::Locked` in spirit at every call
 /// site: one key, one meaning, one shared key space.
 #[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LockKey {
     /// Set while a guarded entry point is executing.
     Locked = 0,

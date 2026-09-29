@@ -2,6 +2,7 @@
 name = "commission_agreement"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [package.metadata.stellar-aid]
 versioning = "semver"
@@ -12,7 +13,7 @@ min-compatible = "0.1.0"
 crate-type = ["cdylib", "rlib"]
 [dependencies]
 soroban-sdk.workspace = true
-shared = { path = "../shared" }
+shared = { path = "../shared", version = "0.1.0" }
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
 [features]

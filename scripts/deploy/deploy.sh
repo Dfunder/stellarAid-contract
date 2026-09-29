@@ -12,6 +12,7 @@
 #   export STELLAR_DEPLOYER_IDENTITY=deployer   # optional local identity name
 #   ./scripts/deploy/deploy.sh --network testnet \
 #       [--contracts "escrow platform_config"] [--init] [--skip-build] [--dry-run]
+#       [--skip-preflight]
 #
 # Flags:
 #   --network <name>   Network to deploy to (default: testnet). Must be defined
@@ -23,7 +24,16 @@
 #                      reminder. Initialisation arguments are contract-specific
 #                      and are never guessed.
 #   --skip-build       Do not run cargo; assume the WASM is already built.
+#                      Implies --skip-preflight: if you are not building, you
+#                      have already validated the commit some other way.
+#   --skip-preflight   Do not run scripts/preflight.sh. The preflight is what
+#                      proves this commit compiles, passes its tests and is
+#                      formatted. Skipping it does not make the deploy safer;
+#                      it just moves the failure to after the transaction is
+#                      signed. Already implied by --skip-build and --dry-run.
 #   --dry-run          Print the plan and exit without submitting anything.
+#                      Also skips the preflight, since a rehearsal should be
+#                      cheap; the plan below states what a real run would do.
 #   --confirm-mainnet  One of the three mainnet gates. Meaningless (and
 #                      harmless) for other networks.
 #
@@ -48,6 +58,7 @@ NETWORK="testnet"
 CONTRACT_OVERRIDE=""
 DO_INIT=0
 SKIP_BUILD=0
+SKIP_PREFLIGHT=0
 DRY_RUN=0
 CONFIRM_MAINNET=0
 
@@ -62,7 +73,8 @@ while [ $# -gt 0 ]; do
         --contracts)    CONTRACT_OVERRIDE="${2:-}"; shift 2 ;;
         --contracts=*)  CONTRACT_OVERRIDE="${1#*=}"; shift ;;
         --init)         DO_INIT=1; shift ;;
-        --skip-build)   SKIP_BUILD=1; shift ;;
+        --skip-build)   SKIP_BUILD=1; SKIP_PREFLIGHT=1; shift ;;
+        --skip-preflight) SKIP_PREFLIGHT=1; shift ;;
         --dry-run)      DRY_RUN=1; shift ;;
         --confirm-mainnet) CONFIRM_MAINNET=1; shift ;;
         --help|-h)      sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -84,6 +96,11 @@ if [ "$SKIP_BUILD" -eq 1 ]; then
     info "build:      skipped"
 else
     info "build:      cargo build --release --target wasm32-unknown-unknown --workspace"
+fi
+if [ "$DRY_RUN" -eq 1 ] || [ "$SKIP_PREFLIGHT" -eq 1 ]; then
+    info "preflight:  skipped"
+else
+    info "preflight:  scripts/preflight.sh $NETWORK"
 fi
 info "dry run:    $DRY_RUN"
 
@@ -112,9 +129,42 @@ for c in $CONTRACTS; do
 done
 info "selected: $(printf '%s ' $CONTRACTS)"
 
+# ── Preflight ───────────────────────────────────────────────────────────────
+
+# Closes #888. Everything below this point builds, signs and submits. Running
+# the repository's gates first is the whole point: a commit that does not
+# compile, does not pass its tests, or whose WASM was built from a different
+# tree must not reach a signed transaction.
+#
+# Skipped for --dry-run (a rehearsal should be cheap) and --skip-preflight /
+# --skip-build (the operator is asserting they already validated). In the
+# skipped case the omission is stated rather than silent, because a deploy
+# that quietly skipped its own gate is worse than one that never had one.
+if [ "$DRY_RUN" -eq 1 ]; then
+    head1 "Preflight"
+    info "[dry run] would run: ./scripts/preflight.sh $NETWORK"
+elif [ "$SKIP_PREFLIGHT" -eq 1 ]; then
+    head1 "Preflight"
+    warn "SKIPPED (--skip-preflight or --skip-build). Nothing verified that this"
+    warn "commit compiles, passes its tests, is formatted, or is clippy-clean."
+    warn "Run ./scripts/preflight.sh $NETWORK before the next real deploy."
+else
+    head1 "Preflight"
+    # --skip-deploy-preflight because this script IS the deploy-environment
+    # half of that check; running it twice would duplicate the entire contract
+    # inventory listing for no added signal.
+    if ! bash "$REPO_ROOT/scripts/preflight.sh" "$NETWORK" --skip-deploy-preflight; then
+        die "preflight failed. Nothing was built, signed or submitted.
+Fix the failures above, or re-run with --skip-preflight if you are certain
+the commit was validated elsewhere."
+    fi
+    ok "preflight passed"
+fi
+
 # ── Build ───────────────────────────────────────────────────────────────────
 
 if [ "$SKIP_BUILD" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
+    head1 "Build"
     head1 "Build"
     # `--workspace` only covers crates registered in the root Cargo.toml.
     (cd "$REPO_ROOT" && cargo build --release --target wasm32-unknown-unknown --workspace)

@@ -12,6 +12,14 @@ min-compatible = "0.1.0"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# Gas / CPU benchmarks (closes #873). `harness = false` so the benchmark is a
+# plain stable-toolchain binary that `cargo bench -p verification` really runs;
+# the libtest `Bencher` harness used by the escrow benchmark needs nightly.
+[[bench]]
+name = "verification_benchmark"
+path = "benches/verification_benchmark.rs"
+harness = false
+
 [dependencies]
 soroban-sdk.workspace = true
 shared = { path = "../shared", version = "0.1.0" }

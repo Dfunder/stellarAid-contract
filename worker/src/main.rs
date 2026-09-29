@@ -1,10 +1,12 @@
 mod metrics;
+mod ratelimit;
 mod webhooks;
 pub mod db;
 pub mod models;
 pub mod services;
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -30,6 +32,7 @@ use tracing::{info, warn};
 use webhooks::WebhookManager;
 
 use crate::metrics::{track_metrics, HttpMetrics};
+use crate::ratelimit::{rate_limit, RateLimit, RateLimiter};
 
 #[derive(Debug, Deserialize)]
 pub struct SubmitDonationRequest {
@@ -90,6 +93,7 @@ pub struct AppState {
     pub metrics: Arc<RwLock<MetricsData>>,
     pub startup_time: Instant,
     pub http_metrics: Arc<HttpMetrics>,
+    pub rate_limiter: Arc<RateLimiter>,
 }
 
 #[derive(Clone, Default)]
@@ -115,6 +119,27 @@ fn env_u64(name: &str, default: u64) -> u64 {
         .ok()
         .and_then(|value| value.trim().parse().ok())
         .unwrap_or(default)
+}
+
+/// Route-specific rate limits.
+///
+/// The submission endpoint is the most expensive operation, so it gets a
+/// tighter budget. Operational endpoints (probes and scrapes) get a much larger
+/// one so monitoring is never throttled off by the default limit.
+fn build_route_limits() -> HashMap<String, RateLimit> {
+    let window = Duration::from_secs(env_u64("RATE_LIMIT_WINDOW_SECS", 60));
+    let mut limits = HashMap::new();
+    limits.insert(
+        "/api/donations/submit".to_string(),
+        RateLimit::new(env_u64("SUBMIT_RATE_LIMIT_MAX", 10) as u32, window),
+    );
+    for route in ["/health", "/ready", "/metrics"] {
+        limits.insert(
+            route.to_string(),
+            RateLimit::new(env_u64("OPS_RATE_LIMIT_MAX", 600) as u32, window),
+        );
+    }
+    limits
 }
 
 /// Resolves when the process receives SIGINT or SIGTERM.
@@ -340,6 +365,14 @@ async fn main() {
     let donation_contract_id =
         std::env::var("DONATION_CONTRACT_ID").unwrap_or_else(|_| String::new());
 
+    let rate_limiter = Arc::new(RateLimiter::new(
+        RateLimit::new(
+            env_u64("RATE_LIMIT_MAX", 120) as u32,
+            Duration::from_secs(env_u64("RATE_LIMIT_WINDOW_SECS", 60)),
+        ),
+        build_route_limits(),
+    ));
+
     let state = Arc::new(AppState {
         network_config,
         donation_contract_id,
@@ -347,7 +380,20 @@ async fn main() {
         metrics: Arc::new(RwLock::new(MetricsData::default())),
         startup_time: Instant::now(),
         http_metrics: Arc::new(HttpMetrics::new()),
+        rate_limiter: rate_limiter.clone(),
     });
+
+    // Evict expired rate-limit windows so the table cannot grow without bound.
+    {
+        let limiter = rate_limiter.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                ticker.tick().await;
+                limiter.prune();
+            }
+        });
+    }
 
     let request_timeout = Duration::from_secs(env_u64("REQUEST_TIMEOUT_SECS", 30));
 
@@ -358,6 +404,7 @@ async fn main() {
         .route("/api/donations/submit", post(submit_donation))
         .route("/api/donations/{tx_hash}", get(get_donation))
         .layer(TimeoutLayer::new(request_timeout))
+        .layer(middleware::from_fn_with_state(state.clone(), rate_limit))
         .layer(middleware::from_fn_with_state(state.clone(), track_metrics))
         .with_state(state);
 
@@ -368,10 +415,13 @@ async fn main() {
     let shutdown_timeout = Duration::from_secs(env_u64("SHUTDOWN_TIMEOUT_SECS", 15));
     let shutdown_complete = Arc::new(AtomicBool::new(false));
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(shutdown_complete.clone(), shutdown_timeout))
-        .await
-        .unwrap();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal(shutdown_complete.clone(), shutdown_timeout))
+    .await
+    .unwrap();
 
     shutdown_complete.store(true, Ordering::SeqCst);
     info!("StellarAid worker stopped");

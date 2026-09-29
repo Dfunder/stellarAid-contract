@@ -32,6 +32,23 @@ cargo run --bin worker
 Every Soroban contract also exposes on-chain `health_check`, `get_sla_targets`,
 and `detect_anomaly`. See [SLA.md](./SLA.md) and [DEPLOY.md](./DEPLOY.md).
 
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BIND_ADDRESS` | `0.0.0.0:3000` | Address the HTTP server listens on. |
+| `REQUEST_TIMEOUT_SECS` | `30` | Per-request timeout; timed-out requests receive `408 Request Timeout`. |
+| `SHUTDOWN_TIMEOUT_SECS` | `15` | How long to drain in-flight requests after `SIGTERM`/`SIGINT`. |
+| `RATE_LIMIT_MAX` | `120` | Default requests allowed per client, per window. |
+| `RATE_LIMIT_WINDOW_SECS` | `60` | Length of every rate-limit window. |
+| `SUBMIT_RATE_LIMIT_MAX` | `10` | Per-client limit for `POST /api/donations/submit`. |
+| `OPS_RATE_LIMIT_MAX` | `600` | Per-client limit for `/health`, `/ready` and `/metrics`. |
+
+Rate-limited requests receive `429 Too Many Requests` with a `Retry-After`
+header. Limits are applied per client, where the client is taken from
+`X-Forwarded-For` / `X-Real-IP` when present and otherwise from the TCP peer
+address.
+
 ## Logging
 
 Set `LOG_LEVEL` to control verbosity:

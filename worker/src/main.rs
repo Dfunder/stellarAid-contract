@@ -5,7 +5,8 @@ pub mod models;
 pub mod services;
 
 use std::collections::HashMap;
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use axum::{
     extract::{Path, State},
@@ -104,6 +105,57 @@ async fn record_error(state: &AppState, message: String) {
     let mut metrics = state.metrics.write().await;
     metrics.errors += 1;
     metrics.error_log.push(message);
+}
+
+/// Read a `u64` environment variable, falling back to `default` when it is
+/// unset or unparsable.
+fn env_u64(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(default)
+}
+
+/// Resolves when the process receives SIGINT or SIGTERM.
+///
+/// Once a signal arrives a watchdog is armed: if in-flight requests have not
+/// drained within `timeout`, the process exits anyway so a stuck request cannot
+/// block shutdown indefinitely (issue #862).
+async fn shutdown_signal(done: Arc<AtomicBool>, timeout: Duration) {
+    let ctrl_c = async {
+        if let Err(err) = tokio::signal::ctrl_c().await {
+            warn!(error = %err, "failed to install Ctrl+C handler");
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut stream) => {
+                stream.recv().await;
+            }
+            Err(err) => warn!(error = %err, "failed to install SIGTERM handler"),
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => info!(signal = "SIGINT", "shutdown signal received"),
+        _ = terminate => info!(signal = "SIGTERM", "shutdown signal received"),
+    }
+
+    tokio::spawn(async move {
+        tokio::time::sleep(timeout).await;
+        if !done.load(Ordering::SeqCst) {
+            warn!(
+                timeout_secs = timeout.as_secs(),
+                "graceful shutdown timed out, forcing exit"
+            );
+            std::process::exit(0);
+        }
+    });
 }
 
 async fn submit_donation(
@@ -308,5 +360,15 @@ async fn main() {
     let bind = std::env::var("BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:3000".to_string());
     info!(bind = %bind, "listening");
     let listener = tokio::net::TcpListener::bind(&bind).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+
+    let shutdown_timeout = Duration::from_secs(env_u64("SHUTDOWN_TIMEOUT_SECS", 15));
+    let shutdown_complete = Arc::new(AtomicBool::new(false));
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal(shutdown_complete.clone(), shutdown_timeout))
+        .await
+        .unwrap();
+
+    shutdown_complete.store(true, Ordering::SeqCst);
+    info!("StellarAid worker stopped");
 }

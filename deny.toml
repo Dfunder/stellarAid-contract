@@ -1,0 +1,191 @@
+# cargo-deny configuration for the stellarAid workspace (closes #879).
+#
+# Smart contracts hold real value, so the dependency graph gets the same
+# scrutiny as the contract code itself. `make deny` runs every check below.
+#
+# Docs: https://embarkstudios.github.io/cargo-deny/checks/
+# Keep this file in sync with docs/STORAGE.md §9 ("Supply-chain posture").
+
+[graph]
+# Wasm is a closed target: the crate graph must be resolvable without any
+# target-specific resolution games, and we want dev-dependencies counted so
+# that a compromised test-only crate still shows up.
+all-features = true
+no-default-features = false
+targets = [
+    "wasm32-unknown-unknown",
+    "x86_64-apple-darwin",
+]
+exclude-dev = false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Licences
+# ─────────────────────────────────────────────────────────────────────────────
+[licenses]
+# Version 2 gives the "OR means the user may pick any one option" semantics,
+# which matches how every crate in this graph actually declares its licence.
+version = 2
+
+# Permissive licences only. The deployed contracts are closed-source
+# platform code, so any reciprocal / copyleft licence is a licensing decision
+# the project is not equipped to review.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "Unlicense",
+    "Zlib",
+    "0BSD",
+    # `url`, `idna` and the ICU stack (pulled in by `reqwest` in sdk/ and
+    # multi_wallet_session/) are Unicode-3.0. Permissive, but the data files
+    # are large, so this is called out rather than left implicit.
+    "Unicode-3.0",
+]
+
+# 0.93 rather than the 0.8 default. Every crate in the current graph parses
+# with high confidence; dropping to 0.8 would silently let an unreviewed
+# licence expression through.
+confidence-threshold = 0.93
+
+# The list above is the project's *policy*, not a snapshot of what happens to
+# be linked today, so an allowance that is currently unused must not fail the
+# build. ISC is the live case: it is required by `ring`/`rustls-webpki` via
+# soroban-sdk's TLS stack, but those crates are not in the resolved graph yet.
+# Without this key every new check would have to edit the policy.
+unused-allowed-license = "allow"
+
+[licenses.private]
+# The workspace's own crates carry no `license` field in their Cargo.toml, so
+# the "unpublished crate without a licence" diagnostic would fire for all 27
+# path crates. `ignore = true` waives that check; the real licences of
+# third-party code are still enforced by the check above.
+ignore = true
+# Nothing is exempted by crate name, and no private source is allowed to
+# override the crate-level result.
+ignore-sources = []
+registries = []
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bans — duplicate versions and wildcard requirements
+# ─────────────────────────────────────────────────────────────────────────────
+[bans]
+# Multiple versions of one crate in a wasm contract means duplicated code in
+# a fixed-size 64 KiB page budget, so this is worth surfacing. `warn` (not
+# `deny`) is deliberate and evidence-based: every duplicate in the current
+# graph is forced by a third-party semver constraint we do not own, and six of
+# the eight are reachable only from the off-chain `sdk` crate, not from any
+# deployed contract.
+#
+#   base64             0.13.1 (soroban-spec)   / 0.22.1 (reqwest -> hyper-util)
+#   core-foundation    0.9.4  (system-config)  / 0.10.1 (security-framework)
+#   getrandom          0.2.11 (rand_core, …)   / 0.4.3   (tempfile -> native-tls)
+#   miniz_oxide        0.7.4  (backtrace -> soroban-env-host) / 0.9.1 (flate2 -> sdk)
+#   stellar-strkey     0.0.2  (workspace dep)   / 0.0.8   (stellar-xdr)
+#   syn                2.0.39 (serde_derive, …)/ 3.0.4    (tokio, thiserror 2)
+#   thiserror          1.0.55 (soroban-sdk)    / 2.0.20   (workspace dep)
+#   thiserror-impl     1.0.55 (thiserror 1)    / 2.0.20   (thiserror 2)
+#
+# core-foundation, getrandom, miniz_oxide, base64 0.22.1, syn 3 and
+# thiserror 2 all enter through `reqwest`/`flate2`/`thiserror` in sdk/, i.e.
+# the host-side helper crate. Nothing here inflates a contract's wasm blob.
+#
+# These are tracked as de-duplication work; raise to "deny" as each pair is
+# collapsed upstream. Recorded in docs/STORAGE.md §9.3.
+multiple-versions = "warn"
+
+# Wildcard version requirements ("*", "1.*") make the build irreproducible
+# and are the classic prelude to a dependency-substitution attack.
+wildcards = "deny"
+
+# Opt-in exceptions. Empty today; add a crate here with a comment saying why
+# rather than loosening `wildcards`.
+allow = []
+deny = []
+# Duplicated in the graph via a dependency we do not control. Listed with the
+# duplicate versions we intend to collapse.
+skip = []
+skip-tree = []
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sources — registry and git provenance
+# ─────────────────────────────────────────────────────────────────────────────
+[sources]
+# An unknown registry or an unknown git remote means a crate can be swapped
+# without appearing in Cargo.lock review. Deny by default: everything must
+# come from crates.io.
+unknown-registry = "deny"
+unknown-git = "deny"
+
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+# No git dependencies are permitted. A git dependency is pinned to a branch
+# or a moving ref by default and cannot be audited against a published
+# advisory database, so it must be vendored onto crates.io instead.
+allow-git = []
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Advisories — the RustSec database
+# ─────────────────────────────────────────────────────────────────────────────
+[advisories]
+version = 2
+# A crate yanked upstream must never enter a contract build.
+#
+# This is "warn" rather than "deny" for exactly one crate, and it is the only
+# yanked package in the graph: spin 0.9.8, pulled in by soroban-wasmi
+# 0.31.1-soroban.20.0.1. soroban-env-common 21.2.1 pins that wasmi build
+# exactly, wasmi 0.31.1 requires spin ^0.9, and 0.9.8 is the last 0.9.x — so
+# the requirement is unsatisfiable with a non-yanked release. `cargo update -p
+# soroban-wasmi` reports "0 packages to latest compatible versions", i.e. this
+# is not fixable from here.
+#
+# A yank means "do not newly adopt this"; it is not a published vulnerability,
+# and spin never appears in a contract's wasm graph. Raise back to "deny" as
+# soon as soroban-sdk ships a wasmi on spin 0.10. Tracked in docs/STORAGE.md
+# §9.2.
+yanked = "warn"
+# Unmaintained is *not* "insecure", but an unmaintained crate in the tree is
+# an unpatched crate waiting to happen, and there is no cost to refusing it
+# today: the two current hits (adler, paste) are waived below with reasons.
+unmaintained = "all"
+# Unsound code is treated the same as a vulnerability. There are no waivers
+# in this category, because an unsound crate in a contract's graph can be
+# triggered by contract code and a deployed contract cannot be patched.
+unsound = "all"
+# cargo-deny 0.20 removed the separate `notice` and `severity-threshold`
+# keys: every advisory RustSec publishes is now evaluated and
+# `severity-threshold` is fixed at "low". Informational/unsound entries are
+# therefore surfaced automatically and are handled by the `unsound` setting
+# above.
+# Keep the advisory database fresh; cargo-deny fails if it goes stale.
+maximum-db-staleness = "P7D"
+git-fetch-with-cli = true
+
+# RUSTSEC advisory IDs waived after a documented review. Add the reason inline.
+#
+# Every waiver below was reachable only through `soroban-env-host` /
+# `soroban-wasmi` (the local test VM) or the off-chain `sdk` crate. None of
+# them are in the graph that actually ships: the union of all 24 contracts'
+# `wasm32-unknown-unknown`, dev-dependency-free graphs is 60 third-party
+# crates, and contains none of the packages named here. Verified with:
+#
+#   cargo tree -p <contract> -e no-dev --target wasm32-unknown-unknown
+#
+# See docs/STORAGE.md §9.2 for the full initial-audit record.
+ignore = [
+    # adler is unmaintained; the fix is the adler2 crate. It reaches us as
+    # miniz_oxide 0.7 <- backtrace 0.3 <- soroban-env-host, and backtrace
+    # 0.3.x pins miniz_oxide ^0.7, so no resolver run can reach adler2.
+    # Local panic symbolisation only; not a vulnerability.
+    "RUSTSEC-2025-0056",
+    # paste is unmaintained; upstream suggests the pastey fork. It is a
+    # proc-macro dependency of wasmi_core <- soroban-wasmi, compiled into the
+    # test VM and never into a contract. No patch release exists.
+    "RUSTSEC-2024-0436",
+]
+
+# Fails if `ignore` lists an advisory that no longer applies, so waivers
+# cannot silently rot.
+unused-ignored-advisory = "warn"

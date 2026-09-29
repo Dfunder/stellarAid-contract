@@ -1,8 +1,7 @@
 [package]
-name = "audit"
+name = "campaign-factory"
 version = "0.1.0"
 edition = "2021"
-publish = false
 
 [package.metadata.stellar-aid]
 versioning = "semver"
@@ -12,13 +11,12 @@ min-compatible = "0.1.0"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+testutils = ["soroban-sdk/testutils"]
+
 [dependencies]
-soroban-sdk.workspace = true
-shared = { path = "../shared", version = "0.1.0" }
+campaign = { path = "../campaign" }
+soroban-sdk = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
-
-[features]
-default = []
-testutils = ["soroban-sdk/testutils"]

@@ -1,0 +1,92 @@
+# cargo-audit configuration for the stellarAid workspace (closes #880).
+#
+# `make audit` runs `cargo audit`, which reads this file automatically from its
+# documented location, .cargo/audit.toml. Every section is
+# `deny_unknown_fields`, so a typo here is a hard error rather than a silently
+# ignored setting — cargo-audit will tell you the field list.
+#
+# This is deliberately the *second* line of defence. `deny.toml` + `make deny`
+# is the gate that runs on every dependency change, and it also enforces
+# licence, source and duplicate-version policy that cargo-audit knows nothing
+# about. The waiver lists in the two files are kept in sync on purpose.
+#
+# Docs: https://rustsec.github.io/cargo-audit/
+# Keep this file in sync with docs/STORAGE.md §9.2.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [database] — the RustSec advisory database
+# ─────────────────────────────────────────────────────────────────────────────
+# The database is a git repository. It is cloned into a checkout-local path
+# rather than ~/.cargo/advisory-db so that `make audit` gives the same answer
+# on any machine, instead of depending on whatever state a particular home
+# directory happens to be in. cargo-audit creates and updates the clone on
+# demand; the directory is gitignored.
+[database]
+path = ".cargo/advisory-db"
+url = "https://github.com/RustSec/advisory-db"
+# Refresh before every audit. A stale database is how a published advisory
+# silently stops being detected.
+fetch = true
+# A database more than 90 days old is treated as an error rather than a
+# warning: an audit against a frozen advisory DB is not an audit.
+stale = false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [output] — what fails the build
+# ─────────────────────────────────────────────────────────────────────────────
+# Vulnerabilities always fail. `unsound` is promoted to the same severity: a
+# contract cannot be patched after deployment, so unsound code anywhere in its
+# graph is a stop-the-line problem rather than a note in a report.
+#
+# `unmaintained` and `yanked` are deliberately absent from this list. Both are
+# statements about maintenance rather than exploitability, and the graph
+# contains one unavoidable instance of each — paste and spin — whose only
+# resolution is an upstream soroban release. They are still reported on every
+# run; see docs/STORAGE.md §9.2 for the inventory and the reasoning.
+[output]
+deny = ["unsound"]
+format = "terminal"
+# `quiet` is required by the schema even though the default is false, so it is
+# spelled out rather than left implicit.
+quiet = false
+# Print the inverse dependency tree under each finding, so a reviewer can see
+# how a transitive crate is reached without re-running cargo tree by hand.
+show_tree = true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [yanked] — crates.io yank status
+# ─────────────────────────────────────────────────────────────────────────────
+# Checked because a yanked release should never enter a contract build, and
+# because the crates.io index is the only source of yank information. The
+# index is refreshed first so a newly published yank is caught immediately.
+[yanked]
+enabled = true
+update_index = true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [advisories] — reviewed and accepted findings
+# ─────────────────────────────────────────────────────────────────────────────
+# Mirrors [advisories].ignore in deny.toml. The reasoning is repeated inline
+# so a reviewer reading only this file still understands every waiver, and the
+# full record is in docs/STORAGE.md §9.2.
+#
+#   RUSTSEC-2025-0056  adler 1.0.2 is unmaintained; upstream's fix is the
+#                      separate adler2 crate. We reach adler through
+#                      miniz_oxide 0.7 <- backtrace 0.3 <- soroban-env-host,
+#                      and backtrace 0.3.x pins miniz_oxide ^0.7, so no
+#                      resolver run can reach adler2. It backs local panic
+#                      symbolisation in the test VM.
+#   RUSTSEC-2024-0436  paste 1.0.15 is unmaintained; upstream suggests the
+#                      pastey fork. It is a proc-macro dependency of
+#                      wasmi_core <- soroban-wasmi, compiled into the test VM.
+#                      No patch release of paste itself exists.
+#
+# Neither crate appears in the wasm32-unknown-unknown, dev-dependency-free
+# graph of any of the 24 contracts, and neither is a vulnerability. Both are
+# build/test-host code paths. If either ever becomes reachable from a
+# contract, this waiver must be revisited rather than assumed still valid.
+[advisories]
+ignore = [
+    "RUSTSEC-2025-0056",
+    "RUSTSEC-2024-0436",
+]

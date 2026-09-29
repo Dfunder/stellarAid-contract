@@ -87,6 +87,11 @@ config/mainnet_contracts.json
 # Config backups written by scripts/deploy/deploy.sh before it rewrites ids.
 config/*.json.bak.*
 
+# RustSec advisory database clone used by `make audit` (see .cargo/audit.toml),
+# plus the lock file cargo-audit leaves beside it.
+.cargo/advisory-db*
+!.cargo/audit.toml
+
 # Secrets & keys
 *.pem
 *.key

@@ -1,3 +1,4 @@
+mod metrics;
 mod webhooks;
 pub mod db;
 pub mod models;
@@ -8,8 +9,9 @@ use std::time::Instant;
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
-    response::Json,
+    http::{header, StatusCode},
+    middleware,
+    response::{IntoResponse, Json},
     routing::{get, post},
     Router,
 };
@@ -23,7 +25,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
-use webhooks::{WebhookManager, WebhookPayload};
+use webhooks::WebhookManager;
+
+use crate::metrics::{track_metrics, HttpMetrics};
 
 #[derive(Debug, Deserialize)]
 pub struct SubmitDonationRequest {
@@ -83,6 +87,7 @@ pub struct AppState {
     pub webhook_manager: WebhookManager,
     pub metrics: Arc<RwLock<MetricsData>>,
     pub startup_time: Instant,
+    pub http_metrics: Arc<HttpMetrics>,
 }
 
 #[derive(Clone, Default)]
@@ -93,14 +98,20 @@ pub struct MetricsData {
     pub error_log: Vec<String>,
 }
 
+/// Record an error in the shared metrics. Centralised so the lock is always
+/// awaited — `tokio::sync::RwLock::blocking_write` panics inside the runtime.
+async fn record_error(state: &AppState, message: String) {
+    let mut metrics = state.metrics.write().await;
+    metrics.errors += 1;
+    metrics.error_log.push(message);
+}
+
 async fn submit_donation(
     State(state): State<Arc<AppState>>,
     Json(req): Json<SubmitDonationRequest>,
 ) -> Result<Json<SubmitDonationResponse>, (StatusCode, Json<ErrorResponse>)> {
     if req.amount <= 0 {
-        let mut metrics = state.metrics.write().await;
-        metrics.errors += 1;
-        metrics.error_log.push("submit_donation: amount must be positive".into());
+        record_error(&state, "submit_donation: amount must be positive".to_string()).await;
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
@@ -122,23 +133,24 @@ async fn submit_donation(
     let retry_config = RetryConfig::default();
     let network = state.network_config.clone();
 
-    let xdr = retry_async(&retry_config, || async {
+    let xdr = match retry_async(&retry_config, || async {
         build_donate_transaction_full(&params, &network)
             .await
             .map_err(|e| StellarAidError::SorobanError(e.to_string()))
     })
     .await
-    .map_err(|e| {
-        let mut metrics = state.metrics.blocking_write();
-        metrics.errors += 1;
-        metrics.error_log.push(format!("submit_donation: {}", e));
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("transaction build failed: {}", e),
-            }),
-        )
-    })?;
+    {
+        Ok(xdr) => xdr,
+        Err(e) => {
+            record_error(&state, format!("submit_donation: {}", e)).await;
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("transaction build failed: {}", e),
+                }),
+            ));
+        }
+    };
 
     let mut metrics = state.metrics.write().await;
     metrics.donations_submitted += 1;
@@ -156,23 +168,24 @@ async fn get_donation(
 ) -> Result<Json<DonationInfo>, (StatusCode, Json<ErrorResponse>)> {
     let rpc = SorobanRpcClient::new(&state.network_config.rpc_url);
 
-    let status = retry_async(&RetryConfig::default(), || async {
+    let status = match retry_async(&RetryConfig::default(), || async {
         rpc.get_transaction_status(&tx_hash)
             .await
             .map_err(|e| StellarAidError::SorobanError(e.to_string()))
     })
     .await
-    .map_err(|e| {
-        let mut metrics = state.metrics.blocking_write();
-        metrics.errors += 1;
-        metrics.error_log.push(format!("get_donation: {}", e));
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("failed to get transaction status: {}", e),
-            }),
-        )
-    })?;
+    {
+        Ok(status) => status,
+        Err(e) => {
+            record_error(&state, format!("get_donation: {}", e)).await;
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("failed to get transaction status: {}", e),
+                }),
+            ));
+        }
+    };
 
     let mut metrics = state.metrics.write().await;
     metrics.donations_verified += 1;
@@ -240,6 +253,23 @@ async fn readiness(State(state): State<Arc<AppState>>) -> Json<serde_json::Value
     }))
 }
 
+/// Prometheus scrape endpoint (issue #861).
+async fn metrics_endpoint(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let app_metrics = state.metrics.read().await;
+    let body = state
+        .http_metrics
+        .render_prometheus(&app_metrics, state.startup_time.elapsed().as_secs());
+
+    (
+        StatusCode::OK,
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        body,
+    )
+}
+
 #[tokio::main]
 async fn main() {
     let _ = logging::init_logging();
@@ -263,13 +293,16 @@ async fn main() {
         webhook_manager: WebhookManager::new(),
         metrics: Arc::new(RwLock::new(MetricsData::default())),
         startup_time: Instant::now(),
+        http_metrics: Arc::new(HttpMetrics::new()),
     });
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(readiness))
+        .route("/metrics", get(metrics_endpoint))
         .route("/api/donations/submit", post(submit_donation))
         .route("/api/donations/{tx_hash}", get(get_donation))
+        .layer(middleware::from_fn_with_state(state.clone(), track_metrics))
         .with_state(state);
 
     let bind = std::env::var("BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:3000".to_string());

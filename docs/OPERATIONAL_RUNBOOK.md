@@ -27,6 +27,7 @@ cargo run --bin worker
 |----------|--------|-------------|
 | `/health` | GET | JSON with uptime, donation count, error count |
 | `/ready` | GET | 200 OK when ready to serve traffic |
+| `/metrics` | GET | Prometheus text exposition: process counters, per-route request/error counts, and request-latency histogram |
 
 Every Soroban contract also exposes on-chain `health_check`, `get_sla_targets`,
 and `detect_anomaly`. See [SLA.md](./SLA.md) and [DEPLOY.md](./DEPLOY.md).

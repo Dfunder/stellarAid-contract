@@ -25,6 +25,7 @@ use sdk::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tower_http::timeout::TimeoutLayer;
 use tracing::{info, warn};
 use webhooks::WebhookManager;
 
@@ -348,12 +349,15 @@ async fn main() {
         http_metrics: Arc::new(HttpMetrics::new()),
     });
 
+    let request_timeout = Duration::from_secs(env_u64("REQUEST_TIMEOUT_SECS", 30));
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(readiness))
         .route("/metrics", get(metrics_endpoint))
         .route("/api/donations/submit", post(submit_donation))
         .route("/api/donations/{tx_hash}", get(get_donation))
+        .layer(TimeoutLayer::new(request_timeout))
         .layer(middleware::from_fn_with_state(state.clone(), track_metrics))
         .with_state(state);
 

@@ -1,0 +1,106 @@
+# Dependabot configuration for the Lumora / StellarAid Soroban workspace.
+#
+# Closes #881.
+#
+# Ecosystem coverage. The workspace is three dependency graphs, and each needs
+# its own entry because Dependabot resolves them with different tooling:
+#
+#   * cargo          — the 29 workspace crates (contracts/*, sdk, tests/*) plus
+#                      the Soroban SDK, Stellar XDR and the reqwest/tokio stack.
+#   * github-actions — every workflow under .github/workflows/, so a pinned
+#                      action can never go stale behind a known CVE.
+#   * npm            — sdk/bindings (the TypeScript wallet adapters).
+#
+# Schedule. Weekly, on Mondays. Security updates are not governed by this
+# schedule: Dependabot opens security patches as soon as the advisory lands and
+# this block only affects version bumps. Monday morning is deliberate — it gives
+# a human a working week to review before anything reaches main.
+#
+# Grouping. Unpinned minor bumps are grouped so a workspace touching
+# `soroban-sdk` does not open 24 near-identical PRs. Security updates are never
+# grouped: one advisory, one PR, one review.
+version: 2
+
+updates:
+  # ── Rust workspace ────────────────────────────────────────────────────────
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "rust"
+    commit-message:
+      prefix: "chore(deps)"
+    # Keep soroban-sdk and its Stellar siblings on one train: they version
+    # together and mixing majors across the graph produces a workspace that
+    # compiles on no target at all.
+    groups:
+      soroban:
+        patterns:
+          - "soroban-sdk"
+          - "soroban-*"
+          - "stellar-*"
+          - "soroban-env-*"
+      rust-dev:
+        dependency-type: "development"
+        patterns:
+          - "*"
+      other-rust:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "soroban-sdk"
+          - "soroban-*"
+          - "stellar-*"
+          - "soroban-env-*"
+    # The committed Cargo.lock is the reproducibility guarantee for the release
+    # WASM; a re-resolve must never be silent.
+    versioning-strategy: "increase"
+
+  # ── GitHub Actions ────────────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "ci"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # ── TypeScript wallet adapters ────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/sdk/bindings"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "typescript"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      wallet-adapters:
+        patterns:
+          - "@stellar/*"
+          - "albedo-link"
+          - "@lobstrco/*"
+      tooling:
+        dependency-type: "development"

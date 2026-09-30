@@ -1,3 +1,4 @@
+mod correlation;
 mod metrics;
 mod ratelimit;
 mod webhooks;
@@ -31,6 +32,7 @@ use tower_http::timeout::TimeoutLayer;
 use tracing::{info, warn};
 use webhooks::WebhookManager;
 
+use crate::correlation::{correlate, CORRELATION_ID_HEADER};
 use crate::metrics::{track_metrics, HttpMetrics};
 use crate::ratelimit::{rate_limit, RateLimit, RateLimiter};
 
@@ -198,6 +200,13 @@ async fn submit_donation(
         ));
     }
 
+    let campaign_id = req.campaign_id;
+    info!(
+        campaign_id,
+        amount = %req.amount,
+        "submit_donation: building transaction"
+    );
+
     let params = DonationParams {
         donor: req.donor,
         campaign_id: req.campaign_id,
@@ -233,6 +242,8 @@ async fn submit_donation(
     let mut metrics = state.metrics.write().await;
     metrics.donations_submitted += 1;
 
+    info!(campaign_id, "submit_donation: transaction built successfully");
+
     Ok(Json(SubmitDonationResponse {
         xdr,
         donation_contract_id: state.donation_contract_id.clone(),
@@ -245,6 +256,8 @@ async fn get_donation(
     Path(tx_hash): Path<String>,
 ) -> Result<Json<DonationInfo>, (StatusCode, Json<ErrorResponse>)> {
     let rpc = SorobanRpcClient::new(&state.network_config.rpc_url);
+
+    info!(tx_hash = %tx_hash, "get_donation: querying transaction status");
 
     let status = match retry_async(&RetryConfig::default(), || async {
         rpc.get_transaction_status(&tx_hash)
@@ -406,6 +419,7 @@ async fn main() {
         .layer(TimeoutLayer::new(request_timeout))
         .layer(middleware::from_fn_with_state(state.clone(), rate_limit))
         .layer(middleware::from_fn_with_state(state.clone(), track_metrics))
+        .layer(middleware::from_fn(correlate))
         .with_state(state);
 
     let bind = std::env::var("BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:3000".to_string());

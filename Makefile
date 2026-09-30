@@ -51,6 +51,14 @@ preflight-env:
 deploy-dry-run:
 	./scripts/deploy/deploy_testnet.sh --dry-run
 
+# Deploy *every* contract in the deployment manifest (issue #868). This is the
+# "no contract left behind" path: it refuses to run when the manifest and the
+# workspace have drifted (e.g. a new contract crate merged without a manifest
+# entry), and it exercises the same credential + preflight gates as any other
+# deploy.
+deploy-all:
+	./scripts/deploy/deploy_testnet.sh --manifest
+
 deploy-verify:
 	./scripts/deploy/verify_deploy.sh $(NETWORK)
 

@@ -4,6 +4,9 @@
   "description": "Unified wallet adapter interface for Freighter, Albedo, and Lobstr",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "dependencies": {
+    "@stellar/stellar-sdk": "^12.1.0"
+  },
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",

@@ -1,0 +1,44 @@
+[package]
+name = "stellar-aid-examples"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# The examples crate is intentionally standalone (issue #867). It is not a
+# workspace member so it cannot disturb the contract workspace build; the empty
+# [workspace] table keeps `cargo build` / `cargo run` working from this
+# directory. Examples depend on the Rust SDK (`../sdk`) plus the Soroban XDR
+# types they demonstrate building.
+[workspace]
+
+[dependencies]
+sdk = { path = "../sdk" }
+soroban-sdk = "21.0.0"
+stellar-strkey = "0.0.2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+serde_json = "1"
+sha2 = "0.10"
+
+[[bin]]
+name = "deploy_contract"
+path = "src/bin/deploy_contract.rs"
+
+[[bin]]
+name = "invoke_function"
+path = "src/bin/invoke_function.rs"
+
+[[bin]]
+name = "listen_for_events"
+path = "src/bin/listen_for_events.rs"
+
+[[bin]]
+name = "read_health"
+path = "src/bin/read_health.rs"
+
+[[bin]]
+name = "token_transfer"
+path = "src/bin/token_transfer.rs"
+
+[[bin]]
+name = "campaign_donation"
+path = "src/bin/campaign_donation.rs"

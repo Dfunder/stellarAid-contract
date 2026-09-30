@@ -17,9 +17,13 @@
 # Flags:
 #   --network <name>   Network to deploy to (default: testnet). Must be defined
 #                      in .soroban/config.toml.
-#   --contracts "a b"  Deploy only these crates. Values are crate directory
-#                      names, which are also the WASM file names.
-#                      Default: every workspace member contract.
+#   --contracts "a b"   Deploy only these crates. Values are crate directory
+#                       names, which are also the WASM file names.
+#                       Default: every workspace member contract.
+#   --manifest          Deploy every contract listed in the deployment
+#                       manifest (scripts/deploy/contracts.toml) — this is what
+#                       `make deploy-all` runs. Implies a manifest/workspace
+#                       consistency check before anything is built or signed.
 #   --init             After deploying, print the per-contract initialisation
 #                      reminder. Initialisation arguments are contract-specific
 #                      and are never guessed.
@@ -56,6 +60,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 NETWORK="testnet"
 CONTRACT_OVERRIDE=""
+USE_MANIFEST=0
 DO_INIT=0
 SKIP_BUILD=0
 SKIP_PREFLIGHT=0
@@ -72,6 +77,7 @@ while [ $# -gt 0 ]; do
         --network=*)    NETWORK="${1#*=}"; shift ;;
         --contracts)    CONTRACT_OVERRIDE="${2:-}"; shift 2 ;;
         --contracts=*)  CONTRACT_OVERRIDE="${1#*=}"; shift ;;
+        --manifest)     USE_MANIFEST=1; shift ;;
         --init)         DO_INIT=1; shift ;;
         --skip-build)   SKIP_BUILD=1; SKIP_PREFLIGHT=1; shift ;;
         --skip-preflight) SKIP_PREFLIGHT=1; shift ;;
@@ -90,7 +96,13 @@ printf '╚═══════════════════════
 
 head1 "Plan"
 info "network:    $NETWORK"
-info "contracts:  ${CONTRACT_OVERRIDE:-<all workspace member contracts>}"
+if [ "$USE_MANIFEST" -eq 1 ]; then
+    info "contracts:  ALL (deployment manifest: $DEPLOYMENT_MANIFEST)"
+elif [ -n "$CONTRACT_OVERRIDE" ]; then
+    info "contracts:  $CONTRACT_OVERRIDE"
+else
+    info "contracts:  <all workspace member contracts>"
+fi
 info "initialise: $DO_INIT"
 if [ "$SKIP_BUILD" -eq 1 ]; then
     info "build:      skipped"
@@ -115,11 +127,9 @@ fi
 
 # ── Contract selection ──────────────────────────────────────────────────────
 
-if [ -n "$CONTRACT_OVERRIDE" ]; then
-    CONTRACTS="$CONTRACT_OVERRIDE"
-else
-    CONTRACTS="$(workspace_contracts)"
-fi
+# An explicit --contracts set wins; otherwise the manifest when --manifest was
+# given (make deploy-all); otherwise every workspace member contract.
+CONTRACTS="$(select_contracts "$CONTRACT_OVERRIDE" "$USE_MANIFEST")"
 [ -n "$(printf '%s' "$CONTRACTS" | tr -d '[:space:]')" ] || die "no contracts selected"
 
 for c in $CONTRACTS; do
@@ -128,6 +138,14 @@ for c in $CONTRACTS; do
     fi
 done
 info "selected: $(printf '%s ' $CONTRACTS)"
+
+# The manifest is the deployment contract list (issue #868). When it drives
+# the run, the gates below are just as authoritative: if a new contract was
+# added to the workspace without being added to the manifest, deploy-all must
+# refuse rather than silently leave it undeployed.
+if [ "$USE_MANIFEST" -eq 1 ]; then
+    validate_manifest || die "deployment manifest is out of sync with the workspace"
+fi
 
 # ── Preflight ───────────────────────────────────────────────────────────────
 

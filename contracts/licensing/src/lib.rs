@@ -489,35 +489,72 @@ impl LicensingMarketplace {
     }
 
     /// Return a paginated slice of usage entries for a license.
+    ///
+    /// The cursor and the limit are both clamped by `shared::pagination`, so a
+    /// page spans at most `shared::pagination::MAX_LIMIT` entries however large
+    /// `limit` is. A `limit` of `0` yields the default page size rather than an
+    /// empty result, and an `offset` past the end of the log is an empty page
+    /// rather than an error, so a client can page to the end without reading a
+    /// count first.
+    ///
+    /// For the page metadata that makes that loop safe, use
+    /// [`get_usage_entries_page`](Self::get_usage_entries_page).
     pub fn get_usage_entries(
         env: Env,
         license_id: u64,
         offset: u64,
         limit: u64,
     ) -> Vec<UsageEntry> {
+        let (entries, _info) = Self::usage_entries_page(&env, license_id, offset, limit);
+        entries
+    }
+
+    /// Like [`get_usage_entries`](Self::get_usage_entries), but returns the page
+    /// together with its `PageInfo`: the total entry count, the next cursor, and
+    /// whether anything exists past this page.
+    pub fn get_usage_entries_page(
+        env: Env,
+        license_id: u64,
+        offset: u64,
+        limit: u64,
+    ) -> (Vec<UsageEntry>, shared::pagination::PageInfo) {
+        Self::usage_entries_page(&env, license_id, offset, limit)
+    }
+
+    // ── Internal Helpers ──────────────────────────────────────────────────
+
+    /// Shared body of the two usage-log readers, bounded by
+    /// `shared::pagination::collect_window` (closes #876).
+    ///
+    /// `UsageCount` and `DataKey::Usage` are keyed by `u64`, while the
+    /// pagination arithmetic is `u32`. The narrowing conversions saturate
+    /// rather than wrap: a log of `u32::MAX` entries is already far past
+    /// anything a 100-entry page can address, and wrapping would report a
+    /// small `total` for a very long log and mis-page the client.
+    fn usage_entries_page(
+        env: &Env,
+        license_id: u64,
+        offset: u64,
+        limit: u64,
+    ) -> (Vec<UsageEntry>, shared::pagination::PageInfo) {
         let count: u64 = env
             .storage()
             .persistent()
             .get(&DataKey::UsageCount(license_id))
             .unwrap_or(0);
 
-        let mut result = Vec::new(&env);
-        let end = (offset + limit).min(count);
-        let mut i = offset;
-        while i < end {
-            if let Some(entry) = env
-                .storage()
-                .persistent()
-                .get::<DataKey, UsageEntry>(&DataKey::Usage(license_id, i))
-            {
-                result.push_back(entry);
-            }
-            i += 1;
-        }
-        result
+        shared::pagination::collect_window(
+            env,
+            u32::try_from(count).unwrap_or(u32::MAX),
+            u32::try_from(offset).unwrap_or(u32::MAX),
+            u32::try_from(limit).unwrap_or(u32::MAX),
+            |i| {
+                env.storage()
+                    .persistent()
+                    .get::<DataKey, UsageEntry>(&DataKey::Usage(license_id, u64::from(i)))
+            },
+        )
     }
-
-    // ── Internal Helpers ──────────────────────────────────────────────────
 
     fn next_license_id(env: &Env) -> u64 {
         let count: u64 = env

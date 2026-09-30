@@ -465,6 +465,12 @@ impl MentorshipProgram {
     }
 
     /// Retrieve all milestones for an engagement.
+    ///
+    /// Unbounded: this returns the whole stored vector, and the milestone list
+    /// is supplied by the proposer, so its size is caller-controlled. Prefer
+    /// [`get_milestones_page`](Self::get_milestones_page), which bounds the
+    /// response with `shared::pagination`. Kept for callers that already rely
+    /// on the unbounded shape.
     pub fn get_milestones(env: Env, engagement_id: u64) -> Vec<MentoringMilestone> {
         env.storage()
             .persistent()
@@ -472,30 +478,92 @@ impl MentorshipProgram {
             .expect("milestones not found")
     }
 
-    /// Retrieve all feedback entries for an engagement.
+    /// Retrieve a bounded page of an engagement's milestones, plus its
+    /// `PageInfo`.
+    ///
+    /// A page spans at most `shared::pagination::MAX_LIMIT` milestones however
+    /// large `limit` is. A `limit` of `0` yields the default page size rather
+    /// than an empty result, and an `offset` past the end is an empty page
+    /// rather than an error.
+    pub fn get_milestones_page(
+        env: Env,
+        engagement_id: u64,
+        offset: u32,
+        limit: u32,
+    ) -> (Vec<MentoringMilestone>, shared::pagination::PageInfo) {
+        let milestones: Vec<MentoringMilestone> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Milestones(engagement_id))
+            .unwrap_or_else(|| Vec::new(&env));
+        shared::pagination::paginated(&env, &milestones, offset, limit)
+    }
+
+    /// Retrieve feedback entries for an engagement, starting at the beginning.
+    ///
+    /// Behaviour change (closes #876): this used to walk the engagement's
+    /// entire feedback log, which is never pruned, so its cost grew for the
+    /// life of the engagement. It now returns at most
+    /// `shared::pagination::MAX_LIMIT` entries. Nothing is lost — the entries
+    /// are still readable — but a caller that needs more must page. Use
+    /// [`get_feedback_page`](Self::get_feedback_page) to do that, since it also
+    /// reports the total and the next cursor.
     pub fn get_feedback(env: Env, engagement_id: u64) -> Vec<FeedbackEntry> {
+        Self::feedback_page(&env, engagement_id, 0, shared::pagination::MAX_LIMIT as u64).0
+    }
+
+    /// Like [`get_feedback`](Self::get_feedback), but returns a bounded page of
+    /// the feedback log together with its `PageInfo`: the total entry count, the
+    /// next cursor, and whether anything exists past this page.
+    ///
+    /// A page reads at most `shared::pagination::MAX_LIMIT` storage entries
+    /// however large `limit` is. A `limit` of `0` yields the default page size
+    /// rather than an empty result, and an `offset` past the end is an empty
+    /// page rather than an error, so a client can page to the end without
+    /// reading a count first.
+    pub fn get_feedback_page(
+        env: Env,
+        engagement_id: u64,
+        offset: u64,
+        limit: u64,
+    ) -> (Vec<FeedbackEntry>, shared::pagination::PageInfo) {
+        Self::feedback_page(&env, engagement_id, offset, limit)
+    }
+
+    // ── Internal ──────────────────────────────────────────────────────────
+
+    /// Shared body of the two feedback readers, bounded by
+    /// `shared::pagination::collect_window` (closes #876).
+    ///
+    /// `FeedbackCount` and `DataKey::Feedback` are keyed by `u64`, while the
+    /// pagination arithmetic is `u32`. The narrowing conversions saturate
+    /// rather than wrap: a log of `u32::MAX` entries is already far past
+    /// anything a 100-entry page can address, and wrapping would report a
+    /// small `total` for a very long log and mis-page the client.
+    fn feedback_page(
+        env: &Env,
+        engagement_id: u64,
+        offset: u64,
+        limit: u64,
+    ) -> (Vec<FeedbackEntry>, shared::pagination::PageInfo) {
         let count: u64 = env
             .storage()
             .persistent()
             .get(&DataKey::FeedbackCount(engagement_id))
             .unwrap_or(0);
 
-        let mut result = Vec::new(&env);
-        let mut i: u64 = 0;
-        while i < count {
-            if let Some(entry) = env
-                .storage()
-                .persistent()
-                .get::<DataKey, FeedbackEntry>(&DataKey::Feedback(engagement_id, i))
-            {
-                result.push_back(entry);
-            }
-            i += 1;
-        }
-        result
+        shared::pagination::collect_window(
+            env,
+            u32::try_from(count).unwrap_or(u32::MAX),
+            u32::try_from(offset).unwrap_or(u32::MAX),
+            u32::try_from(limit).unwrap_or(u32::MAX),
+            |i| {
+                env.storage()
+                    .persistent()
+                    .get::<DataKey, FeedbackEntry>(&DataKey::Feedback(engagement_id, u64::from(i)))
+            },
+        )
     }
-
-    // ── Internal ──────────────────────────────────────────────────────────
 
     fn next_id(env: &Env) -> u64 {
         let count: u64 = env

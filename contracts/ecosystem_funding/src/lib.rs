@@ -439,6 +439,12 @@ impl EcosystemFunding {
     }
 
     /// Retrieve all milestones for a program.
+    ///
+    /// Unbounded: this returns the whole stored vector, and
+    /// `add_milestone` appends to it for the life of the program. Prefer
+    /// [`get_milestones_page`](Self::get_milestones_page), which bounds the
+    /// response with `shared::pagination`. Kept for callers that already rely
+    /// on the unbounded shape.
     pub fn get_milestones(env: Env, program_id: u64) -> Vec<ProgramMilestone> {
         env.storage()
             .persistent()
@@ -446,31 +452,88 @@ impl EcosystemFunding {
             .expect("milestones not found")
     }
 
+    /// Retrieve a bounded page of a program's milestones, plus its `PageInfo`.
+    ///
+    /// A page spans at most `shared::pagination::MAX_LIMIT` milestones however
+    /// large `limit` is. A `limit` of `0` yields the default page size rather
+    /// than an empty result, and an `offset` past the end is an empty page
+    /// rather than an error.
+    pub fn get_milestones_page(
+        env: Env,
+        program_id: u64,
+        offset: u32,
+        limit: u32,
+    ) -> (Vec<ProgramMilestone>, shared::pagination::PageInfo) {
+        let milestones: Vec<ProgramMilestone> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Milestones(program_id))
+            .unwrap_or_else(|| Vec::new(&env));
+        shared::pagination::paginated(&env, &milestones, offset, limit)
+    }
+
     /// Retrieve a paginated list of outcome metrics.
+    ///
+    /// The cursor and the limit are both clamped by `shared::pagination`, so a
+    /// page spans at most `shared::pagination::MAX_LIMIT` outcomes however
+    /// large `limit` is. A `limit` of `0` yields the default page size rather
+    /// than an empty result, and an `offset` past the end of the log is an
+    /// empty page rather than an error, so a client can page to the end without
+    /// reading a count first.
+    ///
+    /// For the page metadata that makes that loop safe, use
+    /// [`get_outcomes_page`](Self::get_outcomes_page).
     pub fn get_outcomes(env: Env, program_id: u64, offset: u64, limit: u64) -> Vec<ProgramOutcome> {
+        let (outcomes, _info) = Self::outcomes_page(&env, program_id, offset, limit);
+        outcomes
+    }
+
+    /// Like [`get_outcomes`](Self::get_outcomes), but returns the page together
+    /// with its `PageInfo`: the total outcome count, the next cursor, and
+    /// whether anything exists past this page.
+    pub fn get_outcomes_page(
+        env: Env,
+        program_id: u64,
+        offset: u64,
+        limit: u64,
+    ) -> (Vec<ProgramOutcome>, shared::pagination::PageInfo) {
+        Self::outcomes_page(&env, program_id, offset, limit)
+    }
+
+    // ── Internal ──────────────────────────────────────────────────────────
+
+    /// Shared body of the two outcome readers, bounded by
+    /// `shared::pagination::collect_window` (closes #876).
+    ///
+    /// `OutcomeCount` and `DataKey::Outcome` are keyed by `u64`, while the
+    /// pagination arithmetic is `u32`. The narrowing conversions saturate
+    /// rather than wrap: a log of `u32::MAX` outcomes is already far past
+    /// anything a 100-entry page can address, and wrapping would report a
+    /// small `total` for a very long log and mis-page the client.
+    fn outcomes_page(
+        env: &Env,
+        program_id: u64,
+        offset: u64,
+        limit: u64,
+    ) -> (Vec<ProgramOutcome>, shared::pagination::PageInfo) {
         let count: u64 = env
             .storage()
             .persistent()
             .get(&DataKey::OutcomeCount(program_id))
             .unwrap_or(0);
 
-        let mut result = Vec::new(&env);
-        let end = (offset + limit).min(count);
-        let mut i = offset;
-        while i < end {
-            if let Some(entry) = env
-                .storage()
-                .persistent()
-                .get::<DataKey, ProgramOutcome>(&DataKey::Outcome(program_id, i))
-            {
-                result.push_back(entry);
-            }
-            i += 1;
-        }
-        result
+        shared::pagination::collect_window(
+            env,
+            u32::try_from(count).unwrap_or(u32::MAX),
+            u32::try_from(offset).unwrap_or(u32::MAX),
+            u32::try_from(limit).unwrap_or(u32::MAX),
+            |i| {
+                env.storage()
+                    .persistent()
+                    .get::<DataKey, ProgramOutcome>(&DataKey::Outcome(program_id, u64::from(i)))
+            },
+        )
     }
-
-    // ── Internal ──────────────────────────────────────────────────────────
 
     fn next_id(env: &Env) -> u64 {
         let count: u64 = env
@@ -500,5 +563,209 @@ impl EcosystemFunding {
             .get(&DataKey::Admin)
             .expect("not initialized");
         assert!(*caller == admin, "caller must be manager or admin");
+    }
+}
+
+// ── Bounded page reads (#876) ───────────────────────────────────────────────
+
+#[cfg(test)]
+mod pagination_tests {
+    extern crate std;
+
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::String;
+
+    fn s(env: &Env, text: &str) -> String {
+        String::from_str(env, text)
+    }
+
+    /// A program with `milestones` milestones and `outcomes` outcome records.
+    ///
+    /// `initialize` and `create_program` take no token calls, so a generated
+    /// address stands in for the disbursement token. `create_program` rejects an
+    /// empty milestone list, so `milestones == 0` still creates one; the outcome
+    /// tests pass 0 and read only the outcome log.
+    fn setup(env: &Env, milestones: u32, outcomes: u32) -> (EcosystemFundingClient, u64) {
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, EcosystemFunding);
+        let client = EcosystemFundingClient::new(env, &contract_id);
+        client.initialize(&Address::generate(env));
+
+        let mut ms: Vec<(String, String, i128)> = soroban_sdk::vec![env];
+        for i in 0..std::cmp::max(milestones, 1) {
+            ms.push_back((s(env, "m"), s(env, "d"), 100 + i as i128));
+        }
+
+        let manager = Address::generate(env);
+        let recipient = Address::generate(env);
+        let program_id = client.create_program(
+            &manager,
+            &recipient,
+            &s(env, "program"),
+            &s(env, "desc"),
+            &ProgramType::Grant,
+            &ms,
+            &Address::generate(env),
+        );
+
+        for i in 0..outcomes {
+            client.record_outcome(
+                &recipient,
+                &program_id,
+                &s(env, "metric"),
+                &(i as i128),
+                &s(env, "note"),
+            );
+        }
+
+        (client, program_id)
+    }
+
+    #[test]
+    fn get_milestones_page_returns_a_bounded_page() {
+        let env = Env::default();
+        let (client, program_id) = setup(&env, 5, 0);
+
+        let (page, info) = client.get_milestones_page(&program_id, &0, &2);
+        assert_eq!(page.len(), 2);
+        assert_eq!(info.total, 5);
+        assert_eq!(info.count, 2);
+        assert!(info.has_more);
+        assert_eq!(info.next_start, Some(2));
+
+        let (page, info) = client.get_milestones_page(&program_id, &2, &2);
+        assert_eq!(page.len(), 2);
+        assert_eq!(info.next_start, Some(4));
+
+        // A short final page rather than an error.
+        let (page, info) = client.get_milestones_page(&program_id, &4, &2);
+        assert_eq!(page.len(), 1);
+        assert!(!info.has_more);
+        assert_eq!(info.next_start, None);
+
+        // The unbounded reader still returns everything it always did.
+        assert_eq!(client.get_milestones(&program_id).len(), 5);
+    }
+
+    #[test]
+    fn get_milestones_page_handles_the_edge_cases() {
+        let env = Env::default();
+        let (client, program_id) = setup(&env, 3, 0);
+
+        // start > len: empty page, not an error, and no next cursor.
+        let (page, info) = client.get_milestones_page(&program_id, &99, &10);
+        assert!(page.is_empty());
+        assert_eq!(info.total, 3);
+        assert_eq!(info.count, 0);
+        assert!(!info.has_more);
+        assert_eq!(info.next_start, None);
+
+        // limit == 0 must not mean "return nothing": it yields the default page
+        // size, which here covers the whole log.
+        let (page, info) = client.get_milestones_page(&program_id, &0, &0);
+        assert_eq!(page.len(), 3);
+        assert_eq!(info.limit, 3);
+        assert_eq!(info.count, 3);
+
+        // A limit above the cap is clamped rather than honoured. With only 3
+        // milestones the resulting span is still the whole list.
+        let (page, info) =
+            client.get_milestones_page(&program_id, &0, &(shared::pagination::MAX_LIMIT + 1));
+        assert_eq!(info.limit, 3);
+        assert_eq!(page.len(), 3);
+    }
+
+    #[test]
+    fn get_milestones_page_reports_a_single_milestone_as_final() {
+        let env = Env::default();
+        let (client, program_id) = setup(&env, 1, 0);
+
+        // The smallest non-empty program: one milestone, no next page.
+        let (page, info) = client.get_milestones_page(&program_id, &0, &50);
+        assert_eq!(page.len(), 1);
+        assert_eq!(info.total, 1);
+        assert!(!info.has_more);
+        assert_eq!(info.next_start, None);
+    }
+
+    #[test]
+    fn get_outcomes_clamps_an_oversized_limit() {
+        let env = Env::default();
+        let (client, program_id) = setup(&env, 0, 4);
+
+        // This is the defect #876 fixes: `limit` used to be trusted verbatim, so
+        // `u64::MAX` scanned the whole log. It is now capped.
+        let outcomes = client.get_outcomes(&program_id, &0, &u64::MAX);
+        assert_eq!(
+            outcomes.len(),
+            4,
+            "an oversized limit must not widen the read"
+        );
+
+        // `PageInfo.limit` is the span actually visited, so with 4 records on
+        // file the cap is never reached and the span is the whole log. The
+        // clamp itself is pinned against a log longer than the cap by
+        // `shared::pagination`'s own unit tests.
+        let (page, info) = client.get_outcomes_page(&program_id, &0, &u64::MAX);
+        assert_eq!(info.limit, 4);
+        assert_eq!(info.total, 4);
+        assert_eq!(info.count, 4);
+        assert_eq!(page.len(), 4);
+        assert!(!info.has_more);
+    }
+
+    #[test]
+    fn get_outcomes_pages_through_the_log() {
+        let env = Env::default();
+        let (client, program_id) = setup(&env, 0, 5);
+
+        let (page, info) = client.get_outcomes_page(&program_id, &0, &2);
+        assert_eq!(page.len(), 2);
+        assert_eq!(info.total, 5);
+        assert!(info.has_more);
+        assert_eq!(info.next_start, Some(2));
+        assert_eq!(page.get(0).unwrap().metric_value, 0);
+        assert_eq!(page.get(1).unwrap().metric_value, 1);
+
+        let (page, info) = client.get_outcomes_page(&program_id, &2, &2);
+        assert_eq!(page.get(0).unwrap().metric_value, 2);
+        assert_eq!(page.get(1).unwrap().metric_value, 3);
+        assert_eq!(info.next_start, Some(4));
+
+        // Short final page.
+        let (page, info) = client.get_outcomes_page(&program_id, &4, &2);
+        assert_eq!(page.len(), 1);
+        assert_eq!(page.get(0).unwrap().metric_value, 4);
+        assert!(!info.has_more);
+        assert_eq!(info.next_start, None);
+
+        // The unbounded reader keeps its existing behaviour and signature.
+        assert_eq!(client.get_outcomes(&program_id, &0, &2).len(), 2);
+    }
+
+    #[test]
+    fn get_outcomes_page_handles_the_edge_cases() {
+        let env = Env::default();
+        let (client, program_id) = setup(&env, 0, 2);
+
+        // start > len.
+        let (page, info) = client.get_outcomes_page(&program_id, &u64::MAX, &10);
+        assert!(page.is_empty());
+        assert_eq!(info.total, 2);
+        assert!(!info.has_more);
+
+        // limit == 0 falls back to the default page size, which covers the whole
+        // 2-record log.
+        let (page, info) = client.get_outcomes_page(&program_id, &0, &0);
+        assert_eq!(info.limit, 2);
+        assert_eq!(page.len(), 2);
+
+        // offset + limit must not wrap: the old code did `offset + limit`
+        // unchecked, so a huge offset and a huge limit could overflow.
+        let (page, info) = client.get_outcomes_page(&program_id, &u64::MAX, &u64::MAX);
+        assert!(page.is_empty());
+        assert!(!info.has_more);
     }
 }

@@ -408,6 +408,7 @@ mod tests {
     use crate::health;
     use crate::pause;
     use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::Ledger as _;
 
     fn setup() -> Env {
         let env = Env::default();

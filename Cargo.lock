@@ -180,6 +180,7 @@ name = "campaign-factory"
 version = "0.1.0"
 dependencies = [
  "campaign",
+ "shared",
  "soroban-sdk",
 ]
 

@@ -16,6 +16,7 @@ testutils = ["soroban-sdk/testutils"]
 
 [dependencies]
 campaign = { path = "../campaign" }
+shared = { path = "../shared", version = "0.1.0" }
 soroban-sdk = { workspace = true }
 
 [dev-dependencies]

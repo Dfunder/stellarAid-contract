@@ -9,9 +9,14 @@ pub mod health;
 pub mod rollout;
 pub mod correlation;
 pub mod circuit_breaker;
+pub mod pagination;
 
 pub use health::{
     AlertConfig, HealthMetrics, HealthReport, HealthStatus, SlaTargets,
+};
+pub use pagination::{
+    clamp_limit, collect_window, page_info, paginate, paginated, window, PageInfo, DEFAULT_LIMIT,
+    MAX_LIMIT,
 };
 pub use rollout::{RolloutPhase, RolloutState};
 pub use circuit_breaker::{

@@ -459,6 +459,12 @@ impl CommissionAgreementContract {
             .ok_or(AgreementError::NotFound)
     }
 
+    /// Every milestone proposed on a commission agreement.
+    ///
+    /// Unbounded: `propose_milestone` appends with no cap for the life of the
+    /// agreement. Prefer [`get_milestones_page`](Self::get_milestones_page),
+    /// which bounds the response with `shared::pagination`. Kept for callers
+    /// that already rely on the unbounded shape.
     pub fn get_milestones(env: Env, commission_id: Bytes) -> Result<Vec<MilestoneRecord>, AgreementError> {
         if !env.storage().persistent().has(&DataKey::Agreement(commission_id.clone())) {
             return Err(AgreementError::NotFound);
@@ -466,6 +472,30 @@ impl CommissionAgreementContract {
         Ok(env.storage().persistent()
             .get(&DataKey::MilestonesForAgreement(commission_id))
             .unwrap_or(Vec::new(&env)))
+    }
+
+    /// A bounded page of an agreement's milestones, plus its `PageInfo`.
+    ///
+    /// A page spans at most `shared::pagination::MAX_LIMIT` milestones however
+    /// large `limit` is. A `limit` of `0` yields the default page size rather
+    /// than an empty result, and an `offset` past the end is an empty page
+    /// rather than an error, so a client can page to the end without reading a
+    /// count first.
+    pub fn get_milestones_page(
+        env: Env,
+        commission_id: Bytes,
+        offset: u32,
+        limit: u32,
+    ) -> Result<(Vec<MilestoneRecord>, shared::pagination::PageInfo), AgreementError> {
+        if !env.storage().persistent().has(&DataKey::Agreement(commission_id.clone())) {
+            return Err(AgreementError::NotFound);
+        }
+        let milestones: Vec<MilestoneRecord> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MilestonesForAgreement(commission_id))
+            .unwrap_or_else(|| Vec::new(&env));
+        Ok(shared::pagination::paginated(&env, &milestones, offset, limit))
     }
 
     /// Return the expected escrow amount for a commission agreement, used by the
@@ -687,6 +717,12 @@ impl CommissionAgreementContract {
 
     /// Return the list of team members for a commission.
     ///
+    /// Unbounded: `invite_team_member` appends with no cap for the life of the
+    /// commission. Prefer
+    /// [`get_team_members_page`](Self::get_team_members_page), which bounds the
+    /// response with `shared::pagination`. Kept for callers that already rely
+    /// on the unbounded shape.
+    ///
     /// Closes #603 – team member retrieval.
     pub fn get_team_members(env: Env, commission_id: Bytes) -> Result<Vec<TeamMember>, AgreementError> {
         if !env.storage().persistent().has(&DataKey::Agreement(commission_id.clone())) {
@@ -695,6 +731,30 @@ impl CommissionAgreementContract {
         Ok(env.storage().persistent()
             .get(&DataKey::TeamMembers(commission_id))
             .unwrap_or(Vec::new(&env)))
+    }
+
+    /// A bounded page of a commission's team members, plus its `PageInfo`.
+    ///
+    /// A page spans at most `shared::pagination::MAX_LIMIT` members however
+    /// large `limit` is. A `limit` of `0` yields the default page size rather
+    /// than an empty result, and an `offset` past the end is an empty page
+    /// rather than an error, so a client can page to the end without reading a
+    /// count first.
+    pub fn get_team_members_page(
+        env: Env,
+        commission_id: Bytes,
+        offset: u32,
+        limit: u32,
+    ) -> Result<(Vec<TeamMember>, shared::pagination::PageInfo), AgreementError> {
+        if !env.storage().persistent().has(&DataKey::Agreement(commission_id.clone())) {
+            return Err(AgreementError::NotFound);
+        }
+        let members: Vec<TeamMember> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TeamMembers(commission_id))
+            .unwrap_or_else(|| Vec::new(&env));
+        Ok(shared::pagination::paginated(&env, &members, offset, limit))
     }
 
     // ── Cancellation with pro-rata refunds (closes #605) ───────────────────
@@ -1250,11 +1310,40 @@ impl CommissionAgreementContract {
         load_agency(&env, &agency)
     }
 
+    /// Every artist on an agency's roster.
+    ///
+    /// Unbounded: `add_artist` appends with no cap for the life of the agency,
+    /// and this is the contract-wide roster, so it is the largest of the three
+    /// unbounded vectors here. Prefer
+    /// [`get_roster_page`](Self::get_roster_page), which bounds the response
+    /// with `shared::pagination`. Kept for callers that already rely on the
+    /// unbounded shape.
     pub fn get_roster(env: Env, agency: Address) -> Vec<Address> {
         env.storage()
             .persistent()
             .get(&DataKey::Roster(agency))
             .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// A bounded page of an agency's roster, plus its `PageInfo`.
+    ///
+    /// A page spans at most `shared::pagination::MAX_LIMIT` artists however
+    /// large `limit` is. A `limit` of `0` yields the default page size rather
+    /// than an empty result, and an `offset` past the end is an empty page
+    /// rather than an error, so a client can page to the end without reading a
+    /// count first.
+    pub fn get_roster_page(
+        env: Env,
+        agency: Address,
+        offset: u32,
+        limit: u32,
+    ) -> (Vec<Address>, shared::pagination::PageInfo) {
+        let roster: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Roster(agency))
+            .unwrap_or_else(|| Vec::new(&env));
+        shared::pagination::paginated(&env, &roster, offset, limit)
     }
 
     pub fn get_roster_entry(

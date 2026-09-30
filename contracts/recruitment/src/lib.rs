@@ -445,11 +445,39 @@ impl Recruitment {
             .get(&DataKey::Offer(job_id, applicant))
     }
 
+    /// Every applicant to a job, in application order.
+    ///
+    /// Unbounded: `apply` appends to this list for the life of the posting, so
+    /// the response grows with demand. Prefer
+    /// [`get_applicants_page`](Self::get_applicants_page), which bounds the
+    /// response with `shared::pagination`. Kept for callers that already rely
+    /// on the unbounded shape.
     pub fn get_applicants(env: Env, job_id: Bytes) -> Vec<Address> {
         env.storage()
             .persistent()
             .get(&DataKey::Applicants(job_id))
             .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// A bounded page of a job's applicants, plus its `PageInfo`.
+    ///
+    /// A page spans at most `shared::pagination::MAX_LIMIT` applicants however
+    /// large `limit` is. A `limit` of `0` yields the default page size rather
+    /// than an empty result, and an `offset` past the end is an empty page
+    /// rather than an error, so a client can page to the end without reading a
+    /// count first.
+    pub fn get_applicants_page(
+        env: Env,
+        job_id: Bytes,
+        offset: u32,
+        limit: u32,
+    ) -> (Vec<Address>, shared::pagination::PageInfo) {
+        let applicants: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Applicants(job_id))
+            .unwrap_or_else(|| Vec::new(&env));
+        shared::pagination::paginated(&env, &applicants, offset, limit)
     }
 
     pub fn get_pipeline(env: Env, job_id: Bytes) -> Pipeline {

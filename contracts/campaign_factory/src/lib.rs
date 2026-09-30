@@ -85,22 +85,78 @@ impl CampaignFactory {
         Ok(contract_id)
     }
 
+    /// Every campaign deployed through this factory, in deployment order.
+    ///
+    /// Unbounded: `deploy_campaign` appends to the registry for the life of the
+    /// factory. Prefer [`get_all_campaigns_page`](Self::get_all_campaigns_page),
+    /// which bounds the response with `shared::pagination`. Kept for callers
+    /// that already rely on the unbounded shape.
     pub fn get_all_campaigns(env: Env) -> Vec<Address> {
         read_campaigns(&env)
     }
 
-    pub fn get_campaigns_by_creator(env: Env, creator: Address) -> Vec<Address> {
+    /// A bounded page of the campaign registry, plus its `PageInfo`.
+    ///
+    /// A page spans at most `shared::pagination::MAX_LIMIT` campaigns however
+    /// large `limit` is. A `limit` of `0` yields the default page size rather
+    /// than an empty result, and an `offset` past the end is an empty page
+    /// rather than an error, so a client can page to the end without reading a
+    /// count first.
+    pub fn get_all_campaigns_page(
+        env: Env,
+        offset: u32,
+        limit: u32,
+    ) -> (Vec<Address>, shared::pagination::PageInfo) {
         let campaigns = read_campaigns(&env);
-        let mut filtered = Vec::new(&env);
-
-        for campaign in campaigns.iter() {
-            let contract_id = campaign;
-            let client = CampaignContractClient::new(&env, &contract_id);
-            if client.get_admin() == creator {
-                filtered.push_back(contract_id);
-            }
-        }
-
-        filtered
+        shared::pagination::paginated(&env, &campaigns, offset, limit)
     }
+
+    /// Every campaign in the registry whose admin is `creator`.
+    ///
+    /// Unbounded, and more expensive than it looks: this is one cross-contract
+    /// `get_admin` call per registered campaign, so its cost grows with the
+    /// whole registry rather than with the number of matches. Prefer
+    /// [`get_campaigns_by_creator_page`](Self::get_campaigns_by_creator_page).
+    pub fn get_campaigns_by_creator(env: Env, creator: Address) -> Vec<Address> {
+        campaigns_by_creator(&env, &creator)
+    }
+
+    /// A bounded page of `creator`'s campaigns, plus its `PageInfo`.
+    ///
+    /// The page bounds the *response*, not the work: the registry is still
+    /// scanned end to end and one `get_admin` call is still made per registered
+    /// campaign, because the matches cannot be located without the scan. What
+    /// this buys is a bounded response and an honest `PageInfo`, so a client can
+    /// tell a truncated page from a complete answer. A future version should
+    /// maintain a `DataKey::CampaignsByCreator(Address)` reverse index written
+    /// in `deploy_campaign` — see the note on reverse indexes in
+    /// `docs/QUERY_OPTIMIZATION.md` §4.
+    pub fn get_campaigns_by_creator_page(
+        env: Env,
+        creator: Address,
+        offset: u32,
+        limit: u32,
+    ) -> (Vec<Address>, shared::pagination::PageInfo) {
+        let matched = campaigns_by_creator(&env, &creator);
+        shared::pagination::paginated(&env, &matched, offset, limit)
+    }
+}
+
+/// Campaigns in the registry whose admin is `creator`.
+///
+/// Kept out of the `#[contractimpl]` block: the two readers above call it, and
+/// a plain function is not added to the contract spec.
+fn campaigns_by_creator(env: &Env, creator: &Address) -> Vec<Address> {
+    let campaigns = read_campaigns(env);
+    let mut filtered = Vec::new(env);
+
+    for campaign in campaigns.iter() {
+        let contract_id = campaign;
+        let client = CampaignContractClient::new(env, &contract_id);
+        if client.get_admin() == *creator {
+            filtered.push_back(contract_id);
+        }
+    }
+
+    filtered
 }

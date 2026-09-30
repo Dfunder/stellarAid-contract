@@ -305,35 +305,72 @@ impl NftOwnership {
     }
 
     /// Return a paginated slice of the ownership history for an NFT.
+    ///
+    /// The cursor and the limit are both clamped by `shared::pagination`, so a
+    /// page spans at most `shared::pagination::MAX_LIMIT` records however large
+    /// `limit` is. A `limit` of `0` yields the default page size rather than an
+    /// empty result, and an `offset` past the end of the history is an empty
+    /// page rather than an error, so a client can page to the end without
+    /// calling `get_transfer_count` first.
+    ///
+    /// For the page metadata that makes that loop safe, use
+    /// [`get_transfer_history_page`](Self::get_transfer_history_page).
     pub fn get_transfer_history(
         env: Env,
         nft_id: u64,
         offset: u64,
         limit: u64,
     ) -> Vec<TransferRecord> {
+        let (records, _info) = Self::transfer_history_page(&env, nft_id, offset, limit);
+        records
+    }
+
+    /// Like [`get_transfer_history`](Self::get_transfer_history), but returns
+    /// the page together with its `PageInfo`: the total record count, the next
+    /// cursor, and whether anything exists past this page.
+    pub fn get_transfer_history_page(
+        env: Env,
+        nft_id: u64,
+        offset: u64,
+        limit: u64,
+    ) -> (Vec<TransferRecord>, shared::pagination::PageInfo) {
+        Self::transfer_history_page(&env, nft_id, offset, limit)
+    }
+
+    // ── Internal ──────────────────────────────────────────────────────────
+
+    /// Shared body of the two transfer-history readers, bounded by
+    /// `shared::pagination::collect_window` (closes #876).
+    ///
+    /// `TransferCount` and `DataKey::Transfer` are keyed by `u64`, while the
+    /// pagination arithmetic is `u32`. The narrowing conversions saturate
+    /// rather than wrap: a history of `u32::MAX` records is already far past
+    /// anything a 100-record page can address, and wrapping would report a
+    /// small `total` for a very long history and mis-page the client.
+    fn transfer_history_page(
+        env: &Env,
+        nft_id: u64,
+        offset: u64,
+        limit: u64,
+    ) -> (Vec<TransferRecord>, shared::pagination::PageInfo) {
         let count: u64 = env
             .storage()
             .persistent()
             .get(&DataKey::TransferCount(nft_id))
             .unwrap_or(0);
 
-        let mut result = Vec::new(&env);
-        let end = (offset + limit).min(count);
-        let mut i = offset;
-        while i < end {
-            if let Some(record) = env
-                .storage()
-                .persistent()
-                .get::<DataKey, TransferRecord>(&DataKey::Transfer(nft_id, i))
-            {
-                result.push_back(record);
-            }
-            i += 1;
-        }
-        result
+        shared::pagination::collect_window(
+            env,
+            u32::try_from(count).unwrap_or(u32::MAX),
+            u32::try_from(offset).unwrap_or(u32::MAX),
+            u32::try_from(limit).unwrap_or(u32::MAX),
+            |i| {
+                env.storage()
+                    .persistent()
+                    .get::<DataKey, TransferRecord>(&DataKey::Transfer(nft_id, u64::from(i)))
+            },
+        )
     }
-
-    // ── Internal ──────────────────────────────────────────────────────────
 
     fn next_id(env: &Env) -> u64 {
         let count: u64 = env

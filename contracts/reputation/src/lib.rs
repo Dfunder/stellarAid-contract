@@ -11,8 +11,8 @@
 
 #![no_std]
 
-mod errors;
-mod types;
+pub mod errors;
+pub mod types;
 
 #[cfg(test)]
 mod tests;

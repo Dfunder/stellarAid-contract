@@ -12,6 +12,11 @@ min-compatible = "0.1.0"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[bench]]
+name = "reputation_benchmark"
+path = "benches/reputation_benchmark.rs"
+harness = false
+
 [dependencies]
 soroban-sdk.workspace = true
 shared = { path = "../shared", version = "0.1.0" }

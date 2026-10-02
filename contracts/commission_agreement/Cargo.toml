@@ -11,6 +11,15 @@ min-compatible = "0.1.0"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+# This crate does not compile on main (22 pre-existing errors, see the CI
+# baseline block in .github/workflows/ci.yml). The bench target below is
+# ready; it becomes buildable once the crate itself compiles again.
+[[bench]]
+name = "commission_agreement_benchmark"
+path = "benches/commission_agreement_benchmark.rs"
+harness = false
+
 [dependencies]
 soroban-sdk.workspace = true
 shared = { path = "../shared", version = "0.1.0" }

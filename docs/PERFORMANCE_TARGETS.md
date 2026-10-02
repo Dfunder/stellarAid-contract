@@ -273,7 +273,10 @@ benchmark that runs. `contracts/escrow/benches/escrow_benchmark.rs` uses `#[benc
 `test::Bencher`, which needs a nightly toolchain, and no `[[bench]]` target is registered in
 `contracts/escrow/Cargo.toml`, so that file is not compiled at all. The approach taken for
 #873 — a `harness = false` target on stable, with an opt-in budget gate — is the one to copy
-for the operations named in §2.
+for the operations named in §2. Measured numbers for the three contracts that now have
+running `harness = false` benches (competitions, subscription, reputation) are in
+[`BENCHMARK_RESULTS.md`](./BENCHMARK_RESULTS.md); none of them approach the §1 ceilings,
+and their real constraint remains the list-length ceilings, not instructions.
 
 ## 4. Optimisation backlog, in priority order
 
@@ -324,7 +327,10 @@ Two limitations to keep in mind when copying it:
 
 - **Nothing in §2 or §3 is a measurement.** No contract in this repository has been built, so
   no target here has been checked against a real invocation. The code facts and `file:line`
-  citations are real; the budgets expressed against them are derived, not observed.
+  citations are real; the budgets expressed against them are derived, not observed. This is
+  still true for §2 and §3, but **it no longer holds for the whole repository**: as of
+  #870–#872 three contracts (`competitions`, `subscription`, `reputation`) build and have
+  running benches, with results in [`BENCHMARK_RESULTS.md`](./BENCHMARK_RESULTS.md).
 - **The workspace does not currently build.** Twelve files under `contracts/` have unclosed
   delimiters on `upstream/main`, including `contracts/reputation/src/lib.rs`,
   `contracts/platform_config/src/*`, `contracts/escrow/src/lib.rs` and
@@ -334,13 +340,20 @@ Two limitations to keep in mind when copying it:
   `:644`, a second contract starts at `:344`), and `commission_agreement/src/lib.rs` has
   `get_team_members` unclosed at `:678-685`, which means every entry point from line 690 down
   is textually nested inside it and is not actually a member of the `#[contractimpl]` block.
+  **Note:** `reputation/src/lib.rs` compiles today despite the concatenated layout; the
+  compiler only complains about that file in combination with `platform_config` and
+  `commission_agreement`'s brokenness in a full workspace build. `(competitions, subscription,
+  reputation)` each build standalone (`cargo check -p <crate>` passes).
 - **Facts read from an unparseable file are marked UNVERIFIED** in §2.2. That covers
-  `reputation` and `platform_config` entirely. `escrow::correlation_tests.rs` may be balanced
-  after all; the earlier reading was not reproduced.
+  `reputation` and `platform_config` entirely, though the reputation rows can now be put
+  against the measured port in `BENCHMARK_RESULTS.md`. `escrow::correlation_tests.rs` may be
+  balanced after all; the earlier reading was not reproduced.
 - **`commission_agreement` is included in §2.6 for completeness** but is not currently
   buildable, and has errors beyond the delimiter: `DataKey::RateLimiter` and
-  `types::RateLimitKey` are referenced but do not exist in its `types.rs`, and two
-  `env.events().publish` calls are given three arguments where the SDK takes two.
+  `types::RateLimitKey` are referenced but do not exist in its `types.rs`, duplicate error
+  discriminants 10–13 in `errors.rs`, duplicate imports, use-after-moves, and an oversized
+  `#[contracterror]` symbol. Its bench (`BENCHMARK_RESULTS.md` §5) is therefore written but
+  cannot run until the crate compiles.
 - **The `soroban-sdk` ceilings in §1 are from 25.1.1.** The repository pins 21.0.0, an earlier
   protocol. Re-derive before relying on the headroom.
 

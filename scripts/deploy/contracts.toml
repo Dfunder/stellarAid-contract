@@ -1,0 +1,124 @@
+# Deployment manifest (issue #868).
+#
+# The canonical list of every *deployable* contract in the repository — the
+# crates that are both workspace members and compile to a Soroban WASM
+# (`[lib] crate-type = ["cdylib", "rlib"]`). `shared` is deliberately absent:
+# it is a library only and has no entry point.
+#
+# `deploy.sh --manifest scripts/deploy/contracts.toml` (what `make deploy-all`
+# runs) deploys every contract here; `--contracts "a b"` overrides the set for
+# a targeted deploy. `scripts/preflight.sh` and `deploy.sh` both validate that
+# this file stays in sync with the workspace `members` list, so a new contract
+# cannot be merged without being added here.
+#
+# Fields:
+#   name   - crate directory under contracts/ (also the WASM file name).
+#   init   - true when the contract exposes an `initialize` entry point that
+#            must be called after deployment. Initialisation *arguments* are
+#            never guessed here; operators pass them explicitly (deploy.sh
+#            prints a reminder when --init is set).
+version = 1
+
+[[contracts]]
+name = "analytics"
+init = true
+
+[[contracts]]
+name = "audit"
+init = true
+
+[[contracts]]
+name = "campaign"
+init = true
+
+[[contracts]]
+name = "campaign_factory"
+init = true
+
+[[contracts]]
+name = "campaign_instance"
+init = true
+
+[[contracts]]
+name = "commission_agreement"
+init = false
+
+[[contracts]]
+name = "competitions"
+init = true
+
+[[contracts]]
+name = "creator_fund"
+init = true
+
+[[contracts]]
+name = "dao"
+init = true
+
+[[contracts]]
+name = "dispute_arbiter"
+init = true
+
+[[contracts]]
+name = "ecosystem_funding"
+init = true
+
+[[contracts]]
+name = "escrow"
+init = true
+
+[[contracts]]
+name = "factory"
+init = true
+
+[[contracts]]
+name = "licensing"
+init = true
+
+[[contracts]]
+name = "mentorship"
+init = true
+
+[[contracts]]
+name = "messaging"
+init = true
+
+[[contracts]]
+name = "multi_sig"
+init = true
+
+[[contracts]]
+name = "nft"
+init = true
+
+[[contracts]]
+name = "platform_config"
+init = true
+
+[[contracts]]
+name = "rate_limiter"
+init = true
+
+[[contracts]]
+name = "recruitment"
+init = true
+
+[[contracts]]
+name = "reputation"
+init = true
+
+[[contracts]]
+name = "revenue_sharing"
+init = true
+
+[[contracts]]
+name = "search"
+init = true
+
+[[contracts]]
+name = "subscription"
+init = true
+
+[[contracts]]
+name = "verification"
+init = true

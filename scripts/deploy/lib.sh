@@ -237,6 +237,80 @@ wasm_path() {
     echo "${WASM_DIR:-$REPO_ROOT/target/wasm32-unknown-unknown/release}/$name.wasm"
 }
 
+# ── Deployment manifest (issue #868) ────────────────────────────────────────
+#
+# The manifest (scripts/deploy/contracts.toml) is the single source of truth
+# for "which contracts does this repository deploy". Keep the helpers here so
+# deploy.sh, preflight.sh and verify_deploy.sh all use one parser.
+
+# Path to the deployment manifest, overridable for testing.
+# shellcheck disable=SC2155
+DEPLOYMENT_MANIFEST="${DEPLOYMENT_MANIFEST:-$SCRIPT_DIR/contracts.toml}"
+
+# The contract names listed in the manifest, in file order.
+manifest_contracts() {
+    require_cmd awk
+    if [ ! -f "$DEPLOYMENT_MANIFEST" ]; then
+        die "deployment manifest not found at $DEPLOYMENT_MANIFEST"
+    fi
+    awk '
+        /^\[\[contracts\]\]/ { in_contract = 1; next }
+        in_contract && /^name[[:space:]]*=[[:space:]]*["'"'"']/ {
+            sub(/^name[[:space:]]*=[[:space:]]*["'"'"']/, "")
+            sub(/["'"'"'][[:space:]]*$/, "")
+            print
+        }
+        in_contract && /^\[\[/ { in_contract = 0 }
+    ' "$DEPLOYMENT_MANIFEST"
+}
+
+# Validate the manifest against the workspace: every manifest contract must
+# exist and be a cdylib crate, and every workspace-member cdylib contract must
+# appear in the manifest. Ends with a failure tally like other gates.
+validate_manifest() {
+    local m w
+    local listed=""
+    head1 "Deployment manifest: $DEPLOYMENT_MANIFEST"
+
+    if [ ! -f "$DEPLOYMENT_MANIFEST" ]; then
+        record_fail "manifest file not found"
+        return 1
+    fi
+
+    for m in $(manifest_contracts); do
+        listed="$listed $m "
+        [ -d "$REPO_ROOT/contracts/$m" ] \
+            || { record_fail "manifest lists '$m' but contracts/$m does not exist"; continue; }
+        grep -q 'crate-type.*cdylib' "$REPO_ROOT/contracts/$m/Cargo.toml" \
+            || { record_fail "manifest lists '$m' but contracts/$m is not a cdylib contract"; continue; }
+        record_pass "manifest: $m"
+    done
+
+    # Drift check: any workspace-member contract not in the manifest?
+    for w in $(workspace_contracts); do
+        [ -d "$REPO_ROOT/contracts/$w" ] || continue
+        grep -q 'crate-type.*cdylib' "$REPO_ROOT/contracts/$w/Cargo.toml" 2>/dev/null || continue
+        case " $listed " in
+            *" $w "*) : ;;
+            *) record_fail "'$w' is a workspace-member contract but is missing from the manifest" ;;
+        esac
+    done
+}
+
+# The contracts to deploy for this run: an explicit `--contracts` set wins,
+# otherwise the entire manifest ("deploy-all"), otherwise every workspace
+# member contract as a fallback.
+select_contracts() {
+    local override="$1" want_manifest="$2"
+    if [ -n "$override" ]; then
+        printf '%s\n' "$override"
+    elif [ "$want_manifest" -eq 1 ]; then
+        manifest_contracts
+    else
+        workspace_contracts
+    fi
+}
+
 # ── Mainnet approval gate ───────────────────────────────────────────────────
 #
 # Mainnet never runs by default. Three independent things must all be true:

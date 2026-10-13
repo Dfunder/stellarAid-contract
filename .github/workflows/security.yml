@@ -76,7 +76,7 @@ jobs:
         # --all-features so a vulnerability hidden behind a feature flag is
         # still counted. The `deny` advisory is re-asserted explicitly because
         # the default action behaviour is to warn.
-        run: cargo deny check advisories bans licenses sources all-features
+        run: cargo deny --config deny.toml check advisories bans licenses sources all-features
 
   # The repo-specific rules. This is the part that encodes the checklists
   # themselves, and the only job here that needs no third-party tool.

@@ -11,6 +11,11 @@
 
 **Lumora** is a Stellar-powered creative marketplace where artists, designers, and creative professionals showcase their work, connect with clients, receive secure payments, and build sustainable careers in the global digital economy.
 
+### 🏷️ Architecture & Naming Conventions
+* **Product Ecosystem**: **Lumora** — The decentralized creative marketplace and portfolio platform.
+* **Smart Contracts Suite**: `stellar-aid-*` / `orionpay-contract` — Soroban smart contracts providing escrow, commission, dispute arbitration, and payment settlement infrastructure.
+* **Repository**: `stellarAid-contract` — Core smart contracts workspace for the Lumora ecosystem.
+
 ---
 
 # 📖 About Lumora

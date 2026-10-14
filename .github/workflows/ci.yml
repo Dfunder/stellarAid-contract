@@ -89,6 +89,22 @@ jobs:
           rustup component add rustfmt
       - name: cargo fmt --all -- --check
         run: cargo fmt --all -- --check
+      - name: Verify no lone UTF-8 surrogates in Markdown
+        run: |
+          python3 -c "
+          import sys, glob
+          failed = False
+          for p in glob.glob('**/*.md', recursive=True):
+              with open(p, 'rb') as f:
+                  b = f.read()
+              text = b.decode('utf-8', errors='surrogateescape')
+              for i, c in enumerate(text):
+                  if 0xD800 <= ord(c) <= 0xDFFF:
+                      print(f'Lone surrogate found in {p} at index {i}: {hex(ord(c))}')
+                      failed = True
+          if failed:
+              sys.exit(1)
+          "
 
   # ── Lints ─────────────────────────────────────────────────────────────────
   clippy:

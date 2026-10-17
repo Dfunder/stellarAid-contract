@@ -1,7 +1,9 @@
 pub mod batch;
+pub mod batch_checkpoint;
 pub mod compression;
 pub mod config;
 pub mod errors;
+pub mod health;
 pub mod horizon;
 pub mod logging;
 pub mod retry;

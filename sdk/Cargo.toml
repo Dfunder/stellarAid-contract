@@ -8,6 +8,7 @@ publish = false
 soroban-sdk = { workspace = true }
 stellar-strkey = { workspace = true }
 stellar-xdr = { workspace = true }
+ed25519-dalek = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

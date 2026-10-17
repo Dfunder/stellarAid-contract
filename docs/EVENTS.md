@@ -94,6 +94,19 @@ Emitted by `contracts/escrow` during payment custody lifecycle.
 | `amount` | `i128` | Total locked token amount (in stroops) |
 | `fee_bps` | `u32` | Platform fee in basis points (e.g. 500 = 5%) |
 
+#### `escrow` / `funded`
+* **Trigger:** `create_escrow`
+* **Condition:** Successful lock of client token funds into escrow storage. Emitted alongside `created`, which is **unchanged**; the `created` payload stays `(commission_id, amount)` and `funded` is the additive topic carrying the extra funding facts (#978).
+* **Payload:**
+
+| Field | Type | Description |
+|---|---|---|
+| `commission_id` | `Bytes` | Unique commission identifier |
+| `funder` | `Address` | Address that funded the escrow (the client) |
+| `amount` | `i128` | Total locked token amount (in stroops) |
+| `asset` | `Address` | USDC token contract that was transferred |
+| `ledger` | `u32` | Ledger sequence at which funding was recorded |
+
 #### `escrow` / `released`
 * **Trigger:** `release_payment`
 * **Condition:** Client authorizes full release of funds to artist; net payout and fee transfers succeed.
@@ -147,6 +160,34 @@ Emitted by `contracts/escrow` during payment custody lifecycle.
 | `commission_id` | `Bytes` | Unique commission identifier |
 | `client_amount` | `i128` | Amount returned to client |
 | `artist_amount` | `i128` | Amount paid to artist |
+
+#### `escrow` / `settled`
+* **Trigger:** `finalize_atomic_commit`
+* **Condition:** Final step of the multi-transaction atomic-commit flow, once every participant has confirmed. Emitted so a client watching the final state does not have to poll `get_atomic_commit` after each of the four steps (#978). `atomic_escrow_to_commission` keeps its existing `escrow`/`released` event and its `corr`-topic `settled` correlation event; this two-topic `settled` is the additive no-poll marker on the stepwise path.
+* **Payload:**
+
+| Field | Type | Description |
+|---|---|---|
+| `commission_id` | `Bytes` | Unique commission identifier |
+| `ledger` | `u32` | Ledger sequence at which the commit settled |
+
+#### State-transition audit (#978)
+
+Every escrow state transition now publishes a topic, with the funding gap closed here:
+
+| Transition | Function | Event |
+|---|---|---|
+| create + fund | `create_escrow` | `escrow`/`created` + `escrow`/`funded` |
+| partial release | `partial_release` | `escrow`/`partial` |
+| full release | `release_payment` | `escrow`/`released` |
+| auto release | `auto_release_on_deadline` | `escrow`/`autorls` |
+| refund | `refund_client` | `escrow`/`refunded` |
+| dispute open | `open_dispute` | `escrow`/`disputed` |
+| dispute resolve | `release_payment` / `refund_client` (arbiter decides the winner) | `escrow`/`released` or `escrow`/`refunded` |
+| cancel | `cancel_escrow` | `escrow`/`cancelled` |
+| expire | `expire_escrow` | `escrow`/`expired` |
+| atomic commit finalize | `finalize_atomic_commit` | `escrow`/`settled` (new) |
+| atomic commit rollback | `rollback_atomic_commit` | `corr`-topic `rollback` |
 
 #### Correlation Events (Escrow)
 

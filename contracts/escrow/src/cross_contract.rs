@@ -258,6 +258,14 @@ pub fn finalize_atomic_commit(
     marker.state = AtomicCommitState::Settled;
     marker.settled_ledger = Some(env.ledger().sequence());
     storage::save_atomic_marker(env, &marker);
+
+    // EVENT (#978): the multi-step atomic-commit flow is only observable at the
+    // end; publishing here means a client watching for the final state does not
+    // have to poll `get_atomic_commit` after each of the four steps.
+    env.events().publish(
+        (symbol_short!("escrow"), symbol_short!("settled")),
+        (commission_id.clone(), env.ledger().sequence()),
+    );
     Ok(marker)
 }
 

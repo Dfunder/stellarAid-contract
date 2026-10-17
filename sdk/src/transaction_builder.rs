@@ -83,7 +83,7 @@ pub async fn build_donate_transaction_full(
         .map_err(|_| StellarAidError::validation("invalid contract id"))?;
 
     let contract_addr = match &contract_raw {
-        stellar_strkey::Strkey::ContractId(h) => ScAddress::Contract(Hash(Uint256(h.0))),
+        stellar_strkey::Strkey::Contract(c) => ScAddress::Contract(Hash(Uint256(c.0))),
         _ => return Err(StellarAidError::validation("expected a C... contract id")),
     };
 
@@ -104,8 +104,8 @@ pub async fn build_donate_transaction_full(
             let raw = stellar_strkey::Strkey::from_string(addr)
                 .map_err(|_| StellarAidError::validation("invalid token address"))?;
             match &raw {
-                stellar_strkey::Strkey::ContractId(h) => {
-                    ScVal::Address(ScAddress::Contract(Hash(Uint256(h.0))))
+                stellar_strkey::Strkey::Contract(c) => {
+                    ScVal::Address(ScAddress::Contract(Hash(Uint256(c.0))))
                 }
                 _ => return Err(StellarAidError::validation("expected a C... contract id for token")),
             }

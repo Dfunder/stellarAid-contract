@@ -555,4 +555,99 @@ fn error_codes_are_stable() {
     assert_eq!(MultiSigError::ProposalExpired as u32, 12);
     assert_eq!(MultiSigError::ProposalClosed as u32, 13);
     assert_eq!(MultiSigError::InvalidAction as u32, 14);
+    assert_eq!(MultiSigError::NotExpired as u32, 15);
+}
+
+// ── Explicit expiry (#975) ───────────────────────────────────────────────────
+
+#[test]
+fn explicit_expiry_before_the_deadline_is_rejected() {
+    let f = setup();
+    f.open();
+    let err = f
+        .client
+        .try_expire_proposal(&f.proposal_id, &f.executor)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, MultiSigError::NotExpired);
+    // The failed call must leave the proposal open.
+    assert_eq!(
+        f.client.get_proposal(&f.proposal_id).status,
+        ProposalStatus::Pending
+    );
+}
+
+#[test]
+fn explicit_expiry_at_the_deadline_closes_the_proposal() {
+    let f = setup();
+    f.open();
+    f.advance(EXPIRY_LEDGERS);
+    let status = f.client.expire_proposal(&f.proposal_id, &f.executor);
+    assert_eq!(status, ProposalStatus::Expired);
+    assert_eq!(
+        f.client.get_proposal(&f.proposal_id).status,
+        ProposalStatus::Expired
+    );
+    assert!(f.client.is_expired(&f.proposal_id));
+
+    // A second explicit expiry is refused: the proposal is already closed.
+    let err = f
+        .client
+        .try_expire_proposal(&f.proposal_id, &f.executor)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, MultiSigError::ProposalClosed);
+}
+
+#[test]
+fn approvals_are_retained_after_explicit_expiry() {
+    let f = setup();
+    f.open();
+    let signer = f.signers.get(0).unwrap();
+    f.client.approve(&f.proposal_id, &signer);
+    f.advance(EXPIRY_LEDGERS);
+
+    f.client.expire_proposal(&f.proposal_id, &f.executor);
+
+    // The signature stays on record for audit — deleting it would lose history.
+    assert!(f.client.has_approved(&f.proposal_id, &signer));
+    assert_eq!(f.client.get_signature_count(&f.proposal_id), 1);
+    // But it can never promote the proposal.
+    assert!(!f.client.is_approved(&f.proposal_id));
+    let err = f
+        .client
+        .try_finalize(&f.executor, &f.proposal_id)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, MultiSigError::ProposalClosed);
+}
+
+#[test]
+fn is_expired_tracks_the_pending_deadline_without_closing() {
+    let f = setup();
+    f.open();
+    assert!(!f.client.is_expired(&f.proposal_id));
+    assert_eq!(f.client.ledgers_until_expiry(&f.proposal_id), EXPIRY_LEDGERS);
+
+    f.advance(EXPIRY_LEDGERS);
+    // Past the deadline even though nothing has finalised it yet.
+    assert!(f.client.is_expired(&f.proposal_id));
+    assert_eq!(f.client.ledgers_until_expiry(&f.proposal_id), 0);
+    assert_eq!(
+        f.client.get_proposal(&f.proposal_id).status,
+        ProposalStatus::Pending
+    );
+}
+
+#[test]
+fn an_approved_proposal_is_not_expired() {
+    let f = setup();
+    f.open();
+    f.client.approve(&f.proposal_id, &f.signers.get(0).unwrap());
+    f.client.approve(&f.proposal_id, &f.signers.get(1).unwrap());
+    f.client.finalize(&f.executor, &f.proposal_id);
+    assert!(!f.client.is_expired(&f.proposal_id));
 }

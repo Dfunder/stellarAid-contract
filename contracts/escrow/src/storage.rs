@@ -112,7 +112,10 @@ where
 
 /// Default dispute-period TTL: ~60 days at 6s/ledger. Roughly twice the base
 /// escrow TTL so an active dispute never races record expiration.
-pub const DEFAULT_DISPUTE_TTL_LEDGERS: u32 = 864_000;
+///
+/// Sourced from [`shared::dispute`] so `dispute_arbiter` — which adjudicates
+/// the dispute and must agree on its deadline — reads the same value (#977).
+pub const DEFAULT_DISPUTE_TTL_LEDGERS: u32 = shared::dispute::DEFAULT_DISPUTE_TTL_LEDGERS;
 
 /// Returns the configured dispute-period TTL, falling back to the default.
 pub fn get_dispute_ttl_ledgers(env: &Env) -> u32 {

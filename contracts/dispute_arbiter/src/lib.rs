@@ -11,9 +11,13 @@ pub mod types;
 
 use errors::DisputeError;
 use shared::guard;
-use types::{DataKey, DisputeRecord, DisputeStatus};
+use types::{DataKey, DisputeRecord, DisputeStatus, EvidenceRecord};
 
 include!("../../semver_types.rs");
+
+/// Longest evidence blob a single submission may carry (#977). Bounded before
+/// it is written, like the resolution note (#765).
+const MAX_EVIDENCE_LEN: u32 = 1024;
 
 #[contract]
 pub struct DisputeArbiter;
@@ -55,15 +59,15 @@ fn get_config_contract(env: &Env) -> Result<Address, DisputeError> {
         .unwrap())
 }
 
-fn get_auto_resolve_ledgers(env: &Env) -> Result<u32, DisputeError> {
+fn load_dispute_ttl_ledgers(env: &Env) -> Result<u32, DisputeError> {
     if !has_admin(env) {
         return Err(DisputeError::NotInitialized);
     }
     Ok(env
         .storage()
         .instance()
-        .get(&DataKey::AutoResolveLedgers)
-        .unwrap())
+        .get(&DataKey::DisputeTtlLedgers)
+        .unwrap_or(shared::dispute::DEFAULT_DISPUTE_TTL_LEDGERS))
 }
 
 fn dispute_exists(env: &Env, commission_id: &Bytes) -> bool {
@@ -110,7 +114,7 @@ impl DisputeArbiter {
             .set(&DataKey::ConfigContract, &config_contract);
         env.storage()
             .instance()
-            .set(&DataKey::AutoResolveLedgers, &auto_resolve_ledgers);
+            .set(&DataKey::DisputeTtlLedgers, &auto_resolve_ledgers);
         env.events()
             .publish((symbol_short!("init"),), (admin, escrow_contract, config_contract, auto_resolve_ledgers));
         Ok(())
@@ -135,23 +139,25 @@ impl DisputeArbiter {
             return Err(DisputeError::AlreadyResolved);
         }
         let current_ledger = env.ledger().sequence();
-        let auto_resolve_offset = get_auto_resolve_ledgers(&env)?;
-        // Checked addition (#760): a wrapped auto-resolve ledger would make a
-        // dispute unresolvable.
-        let auto_resolve_ledger = current_ledger
-            .checked_add(auto_resolve_offset)
+        // Read the single dispute TTL before any state write (#977, #853): the
+        // deadline is a cross-contract fact and must be resolved up front.
+        let ttl_ledgers = load_dispute_ttl_ledgers(&env)?;
+        // Checked addition (#760): a wrapped deadline would make a dispute
+        // unresolvable (or instantly resolvable).
+        let deadline_ledger = current_ledger
+            .checked_add(ttl_ledgers)
             .ok_or(DisputeError::ArithmeticOverflow)?;
         let record = DisputeRecord {
             commission_id: commission_id.clone(),
             opened_ledger: current_ledger,
-            auto_resolve_ledger,
+            deadline_ledger,
             status: DisputeStatus::Open,
             resolution_note: None,
         };
         save_dispute(&env, &record);
         guard::release(&env);
         env.events()
-            .publish((symbol_short!("opened"),), (commission_id, initiator, current_ledger, auto_resolve_ledger));
+            .publish((symbol_short!("opened"),), (commission_id, initiator, current_ledger, deadline_ledger));
         Ok(())
     }
 
@@ -324,7 +330,7 @@ impl DisputeArbiter {
             return Err(DisputeError::InvalidStatus);
         }
         let current_ledger = env.ledger().sequence();
-        if current_ledger < record.auto_resolve_ledger {
+        if current_ledger < record.deadline_ledger {
             return Err(DisputeError::AutoResolveNotDue);
         }
         let escrow_contract = get_escrow_contract(&env)?;
@@ -343,6 +349,125 @@ impl DisputeArbiter {
 
     pub fn get_dispute(env: Env, commission_id: Bytes) -> Result<DisputeRecord, DisputeError> {
         load_dispute(&env, &commission_id)
+    }
+
+    // ── Dispute deadline and evidence window (#977) ──────────────────────────
+
+    /// Configured dispute TTL in ledgers, from which every deadline is computed.
+    ///
+    /// Mirrors `escrow`'s `get_dispute_ttl_ledgers`; both source their default
+    /// from [`shared::dispute`] so the two contracts cannot drift apart.
+    pub fn get_dispute_ttl_ledgers(env: Env) -> u32 {
+        load_dispute_ttl_ledgers(&env).unwrap_or(shared::dispute::DEFAULT_DISPUTE_TTL_LEDGERS)
+    }
+
+    /// Set the dispute TTL (admin only). Zero and values above
+    /// [`shared::dispute::MAX_DISPUTE_TTL_LEDGERS`] are rejected.
+    pub fn set_dispute_ttl_ledgers(
+        env: Env,
+        admin: Address,
+        ledgers: u32,
+    ) -> Result<(), DisputeError> {
+        let stored = get_admin(&env)?;
+        admin.require_auth();
+        if stored != admin {
+            return Err(DisputeError::Unauthorized);
+        }
+        if ledgers == 0 || ledgers > shared::dispute::MAX_DISPUTE_TTL_LEDGERS {
+            return Err(DisputeError::InvalidTtl);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::DisputeTtlLedgers, &ledgers);
+        Ok(())
+    }
+
+    /// Ledger at which `commission_id`'s dispute stops accepting evidence and
+    /// becomes eligible for `auto_resolve` (#977).
+    pub fn get_dispute_deadline(env: Env, commission_id: Bytes) -> Result<u32, DisputeError> {
+        Ok(load_dispute(&env, &commission_id)?.deadline_ledger)
+    }
+
+    /// Ledgers left before the evidence window closes; `0` once it has. Lets a
+    /// client show "you have N ledgers left to submit evidence" (#977).
+    pub fn ledgers_until_deadline(env: Env, commission_id: Bytes) -> Result<u32, DisputeError> {
+        let deadline = load_dispute(&env, &commission_id)?.deadline_ledger;
+        Ok(deadline.saturating_sub(env.ledger().sequence()))
+    }
+
+    /// Submit one piece of evidence for an open dispute, up to its deadline.
+    ///
+    /// The deadline is read before any state write (#977, #853). Submitting
+    /// after it is rejected with [`DisputeError::EvidenceWindowClosed`], so
+    /// evidence is time-boxed rather than open-ended.
+    pub fn submit_evidence(
+        env: Env,
+        commission_id: Bytes,
+        submitter: Address,
+        evidence: Bytes,
+    ) -> Result<(), DisputeError> {
+        // Guard first (#762): the write below is what a re-entrant call would
+        // observe as half-applied.
+        guard::acquire(&env);
+        if !has_admin(&env) {
+            return Err(DisputeError::NotInitialized);
+        }
+        submitter.require_auth();
+        if evidence.len() > MAX_EVIDENCE_LEN {
+            return Err(DisputeError::EvidenceTooLong);
+        }
+        let record = load_dispute(&env, &commission_id)?;
+        if record.status != DisputeStatus::Open {
+            return Err(DisputeError::InvalidStatus);
+        }
+        // Deadline read before the write (#977, #853).
+        if env.ledger().sequence() > record.deadline_ledger {
+            return Err(DisputeError::EvidenceWindowClosed);
+        }
+
+        let index: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EvidenceCount(commission_id.clone()))
+            .unwrap_or(0u32);
+        let entry = EvidenceRecord {
+            commission_id: commission_id.clone(),
+            submitter: submitter.clone(),
+            evidence,
+            submitted_ledger: env.ledger().sequence(),
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Evidence(commission_id.clone(), index), &entry);
+        env.storage()
+            .persistent()
+            .set(&DataKey::EvidenceCount(commission_id.clone()), &(index + 1));
+        guard::release(&env);
+        env.events().publish(
+            (symbol_short!("evidence"),),
+            (commission_id, submitter, index),
+        );
+        Ok(())
+    }
+
+    /// How many evidence entries a dispute has accumulated.
+    pub fn get_evidence_count(env: Env, commission_id: Bytes) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::EvidenceCount(commission_id))
+            .unwrap_or(0u32)
+    }
+
+    /// One evidence entry, by index.
+    pub fn get_evidence(
+        env: Env,
+        commission_id: Bytes,
+        index: u32,
+    ) -> Result<EvidenceRecord, DisputeError> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Evidence(commission_id, index))
+            .ok_or(DisputeError::NotFound)
     }
 
     // ── Health monitoring (#678) and gradual rollout (#684) ──────────────

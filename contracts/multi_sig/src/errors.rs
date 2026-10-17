@@ -35,6 +35,8 @@ pub enum MultiSigError {
     ProposalClosed = 13,
     /// The action payload is empty, so there is nothing to authorise.
     InvalidAction = 14,
+    /// `expire_proposal` was called before the proposal's deadline (#975).
+    NotExpired = 15,
 }
 
 impl core::fmt::Display for MultiSigError {
@@ -54,6 +56,7 @@ impl core::fmt::Display for MultiSigError {
             Self::ProposalExpired => write!(f, "signature window has expired"),
             Self::ProposalClosed => write!(f, "proposal is already closed"),
             Self::InvalidAction => write!(f, "action payload must not be empty"),
+            Self::NotExpired => write!(f, "proposal has not reached its expiry ledger"),
         }
     }
 }
@@ -74,5 +77,6 @@ pub fn get_suggestion(error: MultiSigError) -> Symbol {
         MultiSigError::ProposalExpired => symbol_short!("EXPIRED"),
         MultiSigError::ProposalClosed => symbol_short!("CLOSED"),
         MultiSigError::InvalidAction => symbol_short!("ACTION"),
+        MultiSigError::NotExpired => symbol_short!("NOT_EXP"),
     }
 }

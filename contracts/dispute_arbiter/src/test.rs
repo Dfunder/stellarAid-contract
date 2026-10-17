@@ -405,6 +405,11 @@ fn test_error_codes() {
     assert_eq!(DisputeError::AlreadyResolved as u32, 6);
     assert_eq!(DisputeError::AutoResolveNotDue as u32, 7);
     assert_eq!(DisputeError::InvalidShareBps as u32, 8);
+    assert_eq!(DisputeError::ArithmeticOverflow as u32, 9);
+    assert_eq!(DisputeError::NoteTooLong as u32, 10);
+    assert_eq!(DisputeError::EvidenceWindowClosed as u32, 11);
+    assert_eq!(DisputeError::EvidenceTooLong as u32, 12);
+    assert_eq!(DisputeError::InvalidTtl as u32, 13);
 }
 
 // ========== dispute status values ==========
@@ -511,4 +516,141 @@ fn test_version_is_0_1_0() {
     assert!(!DisputeArbiter::is_version_compatible(Env::default(), 0, 2, 0));
     let meta = DisputeArbiter::get_version_metadata(Env::default());
     assert_eq!(meta.storage_schema, 1);
+}
+
+// ========== dispute deadline and evidence window (#977) ==========
+
+#[test]
+fn test_open_dispute_records_a_deadline() {
+    let (env, admin, escrow, config, _token) = create_test_env();
+    let initiator = Address::generate(&env);
+    env.mock_all_auths();
+    let arbiter = env.register_contract(None, DisputeArbiter);
+    let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
+
+    assert_eq!(client.get_dispute_deadline(&commission_id), 100);
+    assert_eq!(client.ledgers_until_deadline(&commission_id), 100);
+    assert_eq!(client.get_dispute(&commission_id).deadline_ledger, 100);
+}
+
+#[test]
+fn test_default_ttl_matches_the_shared_dispute_constant() {
+    let (env, admin, escrow, config, _token) = create_test_env();
+    env.mock_all_auths();
+    let arbiter = env.register_contract(None, DisputeArbiter);
+    let client = DisputeArbiterClient::new(&env, &arbiter);
+    // No override: the arbiter reports the shared default.
+    client.initialize(&admin, &escrow, &config, &shared::dispute::DEFAULT_DISPUTE_TTL_LEDGERS);
+    assert_eq!(
+        client.get_dispute_ttl_ledgers(),
+        shared::dispute::DEFAULT_DISPUTE_TTL_LEDGERS
+    );
+}
+
+#[test]
+fn test_submit_evidence_within_the_window_succeeds() {
+    let (env, admin, escrow, config, _token) = create_test_env();
+    let initiator = Address::generate(&env);
+    let submitter = Address::generate(&env);
+    env.mock_all_auths();
+    let arbiter = env.register_contract(None, DisputeArbiter);
+    let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
+    client.submit_evidence(&commission_id, &submitter, &Bytes::from_slice(&env, b"proof"));
+
+    assert_eq!(client.get_evidence_count(&commission_id), 1);
+    let entry = client.get_evidence(&commission_id, &0u32);
+    assert_eq!(entry.submitter, submitter);
+    assert_eq!(entry.submitted_ledger, 0);
+}
+
+#[test]
+fn test_submit_evidence_exactly_at_the_deadline_is_allowed() {
+    let (env, admin, escrow, config, _token) = create_test_env();
+    let initiator = Address::generate(&env);
+    let submitter = Address::generate(&env);
+    env.mock_all_auths();
+    let arbiter = env.register_contract(None, DisputeArbiter);
+    let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
+    client.submit_evidence(&commission_id, &submitter, &Bytes::from_slice(&env, b"last minute"));
+    assert_eq!(client.get_evidence_count(&commission_id), 1);
+}
+
+#[test]
+fn test_submit_evidence_after_the_deadline_fails() {
+    let (env, admin, escrow, config, _token) = create_test_env();
+    let initiator = Address::generate(&env);
+    let submitter = Address::generate(&env);
+    env.mock_all_auths();
+    let arbiter = env.register_contract(None, DisputeArbiter);
+    let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
+    env.ledger().with_mut(|l| l.sequence_number = 101);
+    let result = client.try_submit_evidence(&commission_id, &submitter, &Bytes::from_slice(&env, b"late"));
+    assert_eq!(result.unwrap_err().unwrap(), DisputeError::EvidenceWindowClosed);
+}
+
+#[test]
+fn test_oversized_evidence_is_rejected() {
+    let (env, admin, escrow, config, _token) = create_test_env();
+    let initiator = Address::generate(&env);
+    let submitter = Address::generate(&env);
+    env.mock_all_auths();
+    let arbiter = env.register_contract(None, DisputeArbiter);
+    let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
+    let big = Bytes::from_slice(&env, &[7u8; 1025]);
+    let result = client.try_submit_evidence(&commission_id, &submitter, &big);
+    assert_eq!(result.unwrap_err().unwrap(), DisputeError::EvidenceTooLong);
+}
+
+#[test]
+fn test_auto_resolve_fires_at_exactly_the_deadline() {
+    let (env, admin, escrow, config, _token) = create_test_env();
+    let initiator = Address::generate(&env);
+    env.mock_all_auths();
+    let arbiter = env.register_contract(None, DisputeArbiter);
+    let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+
+    let commission_id = Bytes::from_array(&env, &[1u8, 2, 3]);
+    client.open_dispute(&commission_id, &initiator);
+    env.ledger().with_mut(|l| l.sequence_number = 100);
+    client.auto_resolve(&commission_id);
+    assert_eq!(client.get_dispute(&commission_id).status, DisputeStatus::AutoResolved);
+}
+
+#[test]
+fn test_set_dispute_ttl_ledgers_bounds_and_persists() {
+    let (env, admin, escrow, config, _token) = create_test_env();
+    env.mock_all_auths();
+    let arbiter = env.register_contract(None, DisputeArbiter);
+    let client = DisputeArbiterClient::new(&env, &arbiter);
+    client.initialize(&admin, &escrow, &config, &100u32);
+
+    client.set_dispute_ttl_ledgers(&admin, &500u32);
+    assert_eq!(client.get_dispute_ttl_ledgers(), 500);
+
+    for bad in [0u32, shared::dispute::MAX_DISPUTE_TTL_LEDGERS + 1] {
+        let result = client.try_set_dispute_ttl_ledgers(&admin, &bad);
+        assert_eq!(result.unwrap_err().unwrap(), DisputeError::InvalidTtl);
+    }
 }

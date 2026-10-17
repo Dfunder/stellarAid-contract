@@ -328,6 +328,8 @@ fn test_released_amount_starts_at_zero() {
     let _ = EscrowContract;
     let initial_released: i128 = 0;
     assert_eq!(initial_released, 0, "new escrow has no released amount");
+}
+
 #[test]
 fn test_get_version_after_initialize() {
     use soroban_sdk::testutils::Address as _;

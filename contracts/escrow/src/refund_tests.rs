@@ -1,8 +1,6 @@
 //! Integration tests for the happy path: create → refund.
 //! Closes #489.
 
-#![cfg(test)]
-
 use soroban_sdk::Env;
 use crate::{EscrowContract, storage::CommissionStatus, errors::EscrowError};
 

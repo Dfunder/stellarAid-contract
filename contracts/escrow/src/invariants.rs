@@ -72,7 +72,7 @@ impl From<InvariantError> for EscrowError {
             InvariantError::ReleasedExceedsAmount => EscrowError::BalanceMismatch,
             InvariantError::BalanceMismatch => EscrowError::BalanceMismatch,
             InvariantError::ReleasedIsNegative => EscrowError::InvalidAmount,
-            InvariantError::InvalidStateTransition => EscrowError::InvalidStatus,
+            InvariantError::InvalidStateTransition => EscrowError::InvalidStateTransition,
             InvariantError::EscrowAmountMismatch => EscrowError::CrossContractConsistencyFailed,
             InvariantError::AgreementMismatch => EscrowError::CrossContractConsistencyFailed,
         }
@@ -348,19 +348,20 @@ pub fn validate_state_consistency(
     }
 
     // When fully released, released_amount must equal amount.
-    if after.status == CommissionStatus::Released && after.status != before.status {
-        if after.released_amount != after.amount {
-            return Err(InvariantError::BalanceMismatch);
-        }
+    if after.status == CommissionStatus::Released
+        && after.status != before.status
+        && after.released_amount != after.amount
+    {
+        return Err(InvariantError::BalanceMismatch);
     }
 
     // When cancelled or refunded, no further releases should occur.
-    if matches!(after.status, CommissionStatus::Cancelled | CommissionStatus::Refunded) {
-        if after.released_amount > before.released_amount {
-            // Allow cancellation/refund to carry through the same released amount,
-            // but not increase it.
-            return Err(InvariantError::InvalidStateTransition);
-        }
+    if matches!(after.status, CommissionStatus::Cancelled | CommissionStatus::Refunded)
+        && after.released_amount > before.released_amount
+    {
+        // Allow cancellation/refund to carry through the same released amount,
+        // but not increase it.
+        return Err(InvariantError::InvalidStateTransition);
     }
 
     Ok(())
@@ -418,13 +419,14 @@ pub fn verify_all(
 mod tests {
     use super::*;
     use crate::storage::CommissionStatus;
+    use soroban_sdk::testutils::Address as _;
     use soroban_sdk::BytesN;
 
-    fn make_record(amount: i128, released: i128, status: CommissionStatus) -> EscrowRecord {
+    fn make_record(env: &Env, amount: i128, released: i128, status: CommissionStatus) -> EscrowRecord {
         EscrowRecord {
-            commission_id: Bytes::from_slice(&Env::default(), b"test-id"),
-            client: Address::generate(&Env::default()),
-            artist: Address::generate(&Env::default()),
+            commission_id: Bytes::from_slice(env, b"test-id"),
+            client: Address::generate(env),
+            artist: Address::generate(env),
             amount,
             fee_bps: 500,
             status,
@@ -433,41 +435,55 @@ mod tests {
         }
     }
 
+    fn with_contract<F, R>(f: F) -> R
+    where
+        F: FnOnce(&Env) -> R,
+    {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, crate::EscrowContract);
+        env.as_contract(&contract_id, || f(&env))
+    }
+
     #[test]
     fn balanced_record_passes_check() {
-        let env = Env::default();
-        let r = make_record(100_000, 30_000, CommissionStatus::PartiallyReleased);
-        assert!(verify_balance_consistency(&env, &r).is_ok());
+        with_contract(|env| {
+            let r = make_record(env, 100_000, 30_000, CommissionStatus::PartiallyReleased);
+            assert!(verify_balance_consistency(env, &r).is_ok());
+        });
     }
 
     #[test]
     fn fully_released_passes() {
-        let env = Env::default();
-        let r = make_record(100_000, 100_000, CommissionStatus::Released);
-        assert!(verify_balance_consistency(&env, &r).is_ok());
+        with_contract(|env| {
+            let r = make_record(env, 100_000, 100_000, CommissionStatus::Released);
+            assert!(verify_balance_consistency(env, &r).is_ok());
+        });
     }
 
     #[test]
     fn over_release_is_rejected() {
-        let env = Env::default();
-        let r = make_record(100_000, 101_000, CommissionStatus::Released);
-        let err = verify_balance_consistency(&env, &r).unwrap_err();
-        assert_eq!(err, InvariantError::ReleasedExceedsAmount);
+        with_contract(|env| {
+            let r = make_record(env, 100_000, 101_000, CommissionStatus::Released);
+            let err = verify_balance_consistency(env, &r).unwrap_err();
+            assert_eq!(err, InvariantError::ReleasedExceedsAmount);
+        });
     }
 
     #[test]
     fn negative_release_is_rejected() {
-        let env = Env::default();
-        let r = make_record(100_000, -1, CommissionStatus::Locked);
-        let err = verify_balance_consistency(&env, &r).unwrap_err();
-        assert_eq!(err, InvariantError::ReleasedIsNegative);
+        with_contract(|env| {
+            let r = make_record(env, 100_000, -1, CommissionStatus::Locked);
+            let err = verify_balance_consistency(env, &r).unwrap_err();
+            assert_eq!(err, InvariantError::ReleasedIsNegative);
+        });
     }
 
     #[test]
     fn zero_amount_with_zero_released_passes() {
-        let env = Env::default();
-        let r = make_record(0, 0, CommissionStatus::Released);
-        assert!(verify_balance_consistency(&env, &r).is_ok());
+        with_contract(|env| {
+            let r = make_record(env, 0, 0, CommissionStatus::Released);
+            assert!(verify_balance_consistency(env, &r).is_ok());
+        });
     }
 
     #[test]
@@ -512,11 +528,12 @@ mod tests {
 
     #[test]
     fn fully_released_requires_released_equals_amount() {
-        let env = Env::default();
-        let before = make_record(100_000, 0, CommissionStatus::Locked);
-        let after = make_record(100_000, 99_999, CommissionStatus::Released);
-        let err = validate_state_consistency(&env, &before, &after).unwrap_err();
-        assert_eq!(err, InvariantError::BalanceMismatch);
+        with_contract(|env| {
+            let before = make_record(env, 100_000, 0, CommissionStatus::Locked);
+            let after = make_record(env, 100_000, 99_999, CommissionStatus::Released);
+            let err = validate_state_consistency(env, &before, &after).unwrap_err();
+            assert_eq!(err, InvariantError::BalanceMismatch);
+        });
     }
 
     #[test]
@@ -553,11 +570,12 @@ mod tests {
 
     #[test]
     fn released_equals_amount_passes_for_zero_balance() {
-        let env = Env::default();
-        let r = make_record(0, 0, CommissionStatus::Locked);
-        assert_eq!(r.amount, 0);
-        assert_eq!(r.released_amount, 0);
-        assert!(verify_balance_consistency(&env, &r).is_ok());
+        with_contract(|env| {
+            let r = make_record(env, 0, 0, CommissionStatus::Locked);
+            assert_eq!(r.amount, 0);
+            assert_eq!(r.released_amount, 0);
+            assert!(verify_balance_consistency(env, &r).is_ok());
+        });
     }
 
     #[test]

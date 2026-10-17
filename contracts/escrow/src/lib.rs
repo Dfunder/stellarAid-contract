@@ -689,7 +689,10 @@ impl EscrowContract {
         // CHECKS
         shared::circuit_breaker::require_not_halted(&env)?;
         let mut r = get_escrow(&env, &commission_id);
-        if r.status != CommissionStatus::Locked && r.status != CommissionStatus::PartiallyReleased {
+        if r.status != CommissionStatus::Locked
+            && r.status != CommissionStatus::Disputed
+            && r.status != CommissionStatus::PartiallyReleased
+        {
             return Err(EscrowError::InvalidStatus);
         }
         if artist_amount < 0 || client_refund < 0 {

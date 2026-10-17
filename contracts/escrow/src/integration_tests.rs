@@ -84,7 +84,7 @@ fn test_error_discriminants_unique() {
         EscrowError::InsufficientBalance as u32,
     ];
     vals.sort();
-    for i in 0..vals.len() {
-        assert_eq!(vals[i], (i + 1) as u32, "discriminant {} must be unique", i + 1);
+    for (i, &val) in vals.iter().enumerate() {
+        assert_eq!(val, (i + 1) as u32, "discriminant {} must be unique", i + 1);
     }
 }

@@ -1,8 +1,8 @@
 extern crate std;
-use soroban_sdk::Env;
+use crate::errors::EscrowError;
 use crate::invariants;
 use crate::storage::{CommissionStatus, EscrowRecord};
-use crate::errors::EscrowError;
+use soroban_sdk::{testutils::Address as _, Env};
 
 fn make_record(env: &Env, amount: i128, released: i128, status: CommissionStatus) -> EscrowRecord {
     EscrowRecord {
@@ -20,8 +20,11 @@ fn make_record(env: &Env, amount: i128, released: i128, status: CommissionStatus
 #[test]
 fn balance_consistency_passes_for_normal_record() {
     let env = Env::default();
-    let r = make_record(&env, 100_000, 30_000, CommissionStatus::PartiallyReleased);
-    assert!(invariants::verify_balance_consistency(&env, &r).is_ok());
+    let contract_id = env.register_contract(None, crate::EscrowContract);
+    env.as_contract(&contract_id, || {
+        let r = make_record(&env, 100_000, 30_000, CommissionStatus::PartiallyReleased);
+        assert!(invariants::verify_balance_consistency(&env, &r).is_ok());
+    });
 }
 
 #[test]

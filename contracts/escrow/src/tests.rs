@@ -21,6 +21,30 @@ fn test_commission_status_values() {
     assert_eq!(CommissionStatus::Refunded as u32, 2);
     assert_eq!(CommissionStatus::Disputed as u32, 3);
     assert_eq!(CommissionStatus::Expired as u32, 4);
+    assert_eq!(CommissionStatus::PartiallyReleased as u32, 5);
+    assert_eq!(CommissionStatus::Cancelled as u32, 6);
+}
+
+#[test]
+fn test_commission_status_discriminants_are_unique() {
+    let discriminants = [
+        CommissionStatus::Locked as u32,
+        CommissionStatus::Released as u32,
+        CommissionStatus::Refunded as u32,
+        CommissionStatus::Disputed as u32,
+        CommissionStatus::Expired as u32,
+        CommissionStatus::PartiallyReleased as u32,
+        CommissionStatus::Cancelled as u32,
+    ];
+    for i in 0..discriminants.len() {
+        for j in (i + 1)..discriminants.len() {
+            assert_ne!(
+                discriminants[i], discriminants[j],
+                "duplicate discriminant detected between variant index {} and {}",
+                i, j
+            );
+        }
+    }
 }
 
 #[test]
@@ -328,6 +352,8 @@ fn test_released_amount_starts_at_zero() {
     let _ = EscrowContract;
     let initial_released: i128 = 0;
     assert_eq!(initial_released, 0, "new escrow has no released amount");
+}
+
 #[test]
 fn test_get_version_after_initialize() {
     use soroban_sdk::testutils::Address as _;

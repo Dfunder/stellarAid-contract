@@ -137,6 +137,7 @@ mod tests {
     #[test]
     fn delay_calculation_backs_off() {
         let config = RetryConfig {
+            max_attempts: 5,
             base_delay_ms: 100,
             max_delay_ms: 10_000,
             backoff_factor: 2.0,
@@ -151,6 +152,7 @@ mod tests {
     #[test]
     fn delay_capped_at_max() {
         let config = RetryConfig {
+            max_attempts: 5,
             base_delay_ms: 1000,
             max_delay_ms: 2500,
             backoff_factor: 2.0,
@@ -165,6 +167,7 @@ mod tests {
     #[test]
     fn jitter_adds_variation() {
         let config = RetryConfig {
+            max_attempts: 5,
             base_delay_ms: 100,
             max_delay_ms: 500,
             backoff_factor: 1.0,

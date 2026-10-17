@@ -11,6 +11,7 @@ pub mod rollout;
 pub mod correlation;
 pub mod circuit_breaker;
 pub mod pagination;
+pub mod initialization;
 
 pub use health::{
     AlertConfig, HealthMetrics, HealthReport, HealthStatus, SlaTargets,

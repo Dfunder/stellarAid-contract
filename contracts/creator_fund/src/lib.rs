@@ -23,11 +23,7 @@ fn has_admin(env: &Env) -> bool {
 }
 
 fn require_initialized(env: &Env) -> Result<(), FundError> {
-    if has_admin(env) {
-        Ok(())
-    } else {
-        Err(FundError::NotInitialized)
-    }
+    shared::initialization::require_initialized(env, &DataKey::Admin, FundError::NotInitialized)
 }
 
 fn load_fund(env: &Env, fund_id: &Bytes) -> Result<Fund, FundError> {

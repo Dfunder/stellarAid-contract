@@ -276,6 +276,8 @@ impl EscrowContract {
         shared::circuit_breaker::require_not_halted(&env)?;
         if amount <= 0 { return Err(EscrowError::InvalidAmount); }
         if escrow_exists(&env, &commission_id) { return Err(EscrowError::AlreadyExists); }
+        // Self-dealing guard (#801): a client must not escrow funds to themselves.
+        if client == artist { return Err(EscrowError::InvalidAddress); }
 
         let fee_bps: u32 = env.invoke_contract(
             &config_contract, &symbol_short!("get_fee_b"), soroban_sdk::vec![&env],

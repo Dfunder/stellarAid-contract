@@ -60,7 +60,9 @@ impl core::fmt::Display for InvariantError {
             Self::BalanceMismatch => write!(f, "balance mismatch: released + remaining != amount"),
             Self::ReleasedIsNegative => write!(f, "released amount is negative"),
             Self::InvalidStateTransition => write!(f, "invalid status transition"),
-            Self::EscrowAmountMismatch => write!(f, "escrow amount does not match commission agreement"),
+            Self::EscrowAmountMismatch => {
+                write!(f, "escrow amount does not match commission agreement")
+            }
             Self::AgreementMismatch => write!(f, "commission agreement mismatch"),
         }
     }
@@ -82,11 +84,21 @@ impl From<InvariantError> for EscrowError {
 impl From<shared::circuit_breaker::CircuitBreakerError> for EscrowError {
     fn from(e: shared::circuit_breaker::CircuitBreakerError) -> Self {
         match e {
-            shared::circuit_breaker::CircuitBreakerError::Halted => EscrowError::CircuitBreakerTripped,
-            shared::circuit_breaker::CircuitBreakerError::AlreadyHalted => EscrowError::CircuitBreakerTripped,
-            shared::circuit_breaker::CircuitBreakerError::NotHalted => EscrowError::CircuitBreakerTripped,
-            shared::circuit_breaker::CircuitBreakerError::RecoveryPending => EscrowError::CircuitBreakerTripped,
-            shared::circuit_breaker::CircuitBreakerError::InvalidThreshold => EscrowError::InvalidStatus,
+            shared::circuit_breaker::CircuitBreakerError::Halted => {
+                EscrowError::CircuitBreakerTripped
+            }
+            shared::circuit_breaker::CircuitBreakerError::AlreadyHalted => {
+                EscrowError::CircuitBreakerTripped
+            }
+            shared::circuit_breaker::CircuitBreakerError::NotHalted => {
+                EscrowError::CircuitBreakerTripped
+            }
+            shared::circuit_breaker::CircuitBreakerError::RecoveryPending => {
+                EscrowError::CircuitBreakerTripped
+            }
+            shared::circuit_breaker::CircuitBreakerError::InvalidThreshold => {
+                EscrowError::InvalidStatus
+            }
             shared::circuit_breaker::CircuitBreakerError::InsufficientSamples => {
                 EscrowError::CircuitBreakerTripped
             }
@@ -135,10 +147,7 @@ const BPS_DENOM: i128 = 10_000;
 /// This is a pure check: it reads no token-contract balance. Token-level
 /// balance verification is performed separately by
 /// [`verify_contract_balance`].
-pub fn verify_balance_consistency(
-    env: &Env,
-    record: &EscrowRecord,
-) -> Result<(), InvariantError> {
+pub fn verify_balance_consistency(env: &Env, record: &EscrowRecord) -> Result<(), InvariantError> {
     if record.released_amount < 0 {
         env.events().publish(
             (symbol_short!("inv"), symbol_short!("viol")),
@@ -343,7 +352,7 @@ pub fn validate_state_consistency(
                 actual: after.status as u32 as i128,
                 ledger: env.ledger().sequence(),
             },
-            );
+        );
         return Err(InvariantError::InvalidStateTransition);
     }
 
@@ -409,7 +418,8 @@ pub fn verify_all(
     }
 
     if let Some(comm) = commission_contract {
-        verify_escrow_amount(env, comm, &record.commission_id, record).map_err(EscrowError::from)?;
+        verify_escrow_amount(env, comm, &record.commission_id, record)
+            .map_err(EscrowError::from)?;
     }
 
     Ok(())

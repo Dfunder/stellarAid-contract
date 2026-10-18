@@ -20,11 +20,7 @@ fn has_admin(env: &Env) -> bool {
 }
 
 fn require_initialized(env: &Env) -> Result<(), RecruitmentError> {
-    if has_admin(env) {
-        Ok(())
-    } else {
-        Err(RecruitmentError::NotInitialized)
-    }
+    shared::initialization::require_initialized(env, &DataKey::Admin, RecruitmentError::NotInitialized)
 }
 
 fn load_job(env: &Env, job_id: &Bytes) -> Result<Job, RecruitmentError> {

@@ -57,10 +57,10 @@ docker-test:
 # ── Deployment pipeline (closes #708, #888) ─────────────────────────────────
 # ── Supply-chain (closes #879, #880) ──────────────────────────────────────
 deny:
-	CARGO_HOME=${CARGO_HOME:-/var/folders/st/r29n457x5r5dpnxqr7xz5hbc0000gn/T/opencode/cargo-home} PATH="${CARGO_HOME}/bin:${PATH}" cargo deny check
+	cargo deny check
 
 audit:
-	CARGO_HOME=${CARGO_HOME:-/var/folders/st/r29n457x5r5dpnxqr7xz5hbc0000gn/T/opencode/cargo-home} PATH="${CARGO_HOME}/bin:${PATH}" cargo audit
+	cargo audit
 
 # ── Deployment pipeline (closes #708) ─────────────────────────────────────
 # Wrappers around scripts/deploy/. These read credentials from the
@@ -122,5 +122,4 @@ validate-cross-contract:
 clean:
 	cargo clean
 
-.PHONY: build test bench bench-report fmt lint deploy-testnet clean validate validate-testnet validate-config validate-contracts validate-operations validate-cross-contract docker-build docker-test preflight preflight-env deploy-dry-run deploy-verify deploy-mainnet
-.PHONY: build test bench bench-report fmt lint deny audit deploy-testnet clean validate validate-testnet validate-config validate-contracts validate-operations validate-cross-contract docker-build docker-test preflight deploy-dry-run deploy-verify deploy-mainnet
+.PHONY: build test bench bench-report fmt lint deny audit deploy-testnet clean validate validate-testnet validate-config validate-contracts validate-operations validate-cross-contract docker-build docker-test preflight preflight-env deploy-dry-run deploy-verify deploy-mainnet

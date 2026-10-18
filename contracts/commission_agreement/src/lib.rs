@@ -209,50 +209,8 @@ impl CommissionAgreementContract {
     ) -> Result<(), AgreementError> {
         client.require_auth();
 
-        // ── Rate limiting for commission creation (closes #710) ─────────────
-        // Check rate limit for commission creation per artist if configured
-        if let Some(rate_limiter_contract) = env.storage().instance().get::<_, Address>(&DataKey::RateLimiter) {
-            env.invoke_contract::<()>(
-                &rate_limiter_contract,
-                &Symbol::new(&env, "check_rate_limit"),
-                soroban_sdk::vec![
-                    &env,
-                    types::RateLimitKey::CommissionsPerArtist.into_val(&env),
-                    artist.clone().into_val(&env),
-                ],
-            );
-        }
-
-        // ── Input length validation (closes #591) ──────────────────────────
-        if commission_id.is_empty() {
-            return Err(AgreementError::EmptyCommissionId);
-        }
-        if commission_id.len() > MAX_ID_LEN {
-            return Err(AgreementError::InputTooLong);
-        }
-        if title.len() > MAX_TITLE_LEN {
-            return Err(AgreementError::InputTooLong);
-        }
-        if client == artist {
-            return Err(AgreementError::SelfDealing);
-        }
-
-        if budget_usdc <= 0 {
-            return Err(AgreementError::InvalidAmount);
-        }
-        if deadline_ledger <= env.ledger().sequence() {
-            return Err(AgreementError::DeadlineInPast);
-        }
-        // ── Deadline upper bound (closes #592) ─────────────────────────────
-        let max_deadline = env.ledger().sequence()
-            .checked_add(MAX_DEADLINE_OFFSET_LEDGERS)
-            .ok_or(AgreementError::ArithmeticOverflow)?;
-        if deadline_ledger > max_deadline {
-            return Err(AgreementError::DeadlineTooFar);
-        }
-        if env.storage().persistent().has(&DataKey::Agreement(commission_id.clone())) {
-            return Err(AgreementError::AlreadyExists);
-        }
+        check_creation_rate_limit(&env, &artist);
+        validate_agreement_inputs(&env, &commission_id, &client, &artist, &title, budget_usdc, deadline_ledger)?;
 
         let record = AgreementRecord {
             commission_id: commission_id.clone(),
@@ -265,8 +223,7 @@ impl CommissionAgreementContract {
             created_ledger: env.ledger().sequence(),
         };
 
-        env.storage().persistent().set(&DataKey::Agreement(commission_id.clone()), &record);
-        env.storage().persistent().set(&DataKey::MilestonesForAgreement(commission_id.clone()), &Vec::<MilestoneRecord>::new(&env));
+        store_new_agreement(&env, &commission_id, &record);
 
         attribute_commission(&env, &artist, budget_usdc);
 
@@ -340,13 +297,7 @@ impl CommissionAgreementContract {
         title: String,
         amount_usdc: i128,
     ) -> Result<(), AgreementError> {
-        // ── Input length validation (closes #591) ──────────────────────────
-        if milestone_id.len() > MAX_ID_LEN {
-            return Err(AgreementError::InputTooLong);
-        }
-        if title.len() > MAX_MILESTONE_TITLE_LEN {
-            return Err(AgreementError::InputTooLong);
-        }
+        validate_milestone_lengths(&milestone_id, &title)?;
 
         let record: AgreementRecord = env.storage().persistent()
             .get(&DataKey::Agreement(commission_id.clone()))
@@ -361,14 +312,8 @@ impl CommissionAgreementContract {
             return Err(AgreementError::InvalidAmount);
         }
 
-        let milestones: Vec<MilestoneRecord> = env.storage().persistent()
-            .get(&DataKey::MilestonesForAgreement(commission_id.clone()))
-            .unwrap_or(Vec::new(&env));
-
-        let total: i128 = milestones.iter().map(|m| m.amount_usdc).sum();
-        if total + amount_usdc > record.budget_usdc {
-            return Err(AgreementError::MilestoneBudgetExceeded);
-        }
+        let milestones = load_milestones(&env, &commission_id);
+        check_milestone_budget(&milestones, amount_usdc, record.budget_usdc)?;
 
         let milestone = MilestoneRecord {
             milestone_id: milestone_id.clone(),
@@ -378,10 +323,7 @@ impl CommissionAgreementContract {
             status: MilestoneStatus::Pending,
         };
 
-        env.storage().persistent().set(&DataKey::Milestone(commission_id.clone(), milestone_id.clone()), &milestone);
-        let mut updated = milestones;
-        updated.push_back(milestone);
-        env.storage().persistent().set(&DataKey::MilestonesForAgreement(commission_id.clone()), &updated);
+        store_new_milestone(&env, &commission_id, &milestone_id, milestone, milestones);
 
         env.events().publish(
             (symbol_short!("ms_prop"), symbol_short!("ms_new")),
@@ -405,11 +347,7 @@ impl CommissionAgreementContract {
         // Acquire the lock before reading the milestone status.  Any concurrent
         // call (e.g. a simultaneous approve + reject) will find the lock set and
         // return `MilestoneLocked`, preventing inconsistent state.
-        let lock_key = DataKey::MilestoneLock(commission_id.clone(), milestone_id.clone());
-        if env.storage().persistent().has(&lock_key) {
-            return Err(AgreementError::MilestoneLocked);
-        }
-        env.storage().persistent().set(&lock_key, &true);
+        let lock_key = acquire_milestone_lock(&env, &commission_id, &milestone_id)?;
 
         let mut milestone: MilestoneRecord = env.storage().persistent()
             .get(&DataKey::Milestone(commission_id.clone(), milestone_id.clone()))
@@ -424,21 +362,7 @@ impl CommissionAgreementContract {
         // EFFECTS: update milestone status
         milestone.status = MilestoneStatus::Approved;
         env.storage().persistent().set(&DataKey::Milestone(commission_id.clone(), milestone_id.clone()), &milestone);
-
-        // Update the milestone list in-place so the all_approved check is accurate (closes #589).
-        let milestones: Vec<MilestoneRecord> = env.storage().persistent()
-            .get(&DataKey::MilestonesForAgreement(commission_id.clone()))
-            .unwrap_or(Vec::new(&env));
-
-        let mut updated_milestones = Vec::new(&env);
-        for m in milestones.iter() {
-            if m.milestone_id == milestone_id {
-                updated_milestones.push_back(milestone.clone());
-            } else {
-                updated_milestones.push_back(m);
-            }
-        }
-        env.storage().persistent().set(&DataKey::MilestonesForAgreement(commission_id.clone()), &updated_milestones);
+        let updated_milestones = replace_milestone(&env, &commission_id, &milestone_id, &milestone);
 
         // Check whether all milestones are now approved using the updated list.
         let all_approved = !updated_milestones.is_empty()
@@ -1264,43 +1188,16 @@ impl CommissionAgreementContract {
         }
 
         let mut analytics = load_analytics(&env, &agency);
-        let mut total_gross: i128 = 0;
 
         // Effects first: every roster entry and the analytics roll-up are
         // committed before any token leaves the agency.
-        let mut nets: Vec<i128> = Vec::new(&env);
-        for payment in payments.iter() {
-            let mut entry = load_roster_entry(&env, &agency, &payment.artist)?;
-            let (agency_cut, artist_net) =
-                agency::split_payment(payment.gross_usdc, entry.split_bps)?;
-
-            entry.gross_distributed += payment.gross_usdc;
-            entry.agency_revenue += agency_cut;
-            entry.artist_payouts += artist_net;
-            env.storage().persistent().set(
-                &DataKey::RosterEntry(agency.clone(), payment.artist.clone()),
-                &entry,
-            );
-
-            total_gross = total_gross
-                .checked_add(payment.gross_usdc)
-                .ok_or(AgreementError::ArithmeticOverflow)?;
-            analytics.agency_revenue += agency_cut;
-            analytics.artist_payouts += artist_net;
-            nets.push_back(artist_net);
-        }
+        let (nets, total_gross) = apply_batch_effects(&env, &agency, &payments, &mut analytics)?;
 
         analytics.batches += 1;
         analytics.gross_distributed += total_gross;
         save_analytics(&env, &agency, &analytics);
 
-        let token_client = token::Client::new(&env, &token_address);
-        for (i, payment) in payments.iter().enumerate() {
-            let net = nets.get(i as u32).unwrap();
-            if net > 0 {
-                token_client.transfer(&agency, &payment.artist, &net);
-            }
-        }
+        transfer_batch(&env, &token_address, &agency, &payments, &nets);
 
         env.events().publish(
             (symbol_short!("agy_batch"),),
@@ -1440,3 +1337,184 @@ impl CommissionAgreementContract {
 }
 #[cfg(all(test, feature = "legacy_tests"))]
 mod integration_tests;
+
+// ── Helpers extracted from large contract functions ─────────────────────────
+
+fn check_creation_rate_limit(env: &Env, artist: &Address) {
+    // Rate limiting for commission creation (closes #710)
+    if let Some(rate_limiter_contract) = env.storage().instance().get::<_, Address>(&DataKey::RateLimiter) {
+        env.invoke_contract::<()>(
+            &rate_limiter_contract,
+            &Symbol::new(env, "check_rate_limit"),
+            soroban_sdk::vec![
+                env,
+                types::RateLimitKey::CommissionsPerArtist.into_val(env),
+                artist.clone().into_val(env),
+            ],
+        );
+    }
+}
+
+fn validate_agreement_inputs(
+    env: &Env,
+    commission_id: &Bytes,
+    client: &Address,
+    artist: &Address,
+    title: &String,
+    budget_usdc: i128,
+    deadline_ledger: u32,
+) -> Result<(), AgreementError> {
+    // Input length validation (closes #591)
+    if commission_id.is_empty() {
+        return Err(AgreementError::EmptyCommissionId);
+    }
+    if commission_id.len() > MAX_ID_LEN || title.len() > MAX_TITLE_LEN {
+        return Err(AgreementError::InputTooLong);
+    }
+    if client == artist {
+        return Err(AgreementError::SelfDealing);
+    }
+    if budget_usdc <= 0 {
+        return Err(AgreementError::InvalidAmount);
+    }
+    if deadline_ledger <= env.ledger().sequence() {
+        return Err(AgreementError::DeadlineInPast);
+    }
+    // Deadline upper bound (closes #592)
+    let max_deadline = env.ledger().sequence()
+        .checked_add(MAX_DEADLINE_OFFSET_LEDGERS)
+        .ok_or(AgreementError::ArithmeticOverflow)?;
+    if deadline_ledger > max_deadline {
+        return Err(AgreementError::DeadlineTooFar);
+    }
+    if env.storage().persistent().has(&DataKey::Agreement(commission_id.clone())) {
+        return Err(AgreementError::AlreadyExists);
+    }
+    Ok(())
+}
+
+fn store_new_agreement(env: &Env, commission_id: &Bytes, record: &AgreementRecord) {
+    env.storage().persistent().set(&DataKey::Agreement(commission_id.clone()), record);
+    env.storage().persistent().set(
+        &DataKey::MilestonesForAgreement(commission_id.clone()),
+        &Vec::<MilestoneRecord>::new(env),
+    );
+}
+
+fn validate_milestone_lengths(milestone_id: &Bytes, title: &String) -> Result<(), AgreementError> {
+    // Input length validation (closes #591)
+    if milestone_id.len() > MAX_ID_LEN || title.len() > MAX_MILESTONE_TITLE_LEN {
+        return Err(AgreementError::InputTooLong);
+    }
+    Ok(())
+}
+
+fn load_milestones(env: &Env, commission_id: &Bytes) -> Vec<MilestoneRecord> {
+    env.storage().persistent()
+        .get(&DataKey::MilestonesForAgreement(commission_id.clone()))
+        .unwrap_or(Vec::new(env))
+}
+
+fn check_milestone_budget(
+    milestones: &Vec<MilestoneRecord>,
+    amount_usdc: i128,
+    budget_usdc: i128,
+) -> Result<(), AgreementError> {
+    let total: i128 = milestones.iter().map(|m| m.amount_usdc).sum();
+    if total + amount_usdc > budget_usdc {
+        return Err(AgreementError::MilestoneBudgetExceeded);
+    }
+    Ok(())
+}
+
+fn store_new_milestone(
+    env: &Env,
+    commission_id: &Bytes,
+    milestone_id: &Bytes,
+    milestone: MilestoneRecord,
+    mut milestones: Vec<MilestoneRecord>,
+) {
+    env.storage().persistent().set(&DataKey::Milestone(commission_id.clone(), milestone_id.clone()), &milestone);
+    milestones.push_back(milestone);
+    env.storage().persistent().set(&DataKey::MilestonesForAgreement(commission_id.clone()), &milestones);
+}
+
+/// Serialization lock for milestone state transitions (closes #589).
+fn acquire_milestone_lock(
+    env: &Env,
+    commission_id: &Bytes,
+    milestone_id: &Bytes,
+) -> Result<DataKey, AgreementError> {
+    let lock_key = DataKey::MilestoneLock(commission_id.clone(), milestone_id.clone());
+    if env.storage().persistent().has(&lock_key) {
+        return Err(AgreementError::MilestoneLocked);
+    }
+    env.storage().persistent().set(&lock_key, &true);
+    Ok(lock_key)
+}
+
+/// Replace one milestone in the agreement's list and persist it (closes #589).
+fn replace_milestone(
+    env: &Env,
+    commission_id: &Bytes,
+    milestone_id: &Bytes,
+    milestone: &MilestoneRecord,
+) -> Vec<MilestoneRecord> {
+    let mut updated = Vec::new(env);
+    for m in load_milestones(env, commission_id).iter() {
+        if &m.milestone_id == milestone_id {
+            updated.push_back(milestone.clone());
+        } else {
+            updated.push_back(m);
+        }
+    }
+    env.storage().persistent().set(&DataKey::MilestonesForAgreement(commission_id.clone()), &updated);
+    updated
+}
+
+/// Commit roster entries and accumulate analytics; returns (net payouts, total gross).
+fn apply_batch_effects(
+    env: &Env,
+    agency: &Address,
+    payments: &Vec<BatchPayment>,
+    analytics: &mut AgencyAnalytics,
+) -> Result<(Vec<i128>, i128), AgreementError> {
+    let mut total_gross: i128 = 0;
+    let mut nets: Vec<i128> = Vec::new(env);
+    for payment in payments.iter() {
+        let mut entry = load_roster_entry(env, agency, &payment.artist)?;
+        let (agency_cut, artist_net) = agency::split_payment(payment.gross_usdc, entry.split_bps)?;
+
+        entry.gross_distributed += payment.gross_usdc;
+        entry.agency_revenue += agency_cut;
+        entry.artist_payouts += artist_net;
+        env.storage().persistent().set(
+            &DataKey::RosterEntry(agency.clone(), payment.artist.clone()),
+            &entry,
+        );
+
+        total_gross = total_gross
+            .checked_add(payment.gross_usdc)
+            .ok_or(AgreementError::ArithmeticOverflow)?;
+        analytics.agency_revenue += agency_cut;
+        analytics.artist_payouts += artist_net;
+        nets.push_back(artist_net);
+    }
+    Ok((nets, total_gross))
+}
+
+fn transfer_batch(
+    env: &Env,
+    token_address: &Address,
+    agency: &Address,
+    payments: &Vec<BatchPayment>,
+    nets: &Vec<i128>,
+) {
+    let token_client = token::Client::new(env, token_address);
+    for (i, payment) in payments.iter().enumerate() {
+        let net = nets.get(i as u32).unwrap();
+        if net > 0 {
+            token_client.transfer(agency, &payment.artist, &net);
+        }
+    }
+}

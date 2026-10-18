@@ -195,6 +195,8 @@ impl CommissionAgreementContract {
     /// - [`AgreementError::DeadlineInPast`] if `deadline_ledger <= current sequence`
     /// - [`AgreementError::DeadlineTooFar`] if `deadline_ledger > current + MAX_DEADLINE_OFFSET_LEDGERS`
     /// - [`AgreementError::InputTooLong`] if `title` or `commission_id` exceeds limits
+    /// - [`AgreementError::EmptyCommissionId`] if `commission_id` is empty
+    /// - [`AgreementError::SelfDealing`] if `client == artist`
     /// - [`AgreementError::AlreadyExists`] if an agreement with the same `commission_id` exists
     pub fn create_agreement(
         env: Env,
@@ -222,11 +224,17 @@ impl CommissionAgreementContract {
         }
 
         // ── Input length validation (closes #591) ──────────────────────────
+        if commission_id.is_empty() {
+            return Err(AgreementError::EmptyCommissionId);
+        }
         if commission_id.len() > MAX_ID_LEN {
             return Err(AgreementError::InputTooLong);
         }
         if title.len() > MAX_TITLE_LEN {
             return Err(AgreementError::InputTooLong);
+        }
+        if client == artist {
+            return Err(AgreementError::SelfDealing);
         }
 
         if budget_usdc <= 0 {

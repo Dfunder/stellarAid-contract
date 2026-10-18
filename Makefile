@@ -4,13 +4,39 @@ build:
 test:
 	cargo test
 
-# Run the full benchmark suite (closes #996).
+# Run the benchmark suite (closes #996, #997).
 # Uses --no-fail-fast so one broken benchmark does not hide the others.
 # Results are printed to stdout; CI captures them into the job summary.
 # Wall-clock numbers are informational only — not portable across hardware.
 # Deterministic event-budget enforcement runs under `make test`.
+#
+# Benchmarks are per-crate and slow. Pass CONTRACT to run one:
+#   make bench                       # every benchmark in the workspace
+#   make bench CONTRACT=escrow       # only the escrow crate's benches
+# Benchmarks can take many minutes; see docs/BENCHMARK_RESULTS.md §8 for the
+# full reproduction steps, toolchain/SDK versions and result-affecting env vars.
+CONTRACT ?=
 bench:
-	cargo bench --workspace --no-fail-fast
+	cargo bench $(if $(CONTRACT),-p $(CONTRACT),--workspace) --no-fail-fast
+
+# Reproduce the published numbers in the shape docs/BENCHMARK_RESULTS.md
+# presents them (closes #997). Runs the four `harness = false` benches that
+# the document records, one after the other, with the same pinned toolchain
+# and SDK the numbers were produced with. `commission_agreement` is omitted
+# because the crate does not compile on `main` (see §6 of the document).
+#
+# This is the "re-run and re-record" command: capture stdout, then update the
+# tables in docs/BENCHMARK_RESULTS.md. Do not compare wall-clock numbers
+# across machines.
+BENCH_PACKAGES = competitions subscription reputation revenue_sharing
+bench-report:
+	@echo "# benchmark reproduction — $(shell date -u +%Y-%m-%dT%H:%M:%SZ)"
+	@echo "# toolchain: $(shell rustc --version)"
+	@echo "# sdk: $$(grep -m1 'soroban-sdk' Cargo.toml)"
+	@for pkg in $(BENCH_PACKAGES); do \
+		echo "## $$pkg"; \
+		cargo bench -p $$pkg --no-fail-fast || exit $$?; \
+	done
 
 fmt:
 	cargo fmt --all
@@ -96,5 +122,5 @@ validate-cross-contract:
 clean:
 	cargo clean
 
-.PHONY: build test bench fmt lint deploy-testnet clean validate validate-testnet validate-config validate-contracts validate-operations validate-cross-contract docker-build docker-test preflight preflight-env deploy-dry-run deploy-verify deploy-mainnet
-.PHONY: build test bench fmt lint deny audit deploy-testnet clean validate validate-testnet validate-config validate-contracts validate-operations validate-cross-contract docker-build docker-test preflight deploy-dry-run deploy-verify deploy-mainnet
+.PHONY: build test bench bench-report fmt lint deploy-testnet clean validate validate-testnet validate-config validate-contracts validate-operations validate-cross-contract docker-build docker-test preflight preflight-env deploy-dry-run deploy-verify deploy-mainnet
+.PHONY: build test bench bench-report fmt lint deny audit deploy-testnet clean validate validate-testnet validate-config validate-contracts validate-operations validate-cross-contract docker-build docker-test preflight deploy-dry-run deploy-verify deploy-mainnet

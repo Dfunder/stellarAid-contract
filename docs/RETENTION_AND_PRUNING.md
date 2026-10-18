@@ -405,3 +405,43 @@ a single call more expensive; adding calls does not.
   removes before advancing — the same order of magnitude as
   `analytics::PRUNE_MAX_BATCH` — but it is a weaker guarantee than the analytics
   text implies and is called out rather than glossed.
+
+---
+
+## 10. Storage-growth metrics (#998)
+
+Unbounded growth announces itself by failing, and by then the fix is a
+migration. Every growing collection therefore exposes a **read-only size
+query** so an operator can watch utilisation instead of discovering it at the
+first failed write. Each count below is O(1) — it reads a stored length or a
+maintained counter, never walks the collection — so it is cheap enough to poll.
+
+| Structure | Storage tier | Cap | Current-size query |
+|---|---|---|---|
+| `donation::DataKey::CampaignDonations(campaign_id)` | persistent | `MAX_DONATION_HISTORY` = 500, effective default `DEFAULT_DONATION_HISTORY` = 100 | `donation::get_donation_count(campaign_id)` |
+| `donation::DataKey::DonationHistory(donor)` | persistent | same cap as above | `donation::get_donor_history_count(donor)` |
+| `withdrawal::DataKey::WithdrawalsByCampaign(campaign_id)` | persistent | `MAX_WITHDRAWALS_PER_CAMPAIGN` = 500, effective default `DEFAULT_WITHDRAWALS_PER_CAMPAIGN` = 100 | `withdrawal::get_withdrawal_count(campaign_id)` |
+| `shared::rollout` feature flags (`RolloutKey::Flag*`) | instance | `MAX_FEATURE_FLAGS` = 32, effective via `rollout::flag_cap` | `shared::rollout::get_state(env).flag_count` alongside `.flag_cap` |
+| `analytics::DataKey::Earning` | persistent | retention window `ANALYTICS_TTL_LEDGERS` (~90 d); prune batch `PRUNE_MAX_BATCH` = 100 | `analytics::get_earning_count(artist)` |
+| `reputation` moderation queue | persistent | none — no eviction path | `reputation::get_moderation_queue_size()` |
+| `search` listing index (`DataKey::Index`, `IndexCount`) | persistent | `MAX_SCAN` = 200 entries examined per `search` call | `search::get_indexed_count()` |
+| `campaign` proposals | persistent | — | `campaign::get_proposal_count()` |
+| `campaign` campaigns | persistent | — | `campaign::get_campaign_count()` |
+| `rate_limiter` tracked windows | temporary | the configured window | no on-chain count; the off-chain analogue is the worker rate-limit status endpoint |
+
+Reading the table: a count well under its cap is healthy; a count pinned at the
+cap while writes keep arriving means the ring-trim is discarding history faster
+than it is produced, and the retention cap is the knob to revisit. Where a cap
+is absent (`reputation` moderation queue), the count is the only growth signal
+and an eviction policy is still owed.
+
+**Approximation note.** All counts above are exact, not approximate: each is a
+stored length or a counter maintained alongside the collection. The counts do
+not include records that have been archived by the network but are still
+restorable from the bucket list; for archival, see §5.
+
+**Consistency note.** The instance-storage counters (`rollout::FlagCount`,
+`analytics::EarningCount`) are maintained alongside their collections in the
+same invocation, so a single transaction cannot leave them disagreeing. The
+list-length counts (donation, withdrawal, search index) are derived from the
+list itself and cannot drift.

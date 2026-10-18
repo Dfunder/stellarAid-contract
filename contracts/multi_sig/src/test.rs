@@ -286,7 +286,7 @@ fn one_signature_of_two_does_not_meet_the_threshold() {
     assert!(f.client.has_approved(&f.proposal_id, &f.signers.get(0).unwrap()));
     let err = f
         .client
-        .try_finalize(&f.executor, &f.proposal_id)
+        .try_finalize(&f.proposal_id, &f.executor)
         .err()
         .unwrap()
         .unwrap();
@@ -307,7 +307,7 @@ fn two_of_three_signatures_approve_the_proposal() {
     f.client.approve(&f.proposal_id, &f.signers.get(1).unwrap());
 
     assert_eq!(
-        f.client.finalize(&f.executor, &f.proposal_id),
+        f.client.finalize(&f.proposal_id, &f.executor),
         ProposalStatus::Approved
     );
     assert!(f.client.is_approved(&f.proposal_id));
@@ -324,7 +324,7 @@ fn all_three_signatures_still_approve_a_two_of_three_scheme() {
     f.approve_all(&f.signers);
     assert_eq!(f.client.get_signature_count(&f.proposal_id), 3);
     assert_eq!(
-        f.client.finalize(&f.executor, &f.proposal_id),
+        f.client.finalize(&f.proposal_id, &f.executor),
         ProposalStatus::Approved
     );
 }
@@ -340,7 +340,7 @@ fn three_of_five_needs_exactly_three_distinct_signers() {
     f.client.approve(&f.proposal_id, &five.get(1).unwrap());
     let err = f
         .client
-        .try_finalize(&f.executor, &f.proposal_id)
+        .try_finalize(&f.proposal_id, &f.executor)
         .err()
         .unwrap()
         .unwrap();
@@ -348,7 +348,7 @@ fn three_of_five_needs_exactly_three_distinct_signers() {
 
     f.client.approve(&f.proposal_id, &five.get(2).unwrap());
     assert_eq!(
-        f.client.finalize(&f.executor, &f.proposal_id),
+        f.client.finalize(&f.proposal_id, &f.executor),
         ProposalStatus::Approved
     );
 }
@@ -420,7 +420,7 @@ fn a_closed_proposal_cannot_be_signed_again() {
     f.open();
     f.client.approve(&f.proposal_id, &f.signers.get(0).unwrap());
     f.client.approve(&f.proposal_id, &f.signers.get(1).unwrap());
-    f.client.finalize(&f.executor, &f.proposal_id);
+    f.client.finalize(&f.proposal_id, &f.executor);
 
     let err = f
         .client
@@ -431,7 +431,7 @@ fn a_closed_proposal_cannot_be_signed_again() {
     assert_eq!(err, MultiSigError::ProposalClosed);
     let err = f
         .client
-        .try_finalize(&f.executor, &f.proposal_id)
+        .try_finalize(&f.proposal_id, &f.executor)
         .err()
         .unwrap()
         .unwrap();
@@ -463,7 +463,7 @@ fn a_partially_signed_set_expires_instead_of_being_approved() {
 
     let err = f
         .client
-        .try_finalize(&f.executor, &f.proposal_id)
+        .try_finalize(&f.proposal_id, &f.executor)
         .err()
         .unwrap()
         .unwrap();
@@ -483,7 +483,7 @@ fn a_signature_is_still_valid_just_before_the_window_closes() {
     f.client.approve(&f.proposal_id, &f.signers.get(0).unwrap());
     f.client.approve(&f.proposal_id, &f.signers.get(1).unwrap());
     assert_eq!(
-        f.client.finalize(&f.executor, &f.proposal_id),
+        f.client.finalize(&f.proposal_id, &f.executor),
         ProposalStatus::Approved
     );
 }
@@ -505,7 +505,7 @@ fn an_expired_proposal_is_terminal() {
     assert_eq!(err, MultiSigError::ProposalExpired);
     let err = f
         .client
-        .try_finalize(&f.executor, &f.proposal_id)
+        .try_finalize(&f.proposal_id, &f.executor)
         .err()
         .unwrap()
         .unwrap();
@@ -527,7 +527,7 @@ fn an_expired_proposal_is_terminal() {
     assert_eq!(err, MultiSigError::ProposalClosed);
     let err = f
         .client
-        .try_finalize(&f.executor, &f.proposal_id)
+        .try_finalize(&f.proposal_id, &f.executor)
         .err()
         .unwrap()
         .unwrap();

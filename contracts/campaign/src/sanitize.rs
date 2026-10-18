@@ -54,8 +54,8 @@ pub const EMPTY_HASH: &str = "InvalidAssets: reason hash must not be the zero ha
 ///
 /// Note the length check is on **bytes**, not characters: a multi-byte
 /// character can be several bytes, and the on-chain limit is a byte budget.
-pub fn require_asset_code(env: &Env, asset_code: &String) -> String {
-    if asset_code.len() == 0 || asset_code.len() > MAX_ASSET_CODE_LEN {
+pub fn require_asset_code(_env: &Env, asset_code: &String) -> String {
+    if asset_code.is_empty() || asset_code.len() > MAX_ASSET_CODE_LEN {
         panic!("{}", INVALID_ASSETS);
     }
     asset_code.clone()
@@ -74,7 +74,7 @@ pub fn require_reason_hash(env: &Env, reason_hash: &BytesN<32>) -> BytesN<32> {
 /// Rejects free-form text that is over-length. Use for the rare field that has
 /// to stay readable on chain (a memo, a resolution note); prefer
 /// [`require_reason_hash`] wherever the text can live off chain.
-pub fn require_bounded(env: &Env, value: &String, max_len: u32, field: &str) -> String {
+pub fn require_bounded(_env: &Env, value: &String, max_len: u32, field: &str) -> String {
     if value.len() > max_len {
         panic!("{} exceeds maximum length of {} bytes", field, max_len);
     }
@@ -84,7 +84,7 @@ pub fn require_bounded(env: &Env, value: &String, max_len: u32, field: &str) -> 
 /// True when `asset_code` would be accepted. Read-only counterpart of
 /// [`require_asset_code`], for callers that want to branch instead of abort.
 pub fn is_valid_asset_code(asset_code: &String) -> bool {
-    asset_code.len() > 0 && asset_code.len() <= MAX_ASSET_CODE_LEN
+    !asset_code.is_empty() && asset_code.len() <= MAX_ASSET_CODE_LEN
 }
 
 #[cfg(test)]

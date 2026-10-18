@@ -44,6 +44,7 @@ pub struct RegistryEntry {
 pub struct ResolutionCacheEntry {
     pub address: Address,
     pub resolved_ledger: u32,
+}
 /// Volume-based fee tier (#690). A tier applies when the payer's cumulative
 /// volume is at least `min_volume`. Tiers are stored sorted ascending by
 /// `min_volume`; a volume matches the *largest* tier whose threshold it meets.

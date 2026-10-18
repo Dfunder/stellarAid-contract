@@ -132,6 +132,61 @@ first_caller, first_ledger, last_ledger, retry_count }`.
 - `TimeoutError { Expired=1, TooManyAttempts=2, Unconfigured=3 }` with
   `code()`; `with_fallback(f, default)`.
 
+## worker: donations list (`GET /api/donations`, closes #982)
+
+The worker's donation feed is **append-only** — rows are inserted and their
+status advances `Pending → Submitted → Confirming → Confirmed`/`Failed`, never
+reordered or deleted — so the list is paginated by an **opaque cursor**, not by
+`offset`. Offset pagination drifts on an append-only table: a donation confirmed
+between a client's page 1 and page 2 shifts every later row, so the client sees
+one record twice and misses another.
+
+| Query parameter | Type | Meaning |
+|---|---|---|
+| `cursor` | string, optional | Opaque value from the previous response's `next_cursor`. Omit for the first page. |
+| `limit` | integer, optional | Requested page size. `0` serves the default (`DEFAULT_PAGE_SIZE = 50`); anything above `MAX_PAGE_SIZE = 100` is capped. |
+| `status` | string, optional | Filter to one lifecycle status (`Pending`, `Submitted`, `Confirming`, `Confirmed`, `Failed`, `Refunded`). |
+| `campaign_id` | string, optional | Filter to one campaign. |
+
+**Response.**
+
+```json
+{
+  "donations": [ { "id": 1, "tx_hash": "...", "campaign_id": "...",
+                   "donor_address": "...", "amount": 100,
+                   "status": "Confirmed", "created_at": "2026-01-01T00:00:00Z" } ],
+  "page": {
+    "total": 137,
+    "limit": 25,
+    "count": 25,
+    "has_more": true,
+    "next_cursor": "323032362d...3a31"
+  }
+}
+```
+
+**Contract.**
+
+- The cursor is opaque: pass back exactly the `next_cursor` value; do not
+  construct one. A malformed cursor is rejected rather than treated as "start
+  over".
+- `next_cursor` is `null` and `has_more` is `false` on the last page.
+- **Cursors are stable under concurrent writes.** A donation inserted between
+  two requests has a later `(created_at, id)` key and therefore lands strictly
+  after the current page; it never shifts or repeats a row already returned.
+  This is a guarantee, not an accident, and it is proven by the repository's
+  `cursor_is_stable_when_new_rows_are_inserted_between_pages` test.
+- **Cursors do not expire** while the repository is alive, and remain valid
+  across pruning: the cursor names an ordered `(created_at, id)` boundary, so
+  removing the boundary row still resumes at the first surviving row after it.
+- Filters compose with the cursor: the cursor is compared against the same
+  ordered key within the filtered set, so paging a filtered list is stable too.
+
+The pagination is implemented in `worker/src/db/donations_repo.rs`
+(`DonationsRepo::list_donations`, `DonationFilter`, `PageInfo`). The HTTP route
+that exposes it lands with the companion list-endpoint issue; the repository
+method and response shape above are final.
+
 ## Usage example (idempotent + time-limited release)
 
 ```rust

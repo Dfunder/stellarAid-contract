@@ -53,6 +53,13 @@ pub enum SharedErrorCode {
     InvalidRecoveryDelay = 17,
     /// The contract is not paused (#711).
     ContractNotPaused = 18,
+    /// The per-contract feature-flag cap has been reached (#985). The cap is
+    /// reported by `rollout::flag_cap`.
+    TooManyFeatureFlags = 19,
+    /// An admin handover was requested but none is in flight (#983).
+    NoPendingAdminTransfer = 20,
+    /// The proposed successor admin equals the current one (#983).
+    InvalidAdminTarget = 21,
 
     // ── Escrow (100–199) ─────────────────────────────────────────────────────
     EscrowAlreadyExists = 100,
@@ -160,6 +167,9 @@ impl SharedErrorCode {
             Self::RecoveryNotScheduled => "no pause recovery is scheduled",
             Self::InvalidRecoveryDelay => "pause recovery delay is out of range",
             Self::ContractNotPaused => "contract is not paused",
+            Self::TooManyFeatureFlags => "feature-flag cap reached",
+            Self::NoPendingAdminTransfer => "no admin transfer is pending",
+            Self::InvalidAdminTarget => "new admin must differ from the current admin",
 
             Self::EscrowAlreadyExists => "escrow: already exists",
             Self::EscrowNotFound => "escrow: not found",

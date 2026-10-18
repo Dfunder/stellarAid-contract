@@ -8,7 +8,7 @@ use crate::{
     types::{AppealStatus, ReportReason, ReviewStatus},
 };
 
-fn setup(env: &Env) -> (ReputationContractClient, Address) {
+fn setup(env: &Env) -> (ReputationContractClient<'_>, Address) {
     let contract_id = env.register_contract(None, ReputationContract);
     let client = ReputationContractClient::new(env, &contract_id);
     let admin = Address::generate(env);

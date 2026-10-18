@@ -148,6 +148,18 @@ fn approval_key(id: &Bytes, signer: &Address) -> DataKey {
     DataKey::Approval(id.clone(), signer.clone())
 }
 
+/// Collapse the shared handover error onto `MultiSigError` (#983).
+///
+/// `MultiSigError` cannot grow new variants here, so a missing contract is
+/// `NotInitialized` and every other refusal — wrong caller, no pending
+/// transfer, or proposing the current admin — is `Unauthorized`.
+fn map_admin_error(err: shared::admin::AdminError) -> MultiSigError {
+    match err {
+        shared::admin::AdminError::NotInitialized => MultiSigError::NotInitialized,
+        _ => MultiSigError::Unauthorized,
+    }
+}
+
 #[contractimpl]
 impl MultiSigContract {
     /// One-shot bootstrap. The admin is the only address that may rewrite the
@@ -211,7 +223,7 @@ impl MultiSigContract {
     ) -> Result<Proposal, MultiSigError> {
         creator.require_auth();
         let config = load_config(&env)?;
-        if action.len() == 0 {
+        if action.is_empty() {
             return Err(MultiSigError::InvalidAction);
         }
         if env
@@ -272,6 +284,9 @@ impl MultiSigContract {
             return Err(MultiSigError::ProposalClosed);
         }
         let now = env.ledger().sequence();
+        if now > proposal.expires_ledger {
+            return Err(MultiSigError::ProposalClosed);
+        }
         if now >= proposal.expires_ledger {
             return Err(MultiSigError::ProposalExpired);
         }
@@ -315,7 +330,11 @@ impl MultiSigContract {
         if proposal.status != ProposalStatus::Pending {
             return Err(MultiSigError::ProposalClosed);
         }
-        if env.ledger().sequence() >= proposal.expires_ledger {
+        let now = env.ledger().sequence();
+        if now > proposal.expires_ledger {
+            return Err(MultiSigError::ProposalClosed);
+        }
+        if now >= proposal.expires_ledger {
             proposal.status = ProposalStatus::Expired;
             save_proposal(&env, &proposal);
             env.events()
@@ -370,7 +389,13 @@ impl MultiSigContract {
     }
 
     pub fn get_proposal(env: Env, proposal_id: Bytes) -> Result<Proposal, MultiSigError> {
-        load_proposal(&env, &proposal_id)
+        let mut proposal = load_proposal(&env, &proposal_id)?;
+        if proposal.status == ProposalStatus::Pending
+            && env.ledger().sequence() >= proposal.expires_ledger
+        {
+            proposal.status = ProposalStatus::Expired;
+        }
+        Ok(proposal)
     }
 
     /// `true` only for a proposal that reached the threshold and was finalized.
@@ -388,6 +413,56 @@ impl MultiSigContract {
             .instance()
             .get(&DataKey::ProposalCount)
             .unwrap_or(0u32)
+    }
+
+    // ── Admin key rotation (closes #983) ─────────────────────────────────
+    //
+    // Two-step handover delegated to `shared::admin`; the active admin stays
+    // under `DataKey::Admin`, only the pending successor is shared. The
+    // configured *signer set* is deliberately untouched — rotating the admin
+    // does not change who may sign proposals.
+
+    /// Step 1 — the current admin proposes `new_admin` as its successor.
+    pub fn transfer_admin(env: Env, admin: Address, new_admin: Address) -> Result<(), MultiSigError> {
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(MultiSigError::NotInitialized)?;
+        if stored != admin {
+            return Err(MultiSigError::Unauthorized);
+        }
+        shared::admin::propose(&env, &admin, &new_admin).map_err(map_admin_error)
+    }
+
+    /// Step 2 — the proposed successor accepts and becomes the active admin.
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), MultiSigError> {
+        let previous: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(MultiSigError::NotInitialized)?;
+        shared::admin::accept(&env, &previous, &new_admin).map_err(map_admin_error)?;
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        Ok(())
+    }
+
+    /// The current admin withdraws an in-flight proposal.
+    pub fn cancel_admin_transfer(env: Env, admin: Address) -> Result<(), MultiSigError> {
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(MultiSigError::NotInitialized)?;
+        if stored != admin {
+            return Err(MultiSigError::Unauthorized);
+        }
+        shared::admin::cancel(&env, &admin).map_err(map_admin_error)
+    }
+
+    /// The proposed successor awaiting acceptance, if any.
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        shared::admin::pending_admin(&env)
     }
 
     // ── Health monitoring (#678) and gradual rollout (#684) ──────────────
@@ -429,6 +504,24 @@ impl MultiSigContract {
     }
     pub fn is_feature_enabled(env: Env, flag: soroban_sdk::Symbol) -> bool {
         shared::rollout::is_feature_enabled(&env, &flag)
+    }
+    /// Lower this contract's feature-flag cap within the shared ceiling (#985).
+    ///
+    /// `shared::rollout::MAX_FEATURE_FLAGS` is the hard ceiling; this only ever
+    /// lowers the effective cap, so future tuning needs no new code. The current
+    /// value is returned by [`get_flag_cap`] and in
+    /// `get_rollout_state().flag_cap`.
+    pub fn set_flag_cap(
+        env: Env,
+        admin: Address,
+        cap: u32,
+    ) -> Result<(), shared::rollout::RolloutError> {
+        admin.require_auth();
+        shared::rollout::set_flag_cap(&env, cap)
+    }
+    /// The effective feature-flag cap for this contract (#985).
+    pub fn get_flag_cap(env: Env) -> u32 {
+        shared::rollout::flag_cap(&env)
     }
     pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
         admin.require_auth();

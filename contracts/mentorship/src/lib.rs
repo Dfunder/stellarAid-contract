@@ -175,8 +175,7 @@ impl MentorshipProgram {
 
         // Store milestones.
         let mut ms: Vec<MentoringMilestone> = Vec::new(&env);
-        let mut idx: u32 = 0;
-        for (title, desc) in milestones.iter() {
+        for (idx, (title, desc)) in (0_u32..).zip(milestones.iter()) {
             ms.push_back(MentoringMilestone {
                 index: idx,
                 title,
@@ -184,7 +183,6 @@ impl MentorshipProgram {
                 status: MilestoneStatus::Pending,
                 approved_at: 0,
             });
-            idx += 1;
         }
         env.storage()
             .persistent()
@@ -242,49 +240,55 @@ impl MentorshipProgram {
 
     /// Mentee submits a milestone for mentor review.
     pub fn submit_milestone(env: Env, mentee: Address, engagement_id: u64, milestone_index: u32) {
-        mentee.require_auth();
-        let engagement = Self::load_engagement(&env, engagement_id);
-        assert!(engagement.mentee == mentee, "caller is not the mentee");
-        assert!(
-            engagement.status == EngagementStatus::Active,
-            "engagement is not active"
-        );
+        shared::guard::with_reentrancy_guard(&env, || {
+            mentee.require_auth();
+            let engagement = Self::load_engagement(&env, engagement_id);
+            assert!(engagement.mentee == mentee, "caller is not the mentee");
+            assert!(
+                engagement.status == EngagementStatus::Active,
+                "engagement is not active"
+            );
 
-        let mut milestones: Vec<MentoringMilestone> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Milestones(engagement_id))
-            .expect("milestones not found");
+            let mut milestones: Vec<MentoringMilestone> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Milestones(engagement_id))
+                .expect("milestones not found");
 
-        let ms = milestones
-            .get(milestone_index)
-            .expect("milestone index out of range");
-        assert!(
-            ms.status == MilestoneStatus::Pending,
-            "milestone already submitted or approved"
-        );
+            let ms = milestones
+                .get(milestone_index)
+                .expect("milestone index out of range");
+            assert!(
+                ms.status == MilestoneStatus::Pending,
+                "milestone already submitted or approved"
+            );
 
-        milestones.set(
-            milestone_index,
-            MentoringMilestone {
-                status: MilestoneStatus::Submitted,
-                ..ms
-            },
-        );
-        env.storage()
-            .persistent()
-            .set(&DataKey::Milestones(engagement_id), &milestones);
+            milestones.set(
+                milestone_index,
+                MentoringMilestone {
+                    status: MilestoneStatus::Submitted,
+                    ..ms
+                },
+            );
+            env.storage()
+                .persistent()
+                .set(&DataKey::Milestones(engagement_id), &milestones);
 
-        env.events().publish(
-            (symbol_short!("ms_sub"), engagement_id),
-            milestone_index,
-        );
+            env.events().publish(
+                (symbol_short!("ms_sub"), engagement_id),
+                milestone_index,
+            );
+        });
     }
 
     /// Mentor approves or rejects a submitted milestone.
     ///
     /// On approval of the final milestone the engagement automatically
     /// transitions to `Completed` and mentor compensation is released.
+    ///
+    /// Follows Checks-Effects-Interactions (CEI): milestone and engagement states
+    /// are updated and persisted before any external token transfer is initiated.
+    /// Guarded by `shared::guard::with_reentrancy_guard` against reentrant calls.
     pub fn review_milestone(
         env: Env,
         mentor: Address,
@@ -292,72 +296,77 @@ impl MentorshipProgram {
         milestone_index: u32,
         approve: bool,
     ) {
-        mentor.require_auth();
-        let mut engagement = Self::load_engagement(&env, engagement_id);
-        assert!(engagement.mentor == mentor, "caller is not the mentor");
-        assert!(
-            engagement.status == EngagementStatus::Active,
-            "engagement is not active"
-        );
+        shared::guard::with_reentrancy_guard(&env, || {
+            // Checks
+            mentor.require_auth();
+            let mut engagement = Self::load_engagement(&env, engagement_id);
+            assert!(engagement.mentor == mentor, "caller is not the mentor");
+            assert!(
+                engagement.status == EngagementStatus::Active,
+                "engagement is not active"
+            );
 
-        let mut milestones: Vec<MentoringMilestone> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Milestones(engagement_id))
-            .expect("milestones not found");
+            let mut milestones: Vec<MentoringMilestone> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Milestones(engagement_id))
+                .expect("milestones not found");
 
-        let ms = milestones
-            .get(milestone_index)
-            .expect("milestone index out of range");
-        assert!(
-            ms.status == MilestoneStatus::Submitted,
-            "milestone must be in Submitted state"
-        );
+            let ms = milestones
+                .get(milestone_index)
+                .expect("milestone index out of range");
+            assert!(
+                ms.status == MilestoneStatus::Submitted,
+                "milestone must be in Submitted state"
+            );
 
-        let new_status = if approve {
-            MilestoneStatus::Approved
-        } else {
-            MilestoneStatus::Rejected
-        };
+            let new_status = if approve {
+                MilestoneStatus::Approved
+            } else {
+                MilestoneStatus::Rejected
+            };
 
-        milestones.set(
-            milestone_index,
-            MentoringMilestone {
-                status: new_status,
-                approved_at: if approve { env.ledger().sequence() } else { 0 },
-                ..ms
-            },
-        );
-        env.storage()
-            .persistent()
-            .set(&DataKey::Milestones(engagement_id), &milestones);
-
-        env.events().publish(
-            (symbol_short!("ms_rev"), engagement_id),
-            (milestone_index, approve),
-        );
-
-        // Check if all milestones are approved — auto-complete.
-        if approve && milestones.iter().all(|m| m.status == MilestoneStatus::Approved) {
-            engagement.status = EngagementStatus::Completed;
-            engagement.completed_at = env.ledger().sequence();
+            // Effects: update milestone status and persist
+            milestones.set(
+                milestone_index,
+                MentoringMilestone {
+                    status: new_status,
+                    approved_at: if approve { env.ledger().sequence() } else { 0 },
+                    ..ms
+                },
+            );
             env.storage()
                 .persistent()
-                .set(&DataKey::Engagement(engagement_id), &engagement);
+                .set(&DataKey::Milestones(engagement_id), &milestones);
 
-            // Release compensation to mentor.
-            if engagement.compensation > 0 {
-                let tok = token::Client::new(&env, &engagement.token);
-                tok.transfer(
-                    &env.current_contract_address(),
-                    &engagement.mentor,
-                    &engagement.compensation,
-                );
+            env.events().publish(
+                (symbol_short!("ms_rev"), engagement_id),
+                (milestone_index, approve),
+            );
+
+            // Check if all milestones are approved — auto-complete.
+            if approve && milestones.iter().all(|m| m.status == MilestoneStatus::Approved) {
+                // Effects: update engagement status and persist before any external calls
+                engagement.status = EngagementStatus::Completed;
+                engagement.completed_at = env.ledger().sequence();
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::Engagement(engagement_id), &engagement);
+
+                env.events()
+                    .publish((symbol_short!("complete"),), engagement_id);
+
+                // Interactions: external token transfer happens strictly AFTER all effects
+                if engagement.compensation > 0 {
+                    let tok = token::Client::new(&env, &engagement.token);
+                    tok.transfer(
+                        &env.current_contract_address(),
+                        &engagement.mentor,
+                        &engagement.compensation,
+                    );
+                }
             }
-
-            env.events()
-                .publish((symbol_short!("complete"),), engagement_id);
-        }
+        });
     }
 
     // ── Feedback Collection ───────────────────────────────────────────────
@@ -374,7 +383,7 @@ impl MentorshipProgram {
         comment: String,
     ) {
         author.require_auth();
-        assert!(rating >= 1 && rating <= 5, "rating must be between 1 and 5");
+        assert!((1..=5).contains(&rating), "rating must be between 1 and 5");
 
         let engagement = Self::load_engagement(&env, engagement_id);
         assert!(
@@ -585,3 +594,7 @@ impl MentorshipProgram {
             .expect("engagement not found")
     }
 }
+
+#[cfg(test)]
+mod test;
+

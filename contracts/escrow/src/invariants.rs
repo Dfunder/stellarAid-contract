@@ -357,22 +357,20 @@ pub fn validate_state_consistency(
     }
 
     // When fully released, released_amount must equal amount.
-    if after.status == CommissionStatus::Released && after.status != before.status {
-        if after.released_amount != after.amount {
-            return Err(InvariantError::BalanceMismatch);
-        }
+    if after.status == CommissionStatus::Released
+        && after.status != before.status
+        && after.released_amount != after.amount
+    {
+        return Err(InvariantError::BalanceMismatch);
     }
 
     // When cancelled or refunded, no further releases should occur.
-    if matches!(
-        after.status,
-        CommissionStatus::Cancelled | CommissionStatus::Refunded
-    ) {
-        if after.released_amount > before.released_amount {
-            // Allow cancellation/refund to carry through the same released amount,
-            // but not increase it.
-            return Err(InvariantError::InvalidStateTransition);
-        }
+    if matches!(after.status, CommissionStatus::Cancelled | CommissionStatus::Refunded)
+        && after.released_amount > before.released_amount
+    {
+        // Allow cancellation/refund to carry through the same released amount,
+        // but not increase it.
+        return Err(InvariantError::InvalidStateTransition);
     }
 
     Ok(())
@@ -434,12 +432,7 @@ mod tests {
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::BytesN;
 
-    fn make_record(
-        env: &Env,
-        amount: i128,
-        released: i128,
-        status: CommissionStatus,
-    ) -> EscrowRecord {
+    fn make_record(env: &Env, amount: i128, released: i128, status: CommissionStatus) -> EscrowRecord {
         EscrowRecord {
             commission_id: Bytes::from_slice(env, b"test-id"),
             client: Address::generate(env),

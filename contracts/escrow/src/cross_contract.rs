@@ -153,11 +153,49 @@ pub struct AtomicCommitMarker {
 /// The number of independent sides in an escrow→commission commit.
 pub const ATOMIC_COMMIT_PARTICIPANTS: u32 = 2;
 
+/// Absolute lifetime of an atomic commit, in ledgers (#988), matching
+/// `multi_sig::MAX_EXPIRY_LEDGERS`. A commit left `InProgress` longer than this
+/// is resolved to the terminal `RolledBack` state on next access, so it can
+/// never become a permanently locked escrow. `ATOMIC_COMMIT_MAX_LIFETIME_LEDGERS`
+/// is an upper bound on the *protocol window*, distinct from the storage TTL
+/// (`storage::ATOMIC_COMMIT_TTL_LEDGERS`), which keeps the record itself alive.
+pub const ATOMIC_COMMIT_MAX_LIFETIME_LEDGERS: u32 = 120_960;
+
 fn load_marker(env: &Env, commission_id: &Bytes) -> Result<AtomicCommitMarker, EscrowError> {
     if !storage::atomic_marker_exists(env, commission_id) {
         return Err(EscrowError::NotFound);
     }
-    Ok(storage::get_atomic_marker(env, commission_id))
+    let mut marker = storage::get_atomic_marker(env, commission_id);
+
+    // #988: an `InProgress` commit that has outlived its bounded lifetime is
+    // resolved to a definite terminal state rather than left to expire in
+    // limbo. `RolledBack` is the safe resolution: no funds have moved while a
+    // commit is in progress, so the escrow is intact and can be released or
+    // refunded through the normal state machine.
+    if marker.state == AtomicCommitState::InProgress
+        && env.ledger().sequence()
+            > marker
+                .created_ledger
+                .saturating_add(ATOMIC_COMMIT_MAX_LIFETIME_LEDGERS)
+    {
+        marker.state = AtomicCommitState::RolledBack;
+        storage::save_atomic_marker(env, &marker);
+    }
+
+    // Extending on read is deliberate for the atomic flow: `get_atomic_commit`
+    // is how a participant checks whether they may proceed, and that read should
+    // keep the sequence alive.
+    storage::extend_atomic_marker_ttl(env, commission_id);
+    Ok(marker)
+}
+
+/// Public read of a commit marker that refreshes its TTL and resolves an expired
+/// `InProgress` marker to `RolledBack` (#988).
+pub fn get_atomic_commit(
+    env: &Env,
+    commission_id: &Bytes,
+) -> Result<AtomicCommitMarker, EscrowError> {
+    load_marker(env, commission_id)
 }
 
 fn require_in_progress(marker: &AtomicCommitMarker) -> Result<(), EscrowError> {

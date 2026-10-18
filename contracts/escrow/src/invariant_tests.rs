@@ -17,30 +17,39 @@ fn make_record(env: &Env, amount: i128, released: i128, status: CommissionStatus
     }
 }
 
-#[test]
-fn balance_consistency_passes_for_normal_record() {
+fn with_contract<F, R>(f: F) -> R
+where
+    F: FnOnce(&Env) -> R,
+{
     let env = Env::default();
     let contract_id = env.register_contract(None, crate::EscrowContract);
-    env.as_contract(&contract_id, || {
-        let r = make_record(&env, 100_000, 30_000, CommissionStatus::PartiallyReleased);
-        assert!(invariants::verify_balance_consistency(&env, &r).is_ok());
+    env.as_contract(&contract_id, || f(&env))
+}
+
+#[test]
+fn balance_consistency_passes_for_normal_record() {
+    with_contract(|env| {
+        let r = make_record(env, 100_000, 30_000, CommissionStatus::PartiallyReleased);
+        assert!(invariants::verify_balance_consistency(env, &r).is_ok());
     });
 }
 
 #[test]
 fn balance_consistency_rejects_over_release() {
-    let env = Env::default();
-    let r = make_record(&env, 100_000, 101_000, CommissionStatus::Released);
-    let err = invariants::verify_balance_consistency(&env, &r).unwrap_err();
-    assert_eq!(err, invariants::InvariantError::ReleasedExceedsAmount);
+    with_contract(|env| {
+        let r = make_record(env, 100_000, 101_000, CommissionStatus::Released);
+        let err = invariants::verify_balance_consistency(env, &r).unwrap_err();
+        assert_eq!(err, invariants::InvariantError::ReleasedExceedsAmount);
+    });
 }
 
 #[test]
 fn balance_consistency_rejects_negative_release() {
-    let env = Env::default();
-    let r = make_record(&env, 100_000, -1, CommissionStatus::Locked);
-    let err = invariants::verify_balance_consistency(&env, &r).unwrap_err();
-    assert_eq!(err, invariants::InvariantError::ReleasedIsNegative);
+    with_contract(|env| {
+        let r = make_record(env, 100_000, -1, CommissionStatus::Locked);
+        let err = invariants::verify_balance_consistency(env, &r).unwrap_err();
+        assert_eq!(err, invariants::InvariantError::ReleasedIsNegative);
+    });
 }
 
 #[test]
@@ -85,26 +94,29 @@ fn state_transition_invalid_for_expired_to_released() {
 
 #[test]
 fn validate_state_consistency_allows_valid_transition() {
-    let env = Env::default();
-    let before = make_record(&env, 100_000, 0, CommissionStatus::Locked);
-    let after = make_record(&env, 100_000, 100_000, CommissionStatus::Released);
-    assert!(invariants::validate_state_consistency(&env, &before, &after).is_ok());
+    with_contract(|env| {
+        let before = make_record(env, 100_000, 0, CommissionStatus::Locked);
+        let after = make_record(env, 100_000, 100_000, CommissionStatus::Released);
+        assert!(invariants::validate_state_consistency(env, &before, &after).is_ok());
+    });
 }
 
 #[test]
 fn validate_state_consistency_rejects_invalid_transition() {
-    let env = Env::default();
-    let before = make_record(&env, 100_000, 0, CommissionStatus::Released);
-    let after = make_record(&env, 100_000, 0, CommissionStatus::Locked);
-    let err = invariants::validate_state_consistency(&env, &before, &after).unwrap_err();
-    assert_eq!(err, invariants::InvariantError::InvalidStateTransition);
+    with_contract(|env| {
+        let before = make_record(env, 100_000, 0, CommissionStatus::Released);
+        let after = make_record(env, 100_000, 0, CommissionStatus::Locked);
+        let err = invariants::validate_state_consistency(env, &before, &after).unwrap_err();
+        assert_eq!(err, invariants::InvariantError::InvalidStateTransition);
+    });
 }
 
 #[test]
 fn validate_state_consistency_allows_same_status() {
-    let env = Env::default();
-    let r = make_record(&env, 100_000, 50_000, CommissionStatus::PartiallyReleased);
-    assert!(invariants::validate_state_consistency(&env, &r, &r).is_ok());
+    with_contract(|env| {
+        let r = make_record(env, 100_000, 50_000, CommissionStatus::PartiallyReleased);
+        assert!(invariants::validate_state_consistency(env, &r, &r).is_ok());
+    });
 }
 
 #[test]

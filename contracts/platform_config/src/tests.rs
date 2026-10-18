@@ -1,13 +1,7 @@
-use crate::types::AddressEnvironment;
-use crate::types::ResolutionCacheEntry;
-use crate::PlatformConfigContractClient;
-use soroban_sdk::testutils::Address as _;
-use soroban_sdk::testutils::Ledger;
-use soroban_sdk::{symbol_short, Address, Env, Symbol};
-use crate::types::{FeeTier, Promotion, ReferralConfig};
+use crate::types::{AddressEnvironment, FeeTier, Promotion, ReferralConfig, ResolutionCacheEntry};
 use crate::PlatformConfigContractClient;
 use soroban_sdk::testutils::{Address as _, Ledger};
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{symbol_short, Address, Env, Symbol};
 
 fn setup(env: &Env) -> (crate::PlatformConfigContractClient<'_>, Address, Address, Address) {
     env.mock_all_auths();
@@ -281,6 +275,8 @@ fn registry_entry_returns_full_record() {
     assert_eq!(entry.env, AddressEnvironment::Test);
     assert_eq!(entry.name, ESCROW);
     assert_eq!(entry.address, escrow_addr);
+}
+
 // ── Advanced fee structures (#690) ─────────────────────────────────────────
 
 #[test]

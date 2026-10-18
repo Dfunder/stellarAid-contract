@@ -2,11 +2,11 @@
 
 extern crate std;
 use soroban_sdk::{
-    contract, contractimpl, symbol_short, testutils::Address as _, token, Address, Bytes, Env,
-    IntoVal,
+    contract, contractimpl, symbol_short, testutils::Address as _, testutils::Ledger as _,
+    token, Address, Bytes, Env, IntoVal,
 };
 
-use crate::cross_contract::AtomicCommitState;
+use crate::cross_contract::{AtomicCommitState, ATOMIC_COMMIT_MAX_LIFETIME_LEDGERS};
 use crate::errors::EscrowError;
 use crate::storage::CommissionStatus;
 use crate::{AtomicCommitMarker, EscrowContract, EscrowContractClient};
@@ -114,6 +114,14 @@ fn fund_escrow(f: &Fixture) {
         &AMOUNT,
         &f.config,
     );
+}
+
+/// Move the ledger sequence forward, so the atomic commit's bounded lifetime and
+/// TTL arithmetic has a moving input.
+fn advance(env: &Env, by: u32) {
+    env.ledger().with_mut(|li| {
+        li.sequence_number = li.sequence_number.saturating_add(by);
+    });
 }
 
 // ── begin ──────────────────────────────────────────────────────────────────
@@ -414,4 +422,88 @@ fn marker_tuple_types_satisfy_contracttype() {
     };
     let _ = symbol_short!("x");
     let _: soroban_sdk::Vec<soroban_sdk::Val> = soroban_sdk::vec![&f.env, AMOUNT.into_val(&f.env)];
+}
+
+// ── TTL and bounded lifetime (#988) ────────────────────────────────────────
+//
+// The atomic commit is a correctness fix, not a tuning change: a
+// multi-transaction commit that lost its state mid-sequence would be a
+// funds-in-limbo problem. These tests cover the two halves of the fix — the
+// commit survives a multi-transaction ledger gap, and a commit abandoned past
+// its bounded lifetime resolves to a definite terminal state with funds intact.
+
+#[test]
+fn commit_survives_a_multi_transaction_ledger_gap() {
+    let f = setup();
+    fund_escrow(&f);
+    f.escrow.begin_atomic_commit(&f.commission_id);
+
+    // A gap short of the bounded lifetime must not expire the commit.
+    advance(&f.env, ATOMIC_COMMIT_MAX_LIFETIME_LEDGERS - 1);
+    assert_eq!(f.escrow.confirm_atomic_step(&f.commission_id, &f.client), 1);
+    assert_eq!(f.escrow.confirm_atomic_step(&f.commission_id, &f.artist), 2);
+
+    let marker = f.escrow.finalize_atomic_commit(&f.commission_id);
+    assert_eq!(marker.state, AtomicCommitState::Settled);
+}
+
+#[test]
+fn expired_in_progress_commit_resolves_to_rolled_back() {
+    let f = setup();
+    fund_escrow(&f);
+    f.escrow.begin_atomic_commit(&f.commission_id);
+
+    advance(&f.env, ATOMIC_COMMIT_MAX_LIFETIME_LEDGERS + 1);
+
+    let marker = f.escrow.get_atomic_commit(&f.commission_id);
+    assert_eq!(
+        marker.state,
+        AtomicCommitState::RolledBack,
+        "an abandoned commit must resolve to a definite terminal state"
+    );
+
+    // Funds never moved, so the escrow is intact and still releasable.
+    let record = f.escrow.get_escrow(&f.commission_id);
+    assert_eq!(record.status, CommissionStatus::Locked);
+    assert_eq!(
+        token::Client::new(&f.env, &f.usdc).balance(&f.escrow_addr),
+        AMOUNT
+    );
+}
+
+#[test]
+fn expired_commit_can_no_longer_be_advanced() {
+    let f = setup();
+    fund_escrow(&f);
+    f.escrow.begin_atomic_commit(&f.commission_id);
+    advance(&f.env, ATOMIC_COMMIT_MAX_LIFETIME_LEDGERS + 1);
+
+    let err = f
+        .escrow
+        .try_confirm_atomic_step(&f.commission_id, &f.client)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, EscrowError::AtomicCommitStateInvalid);
+}
+
+#[test]
+fn atomic_commit_key_has_a_nonzero_ttl_after_access() {
+    use soroban_sdk::testutils::storage::Persistent as _;
+    let f = setup();
+    fund_escrow(&f);
+    f.escrow.begin_atomic_commit(&f.commission_id);
+
+    let key = crate::storage::DataKey::AtomicCommit(f.commission_id.clone());
+    let ttl = f
+        .env
+        .as_contract(&f.escrow_addr, || f.env.storage().persistent().get_ttl(&key));
+    assert!(ttl > 0, "the commit marker must carry a live TTL");
+
+    // A read must refresh it too, so polling does not let the entry lapse.
+    f.escrow.get_atomic_commit(&f.commission_id);
+    let ttl_after_read = f
+        .env
+        .as_contract(&f.escrow_addr, || f.env.storage().persistent().get_ttl(&key));
+    assert!(ttl_after_read > 0);
 }

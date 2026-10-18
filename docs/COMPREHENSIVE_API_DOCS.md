@@ -1,5 +1,7 @@
 # Lumora Smart Contracts — Comprehensive API Documentation
 
+> **Summary.** This hand-maintained guide documents public entry points, parameter types, error variants, and SDK usage patterns for seven core contracts (`escrow`, `commission_agreement`, `dispute_arbiter`, `platform_config`, `reputation`, `licensing`, and `mentorship`). It does not cover the remaining 17+ contracts in the workspace or low-level storage mechanics. As cautioned in `PERFORMANCE_TARGETS.md` §6, the listed interfaces and code snippets reflect intended contract designs rather than verified invocation outputs; several included contracts (such as `escrow` and `commission_agreement`) currently do not compile, so workspace-wide WASM build instructions and SDK execution flows remain aspirational. This document is written for external dApp developers, client integrators, and SDK users. Readers should start with [Overview](#overview) and [Architecture](#architecture) before consulting individual contract APIs.
+
 > **closes #713** — Add Comprehensive API Documentation and Code Comments
 >
 > This document supplements the existing `docs/API_REFERENCE.md` with full

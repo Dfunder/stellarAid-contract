@@ -1,10 +1,11 @@
 use soroban_sdk::{contracttype, Address, Env, Symbol};
 
-use crate::types::{AddressEnvironment, FeeTokenMetadata, ResolutionCacheEntry};
+use crate::types::{
+    AddressEnvironment, FeeTier, FeeTokenMetadata, Promotion, ReferralConfig, ResolutionCacheEntry,
+};
 
 /// Resolutions are considered fresh for this many ledgers (~5 days at 5s/ledger).
 pub const RESOLUTION_CACHE_TTL_LEDGERS: u32 = 86_400;
-use crate::types::{FeeTier, FeeTokenMetadata, Promotion, ReferralConfig};
 
 #[contracttype]
 pub enum DataKey {
@@ -129,17 +130,17 @@ pub fn set_active_environment(env: &Env, e: AddressEnvironment) {
 pub fn get_registered_address(env: &Env, e: &AddressEnvironment, name: &Symbol) -> Option<Address> {
     env.storage()
         .instance()
-        .get(&DataKey::RegistryEntry(e.clone(), name.clone()))
+        .get(&DataKey::RegistryEntry(*e, name.clone()))
 }
 pub fn set_registered_address(env: &Env, e: &AddressEnvironment, name: &Symbol, address: &Address) {
     env.storage()
         .instance()
-        .set(&DataKey::RegistryEntry(e.clone(), name.clone()), address);
+        .set(&DataKey::RegistryEntry(*e, name.clone()), address);
 }
 pub fn remove_registered_address(env: &Env, e: &AddressEnvironment, name: &Symbol) {
     env.storage()
         .instance()
-        .remove(&DataKey::RegistryEntry(e.clone(), name.clone()));
+        .remove(&DataKey::RegistryEntry(*e, name.clone()));
 }
 
 pub fn get_resolution_cache(
@@ -149,17 +150,18 @@ pub fn get_resolution_cache(
 ) -> Option<ResolutionCacheEntry> {
     env.storage()
         .instance()
-        .get(&DataKey::ResolutionCache(e.clone(), name.clone()))
+        .get(&DataKey::ResolutionCache(*e, name.clone()))
 }
 pub fn set_resolution_cache(env: &Env, e: &AddressEnvironment, name: &Symbol, entry: &ResolutionCacheEntry) {
     env.storage()
         .instance()
-        .set(&DataKey::ResolutionCache(e.clone(), name.clone()), entry);
+        .set(&DataKey::ResolutionCache(*e, name.clone()), entry);
 }
 pub fn remove_resolution_cache(env: &Env, e: &AddressEnvironment, name: &Symbol) {
     env.storage()
         .instance()
-        .remove(&DataKey::ResolutionCache(e.clone(), name.clone()));
+        .remove(&DataKey::ResolutionCache(*e, name.clone()));
+}
 // ── Advanced fee structures (#690) ─────────────────────────────────────────
 
 /// All configured fee tiers, sorted ascending by `min_volume`.

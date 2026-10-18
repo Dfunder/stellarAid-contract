@@ -18,6 +18,13 @@ pub enum DisputeError {
     /// before the write, not after. Appended, never renumbered: error code
     /// values are permanent per `docs/UPGRADE_AND_ROLLBACK.md`.
     NoteTooLong = 10,
+    /// Evidence arrived after the dispute's deadline (#977).
+    EvidenceWindowClosed = 11,
+    /// A submitted evidence blob exceeds `MAX_EVIDENCE_LEN` (#977).
+    EvidenceTooLong = 12,
+    /// The configured dispute TTL is zero or above the documented maximum
+    /// (#977).
+    InvalidTtl = 13,
 }
 
 impl core::fmt::Display for DisputeError {
@@ -33,6 +40,9 @@ impl core::fmt::Display for DisputeError {
             Self::InvalidShareBps => write!(f, "invalid share bps"),
             Self::ArithmeticOverflow => write!(f, "arithmetic operation would overflow"),
             Self::NoteTooLong => write!(f, "resolution note exceeds maximum length"),
+            Self::EvidenceWindowClosed => write!(f, "the evidence window has closed"),
+            Self::EvidenceTooLong => write!(f, "evidence exceeds maximum length"),
+            Self::InvalidTtl => write!(f, "dispute TTL is zero or above the maximum"),
         }
     }
 }

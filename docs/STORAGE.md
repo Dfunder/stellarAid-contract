@@ -96,6 +96,7 @@ management occurs.
 | [`competitions`](#competitions) | persistent, instance | — none — |
 | [`creator_fund`](#creator-fund) | persistent, instance | — none — |
 | [`dao`](#dao) | persistent | `DEFAULT_TIMELOCK_LEDGERS` 17,280 |
+| [`dispute_arbiter`](#dispute-arbiter) | persistent, instance | `shared::dispute::DEFAULT_DISPUTE_TTL_LEDGERS` 864,000, `MAX_DISPUTE_TTL_LEDGERS` 2,592,000 |
 | [`dispute_arbiter`](#dispute-arbiter) | persistent, instance | — none — |
 | [`donation`](#donation) | persistent, instance | `MAX_DONATION_HISTORY` 500 (records), `DEFAULT_DONATION_HISTORY` 100 (records), `PRUNE_MAX_BATCH` 100 (records), `MIN_RETENTION_SECONDS` 7,776,000 (seconds) |
 | [`ecosystem_funding`](#ecosystem-funding) | persistent | — none — |
@@ -108,11 +109,12 @@ management occurs.
 | [`platform_config`](#platform-config) | persistent, instance | — none — |
 | [`rate_limiter`](#rate-limiter) | persistent, instance | `DEFAULT_WINDOW_LEDGERS` 28,800 |
 | [`recruitment`](#recruitment) | persistent, instance | — none — |
-| [`reputation`](#reputation) | persistent, instance | `REPUTATION_TTL_LEDGERS` 1,296,000 |
+| [`reputation`](#reputation) | persistent, instance | `REPUTATION_TTL_LEDGERS` 1,296,000, `DEFAULT_APPEAL_WINDOW_LEDGERS` 17,280, `MAX_APPEAL_WINDOW_LEDGERS` 518,400, `MAX_QUEUE_SIZE` 256 |
 | [`revenue_sharing`](#revenue-sharing) | persistent, instance | — none — |
 | [`search`](#search) | persistent, instance | — none — |
 | [`subscription`](#subscription) | persistent, instance | — none — |
 | [`verification`](#verification) | persistent, instance | — none — |
+| [`shared`](#shared) | instance | `DEFAULT_RECOVERY_DELAY_LEDGERS` 17,280, `MAX_RECOVERY_DELAY_LEDGERS` 120,960, `DEFAULT_STALL_LEDGERS` 17,280, `DEFAULT_ALERT_COOLDOWN_LEDGERS` 60, `SLA_HEALTH_CHECK_MAX_LEDGERS` 60, `shared::dispute::DEFAULT_DISPUTE_TTL_LEDGERS` 864,000, `MAX_DISPUTE_TTL_LEDGERS` 2,592,000 |
 | [`withdrawal`](#withdrawal) | persistent, instance | `MAX_WITHDRAWALS_PER_CAMPAIGN` 500 (ids), `DEFAULT_WITHDRAWALS_PER_CAMPAIGN` 100 (ids), `PRUNE_MAX_BATCH` 100 (ids) |
 | [`shared`](#shared) | instance | `DEFAULT_RECOVERY_DELAY_LEDGERS` 17,280, `MAX_RECOVERY_DELAY_LEDGERS` 120,960, `DEFAULT_STALL_LEDGERS` 17,280, `DEFAULT_ALERT_COOLDOWN_LEDGERS` 60, `SLA_HEALTH_CHECK_MAX_LEDGERS` 60 |
 
@@ -468,8 +470,10 @@ Configuration lives in `instance()` storage; per-dispute records live in `persis
 | `DataKey::Admin` | `Address` | instance | unset — no `extend_ttl`/`bump` in this crate; entry lives and dies with the contract instance | The arbiter admin. Used as the "is initialised" sentinel (`has_admin`), and `admin.require_auth()` in `resolve_for_client`, `resolve_for_artist`, and `partial_resolve`. |
 | `DataKey::EscrowContract` | `Address` | instance | unset — no `extend_ttl`/`bump` in this crate | Target of every `env.invoke_contract` to the escrow: `refund_cl` and `rel_pay`. |
 | `DataKey::ConfigContract` | `Address` | instance | unset — no `extend_ttl`/`bump` in this crate | Passed through to the escrow on every settlement call, and invoked directly for `get_usdc` in `partial_resolve`. |
-| `DataKey::AutoResolveLedgers` | `u32` | instance | unset — no `extend_ttl`/`bump` in this crate | Constructor-supplied delay; `open_dispute` computes `auto_resolve_ledger = opened_ledger + auto_resolve_ledgers`. No crate-level constant for the default — it is whatever the deployer passes. |
-| `DataKey::Dispute(commission_id)` | `DisputeRecord` | persistent | unset — no `extend_ttl`/`bump` in this crate | The dispute record: `commission_id: Bytes, opened_ledger: u32, auto_resolve_ledger: u32, status: DisputeStatus, resolution_note: Option<String>`. Existence is keyed by `commission_id`, so a commission can hold at most one dispute. |
+| `DataKey::DisputeTtlLedgers` | `u32` | instance | unset — no `extend_ttl`/`bump` in this crate | **#977.** The dispute TTL, from which every deadline is computed. Seeded from the `auto_resolve_ledgers` constructor argument; `set_dispute_ttl_ledgers` bounds it to `(0, shared::dispute::MAX_DISPUTE_TTL_LEDGERS]`, `get_dispute_ttl_ledgers` falls back to `shared::dispute::DEFAULT_DISPUTE_TTL_LEDGERS`. |
+| `DataKey::Dispute(commission_id)` | `DisputeRecord` | persistent | unset — no `extend_ttl`/`bump` in this crate | The dispute record: `commission_id: Bytes, opened_ledger: u32, deadline_ledger: u32, status: DisputeStatus, resolution_note: Option<String>`. `deadline_ledger = opened_ledger + ttl` is the single timer: evidence is rejected after it (#977) and `auto_resolve` becomes callable at it. Existence is keyed by `commission_id`, so a commission can hold at most one dispute. |
+| `DataKey::Evidence(commission_id, index)` | `EvidenceRecord` | persistent | unset — no `extend_ttl`/`bump` in this crate | **#977.** Append-only evidence: `{commission_id, submitter, evidence: Bytes (≤ `MAX_EVIDENCE_LEN` 1024), submitted_ledger}`. Written by `submit_evidence`, which rejects anything past `deadline_ledger` with `EvidenceWindowClosed`. |
+| `DataKey::EvidenceCount(commission_id)` | `u32` | persistent | unset — no `extend_ttl`/`bump` in this crate | **#977.** Number of evidence entries, also the next append index. Read by `get_evidence_count`. |
 | `HealthKey::Metrics` (`shared::health`) | `HealthMetrics` | instance | unset — no `extend_ttl`/`bump` in this crate | `ok_count`, `error_count`, `last_ok_ledger`, `last_error_ledger`, `paused`. Written by `report_ok` / `report_error`; read by `get_health_metrics`, `health_check`, `detect_anomaly`, `should_rollback`. |
 | `HealthKey::AlertConfig` (`shared::health`) | `AlertConfig` | instance | unset — no `extend_ttl`/`bump` in this crate | Alert thresholds (`degraded_error_bps`, `unhealthy_error_bps`, `stall_ledgers`, `alert_cooldown_ledgers`, `alerting_enabled`). Set by `set_alert_config`, defaulted by `get_alert_config`. |
 | `HealthKey::LastAlertLedger` (`shared::health`) | `u32` | instance | unset — no `extend_ttl`/`bump` in this crate | Cooldown marker for `hlth_alrt` emission; written only from `health_check`. |
@@ -486,16 +490,18 @@ Additionally, `src/dispute_helpers.rs` defines an ad-hoc, non-`DataKey` persiste
 
 **TTL constants.**
 
-This crate declares **no TTL constants of its own** and never calls `extend_ttl`/`bump`. The only ledger-denominated values in its ledger are the constructor parameter `auto_resolve_ledgers` and constants inherited from `shared` (listed below, none of which is a storage TTL):
+This crate declares **no TTL constants of its own** and never calls `extend_ttl`/`bump`. The dispute deadline is sourced from the shared cross-contract constant below, so it cannot drift from `escrow`'s (#977):
 
 | Constant | Ledgers | Approx. duration | Applies to |
 |---|---|---|---|
-| `auto_resolve_ledgers` | runtime parameter, no default | unknown — the value is whatever the deployer passes to `initialize`; no crate-level default exists | Delay added to `opened_ledger` to form `DisputeRecord.auto_resolve_ledger`; gates `auto_resolve`. |
+| `shared::dispute::DEFAULT_DISPUTE_TTL_LEDGERS` | 864,000 | ~60 days at 6 s/ledger | Default `DisputeTtlLedgers`; `open_dispute` adds it to `opened_ledger` to form `DisputeRecord.deadline_ledger`, which gates both `submit_evidence` and `auto_resolve`. Same constant `escrow` uses for its dispute TTL. |
+| `shared::dispute::MAX_DISPUTE_TTL_LEDGERS` | 2,592,000 | ~180 days at 6 s/ledger | Upper bound enforced by `set_dispute_ttl_ledgers` (zero and above-max ⇒ `InvalidTtl`). |
+| `auto_resolve_ledgers` | runtime parameter | unknown — no per-crate default; falls back to the `shared::dispute` default when unset | The `initialize` argument that seeds `DisputeTtlLedgers`. |
 | `shared::health::DEFAULT_STALL_LEDGERS` | 17,280 | ~1 day (source comment: "~1 day at 5s/ledger") | Inactivity window before a stall anomaly; surfaced in `get_sla_targets` and default `AlertConfig.stall_ledgers`. Not a storage TTL. |
 | `shared::health::SLA_HEALTH_CHECK_MAX_LEDGERS` | 60 | ~5 min (source comment: "~5 min at 5s/ledger") | Published poll cadence for off-chain monitors; surfaced by `get_sla_targets`. Not a storage TTL. |
 | `shared::health::DEFAULT_ALERT_COOLDOWN_LEDGERS` | 60 | ~5 min | Minimum gap between consecutive `hlth_alrt` events; default `AlertConfig.alert_cooldown_ledgers`. Not a storage TTL. |
 
-**Compile status.** `compiles` — `cargo build -p dispute_arbiter` finishes cleanly (no warnings emitted).
+**Compile status.** `compiles` — `cargo build -p dispute_arbiter` is expected to finish cleanly. `storage-schema` is **2** (was 1): #977 renames `DataKey::AutoResolveLedgers` → `DisputeTtlLedgers`, renames `DisputeRecord.auto_resolve_ledger` → `deadline_ledger`, and adds `DataKey::Evidence` / `DataKey::EvidenceCount` plus the `DisputeError::EvidenceWindowClosed` (11), `EvidenceTooLong` (12), and `InvalidTtl` (13) variants.
 
 
 ### donation
@@ -745,7 +751,7 @@ Five `DataKey` variants. This is the only crate of the four that actually calls 
 | `DataKey::Admin` | `Address` | instance | none | Sole address allowed to rewrite the signer set. Its presence is the `initialize` guard; single-shot, no rotation |
 | `DataKey::Config` | `MultiSigConfig` | instance | none | `{signers: Vec<Address>, threshold, expiry_ledgers}`. Replaced wholesale by `configure`, so stored threshold and stored signers can never disagree. Read by nearly every entry point |
 | `DataKey::ProposalCount` | `u32` | instance | none | Running count of proposals ever opened, defaulting to `0`. Incremented with a plain `+ 1` in `open_proposal` (no `checked_add`, so it would panic on overflow rather than return a typed error) |
-| `DataKey::Proposal(Bytes)` | `Proposal` | persistent | `MULTISIG_TTL_LEDGERS` (1,296,000) via `extend_ttl(key, 1_296_000, 1_296_000)` in `save_proposal` | `{id, action, creator, status, signature_count, created_ledger, expires_ledger}`. Written by `open_proposal`, `approve`, and both `finalize` paths |
+| `DataKey::Proposal(Bytes)` | `Proposal` | persistent | `MULTISIG_TTL_LEDGERS` (1,296,000) via `extend_ttl(key, 1_296_000, 1_296_000)` in `save_proposal` | `{id, action, creator, status, signature_count, created_ledger, expires_ledger}`. Written by `open_proposal`, `approve`, the `finalize` paths, and — new in #975 — `expire_proposal`, which flips an elapsed `Pending` proposal to `Expired`. Read by `is_expired` (`true` once `Expired` or once a `Pending` proposal is past `expires_ledger`) and `ledgers_until_expiry` |
 | `DataKey::Approval(Bytes, Address)` | `u32` (ledger the signature landed on) | persistent | `MULTISIG_TTL_LEDGERS` (1,296,000) via `extend_ttl(key, 1_296_000, 1_296_000)` in `approve` | One collected signature per `(proposal, signer)`. **Never removed** — a signature cannot be withdrawn, which is what makes "N of M" mean N distinct signers |
 | `shared::health::HealthKey::Metrics` | `HealthMetrics` | instance | none | Reached via `report_ok` / `report_error` / `get_health_metrics` |
 | `shared::health::HealthKey::AlertConfig` | `AlertConfig` | instance | none | Reached via `set_alert_config` / `get_alert_config` |
@@ -769,7 +775,7 @@ Five `DataKey` variants. This is the only crate of the four that actually calls 
 | `MAX_SIGNERS` | n/a — a count | n/a | 10. Enforced by `configure` via `validate_config`: an empty set or `len() > MAX_SIGNERS` ⇒ `InvalidSigners` |
 | `MIN_THRESHOLD` | n/a — a count | n/a | 2. Enforced by `configure` via `validate_config`: `threshold < MIN_THRESHOLD \|\| threshold > signers.len()` ⇒ `InvalidThreshold`, so a 1-of-N scheme is rejected at configuration time |
 
-**Compile status.** `compiles` — `cargo check -p multi_sig --lib` succeeds. The `#[cfg(test)] mod test` in `src/test.rs` (29 tests, including the error-code stability pin) compiles against the `rlib` target.
+**Compile status.** `compiles` — `cargo check -p multi_sig --lib` is expected to succeed. The `#[cfg(test)] mod test` in `src/test.rs` (including the explicit-expiry tests added in #975 and the error-code stability pin) compiles against the `rlib` target. `storage-schema` is **2** (was 1): the proposal encoding carries `expires_ledger`, and #975 adds the `MultiSigError::NotExpired` variant (code 15).
 
 
 ### nft
@@ -940,34 +946,31 @@ Source: `contracts/reputation/`
 
 **Storage layout.**
 
-Both fragments declare a `#[contracttype] enum DataKey` in `types.rs` — the first at lines 103–118 (unterminated) and the second at lines 159–169. Variant names collide across the two, so which set a caller observes is **unknown — the crate does not parse; only one `DataKey` can survive a fix**. Fragment A = the moderation contract, Fragment B = the scoring contract.
+A single `#[contracttype] enum DataKey` in `types.rs`. Per-review and per-subject records are `persistent`; the admin, the appeal-window policy, and the moderation queue are `instance`. The per-subject aggregate added by #974 is `persistent`, keyed by subject, so a subject's reputation outlives any single review entry.
 
 | Key | Value type | Storage class | TTL | Purpose |
 |---|---|---|---|---|
-| `DataKey::Admin` (A, line 104) | `Address` | instance | none | Moderation admin; written once by `initialize`, read by `require_admin` |
-| `DataKey::Review(Bytes)` (A, line 105) | `ReviewRecord` | persistent | `REPUTATION_TTL_LEDGERS` (1,296,000) via `extend_ttl` in `submit_review` | A review keyed by caller-chosen `review_id`; status is **overwritten in place** by `report_review`, `moderate_review`, and `resolve_appeal` |
-| `DataKey::Report(Bytes, u32)` (A, line 107) | `ReportRecord` | persistent | `REPUTATION_TTL_LEDGERS` (1,296,000) via `extend_ttl` in `report_review` | One report per `(review_id, report_index)`; scanned linearly for the per-reporter dedup check |
-| `DataKey::ReportCount(Bytes)` (A, line 109) | `u32` | persistent | `REPUTATION_TTL_LEDGERS` (1,296,000) via `extend_ttl` in `report_review` | Number of reports for a review, also the next append index |
-| `DataKey::Appeal(Bytes)` (A, line 111) | `AppealRecord` | persistent | `REPUTATION_TTL_LEDGERS` (1,296,000) via `extend_ttl` in `file_appeal` | At most one appeal per review; status mutated by `resolve_appeal` and `escalate_appeal` |
-| `DataKey::ModerationEntry(Bytes, u32)` (A, line 113) | `ModerationRecord` | persistent | `REPUTATION_TTL_LEDGERS` (1,296,000) via `extend_ttl` in `moderate_review` | Append-only moderation decision history per review |
-| `DataKey::ModerationCount(Bytes)` (A, line 115) | `u32` | persistent | `REPUTATION_TTL_LEDGERS` (1,296,000) via `extend_ttl` in `moderate_review` | Number of moderation entries, also the next append index |
-| `DataKey::QueueEntry(u32)` (A, line 117) | `Bytes` (review_id) | instance | none | Admin moderation queue slot, appended in `report_review` |
-| `DataKey::QueueSize` (A, line 118) | `u32` | instance | none | Next queue slot / queue length. Grows monotonically and is never decremented — `moderate_review` appends to the moderation history but, per its own doc, is supposed to remove the entry from the queue, and no such removal is written |
-| `DataKey::Admin` (B, line 161) | `Address` | instance | none | Scoring admin; `initialize` in fragment B writes it **without** `require_auth()` |
-| `DataKey::Moderator(Address)` (B, line 162) | `bool` (always `true`; `remove_moderator` uses `remove`) | instance | none | Moderator role set, additive over the admin |
-| `DataKey::ReviewsForArtist(Address)` (B, line 164) | `Vec<Review>` | persistent | **none — no `extend_ttl` anywhere in fragment B** | Every review for an artist in submission order; loaded whole and rewritten on each change, so cost grows linearly with review count |
-| `DataKey::HasReviewed(Address, Address)` (B, line 166) | `bool` (always `true`) | persistent | none | Dedup guard, keyed `(artist, client)`; never cleared |
-| `DataKey::ReputationScore(Address)` (B, line 168) | `u32` | persistent | none | Cached 0–100 score, recomputed and rewritten on every review state change |
+| `DataKey::Admin` | `Address` | instance | none | Moderation admin; written once by `initialize`, read by `require_admin` and `set_appeal_window` |
+| `DataKey::Review(Bytes)` | `ReviewRecord` | persistent | `REPUTATION_TTL_LEDGERS` (1,296,000) via `extend_ttl` in `submit_review` | A review keyed by caller-chosen `review_id`; status is **overwritten in place** by `report_review`, `moderate_review`, and `resolve_appeal` |
+| `DataKey::Report(Bytes, u32)` | `ReportRecord` | persistent | `REPUTATION_TTL_LEDGERS` (1,296,000) via `extend_ttl` in `report_review` | One report per `(review_id, report_index)`; scanned linearly for the per-reporter dedup check |
+| `DataKey::ReportCount(Bytes)` | `u32` | persistent | `REPUTATION_TTL_LEDGERS` (1,296,000) via `extend_ttl` in `report_review` | Number of reports for a review, also the next append index |
+| `DataKey::Appeal(Bytes)` | `AppealRecord` | persistent | `REPUTATION_TTL_LEDGERS` (1,296,000) via `extend_ttl` in `file_appeal` | At most one appeal per review; carries `window_deadline_ledger` (#976); status mutated by `resolve_appeal` and `escalate_appeal` |
+| `DataKey::ModerationEntry(Bytes, u32)` | `ModerationRecord` | persistent | `REPUTATION_TTL_LEDGERS` (1,296,000) via `extend_ttl` in `moderate_review` | Append-only moderation decision history per review |
+| `DataKey::ModerationCount(Bytes)` | `u32` | persistent | `REPUTATION_TTL_LEDGERS` (1,296,000) via `extend_ttl` in `moderate_review` | Number of moderation entries, also the next append index |
+| `DataKey::QueueEntry(u32)` | `Bytes` (review_id) | instance | none | Admin moderation queue slot, appended in `report_review` |
+| `DataKey::QueueSize` | `u32` | instance | none | Queue length. Grows by one per `report_review` and is capped at `MAX_QUEUE_SIZE` (#976); new reports are rejected with `QueueFull` once full |
+| `DataKey::Aggregate(Address)` | `ReviewAggregate` | persistent | `REPUTATION_TTL_LEDGERS` (1,296,000) via `extend_ttl` in `save_aggregate` | **#974.** Rolling per-subject counters `{total_reviews, active_reviews, rating_sum, removed_reviews, appeal_count, moderation_count}`, maintained on write by `submit_review`, `moderate_review`, `file_appeal`, and `resolve_appeal`. Read via `get_score` / `get_aggregate`, so a score is O(1) and never rescans the review set |
+| `DataKey::AppealWindowLedgers` | `u32` | instance | none | **#976.** Configured appeal window; `get_appeal_window` defaults to `DEFAULT_APPEAL_WINDOW_LEDGERS` (17,280) when unset, `set_appeal_window` bounds it to `(0, MAX_APPEAL_WINDOW_LEDGERS]` |
 
 **TTL constants.**
 
 | Constant | Ledgers | Approx. duration | Applies to |
 |---|---|---|---|
-| `REPUTATION_TTL_LEDGERS` | 1,296,000 | ~90 days (source comment: "~90 days at 6 s/ledger"; the same value is 75 days at the 5 s rate) | Fragment A only: `Review`, `Report`, `ReportCount`, `Appeal`, `ModerationEntry`, `ModerationCount`. Fragment B's `ReviewsForArtist`, `HasReviewed`, and `ReputationScore` get **no** TTL extension |
+| `REPUTATION_TTL_LEDGERS` | 1,296,000 | ~90 days (source comment: "~90 days at 6 s/ledger"; the same value is 75 days at the 5 s rate) | Every persistent key: `Review`, `Report`, `ReportCount`, `Appeal`, `ModerationEntry`, `ModerationCount`, and the `Aggregate` entry added by #974 |
 
-Fragment B declares two non-TTL limits: `MAX_COMMENT_LEN = 512` bytes (enforced by `require_comment_len` → `CommentTooLong`, applied to the review comment, the dispute reason, and the moderation note) and `MIN_REVIEWS_FOR_FULL_CONFIDENCE = 5`.
+Two further bounds are ledger *policy*, not entry lifetime, and so are not TTLs: `MAX_QUEUE_SIZE` (256) caps `DataKey::QueueSize` (#976), and `MAX_REPORTS_PER_REVIEW` (16) caps the per-review report count checked in `report_review`.
 
-**Compile status.** `does not compile` — unclosed delimiter. `contracts/reputation/src/lib.rs` contains **two** `#[contract]` types (`ReputationContract` at line 1 and `Reputation`, spliced in at line 344) whose `DataKey`, `ReviewStatus` and `ReputationError` definitions collide, and both declare an `initialize` entry point. Only one of the two can survive a fix, so which storage keys and error codes a deployed `reputation` would expose is **unknown — the crate does not parse, so no semantic analysis is possible**. Both `src/tests.rs` (targeting `ReputationContractClient`, `rating_x10` 10–50) and `src/test.rs` (targeting `ReputationClient`, `rating` 1–5, `get_reputation`) are wired up, confirming the duplication. `ReputationError` also has duplicate names and duplicate discriminants (5, 6, 7, 8) within a single fragment, so its final variant set and code assignment are likewise undetermined.
+**Compile status.** `compiles` — a single `ReputationContract`; `cargo check -p reputation --lib` is expected to succeed, and the unit tests in `src/tests.rs` cover the review/appeal lifecycle plus the #974 aggregate and #976 appeal-window/queue-cap behaviour. The orphan `src/test.rs` (targeting a `ReputationClient` that no longer exists) is **not** declared by `lib.rs` and is therefore not compiled. `storage-schema` is **2** (was 1): #974 adds the `DataKey::Aggregate` entry and #976 adds `DataKey::AppealWindowLedgers` and the `AppealRecord.window_deadline_ledger` field, both encoding changes.
 
 
 ### revenue_sharing
@@ -1174,13 +1177,15 @@ workspace and compiled before being trusted.
 
 ### shared
 
-> State migration and upgrade safety helpers (closes #595). — module doc of `upgrade.rs`; the crate is a 10-module library (`config`, `errors`, `pause`, `types`, `upgrade`, `health`, `rollout`, `correlation`, `validation`, `version`) with no crate-level `//!` doc.
+> State migration and upgrade safety helpers (closes #595). — module doc of `upgrade.rs`; the crate is an 11-module library (`config`, `errors`, `pause`, `types`, `upgrade`, `health`, `rollout`, `correlation`, `validation`, `version`, `dispute`) with no crate-level `//!` doc.
 
 Source: `contracts/shared/`
 
 **Storage layout.**
 
 Every site in the crate uses `env.storage().instance()` — there is not one `persistent()` or `temporary()` call, and the crate never calls `extend_ttl`/`bump`, so instance entries are governed by the contract's own instance TTL configuration. Keys are spread across four `#[contracttype]` key enums; there is no single `DataKey` in this crate.
+
+`shared::dispute` (new, #977) holds no storage — it is a pair of ledger constants (`DEFAULT_DISPUTE_TTL_LEDGERS` 864,000 and `MAX_DISPUTE_TTL_LEDGERS` 2,592,000) that both `escrow` and `dispute_arbiter` source from, so the two contracts cannot disagree about a dispute's time bound.
 
 | Key | Value type | Storage class | TTL | Purpose |
 |---|---|---|---|---|

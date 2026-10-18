@@ -353,6 +353,36 @@ impl MultiSigContract {
         Ok(proposal.status)
     }
 
+    /// Explicitly close an elapsed proposal, marking it [`ProposalStatus::Expired`].
+    ///
+    /// This is the deliberate counterpart to the implicit expiry inside
+    /// `approve`/`finalize`, matching `escrow`'s `expire_escrow`: it lets the
+    /// state be finalised without waiting for a signing attempt. Approvals are
+    /// retained for audit (the `Approval` entries are never removed) but the
+    /// proposal can no longer be finalised.
+    ///
+    /// Fails with [`MultiSigError::NotExpired`] before the deadline and
+    /// [`MultiSigError::ProposalClosed`] once the proposal already closed.
+    pub fn expire_proposal(
+        env: Env,
+        proposal_id: Bytes,
+        executor: Address,
+    ) -> Result<ProposalStatus, MultiSigError> {
+        executor.require_auth();
+        let mut proposal = load_proposal(&env, &proposal_id)?;
+        if proposal.status != ProposalStatus::Pending {
+            return Err(MultiSigError::ProposalClosed);
+        }
+        if env.ledger().sequence() < proposal.expires_ledger {
+            return Err(MultiSigError::NotExpired);
+        }
+        proposal.status = ProposalStatus::Expired;
+        save_proposal(&env, &proposal);
+        env.events()
+            .publish((symbol_short!("ms_expd"),), proposal_id);
+        Ok(proposal.status)
+    }
+
     // ── Reads ───────────────────────────────────────────────────────────────
 
     /// Current signer set, threshold, and signature lifetime.
@@ -396,6 +426,26 @@ impl MultiSigContract {
             proposal.status = ProposalStatus::Expired;
         }
         Ok(proposal)
+    }
+
+    /// `true` once a proposal is past its deadline, whether it was closed by
+    /// `finalize`, by `expire_proposal`, or is simply sitting `Pending` on the
+    /// wrong side of the deadline (#975). Surfaces the expired state without a
+    /// client having to infer it from a `finalize` failure.
+    pub fn is_expired(env: Env, proposal_id: Bytes) -> Result<bool, MultiSigError> {
+        let proposal = load_proposal(&env, &proposal_id)?;
+        Ok(proposal.status == ProposalStatus::Expired
+            || (proposal.status == ProposalStatus::Pending
+                && env.ledger().sequence() >= proposal.expires_ledger))
+    }
+
+    /// Ledgers left before `proposal_id` expires; `0` once the deadline has
+    /// passed. Lets a client display "expires in N ledgers" from a single read.
+    pub fn ledgers_until_expiry(env: Env, proposal_id: Bytes) -> Result<u32, MultiSigError> {
+        let proposal = load_proposal(&env, &proposal_id)?;
+        Ok(proposal
+            .expires_ledger
+            .saturating_sub(env.ledger().sequence()))
     }
 
     /// `true` only for a proposal that reached the threshold and was finalized.

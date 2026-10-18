@@ -16,6 +16,15 @@ pub enum ReputationError {
     ArithmeticOverflow = 10,
     DuplicateReview = 11,
     CommentTooLong = 12,
+    /// The appeal window for the review's subject has closed (#976).
+    AppealWindowClosed = 13,
+    /// The moderation queue is at capacity (#976).
+    QueueFull = 14,
+    /// This review already has the maximum number of reports (#976).
+    ReportLimitReached = 15,
+    /// The configured appeal window is zero or above the documented maximum
+    /// (#976).
+    InvalidAppealWindow = 16,
 }
 
 impl core::fmt::Display for ReputationError {
@@ -33,6 +42,10 @@ impl core::fmt::Display for ReputationError {
             Self::ArithmeticOverflow => write!(f, "arithmetic operation would overflow"),
             Self::DuplicateReview => write!(f, "client has already reviewed this artist"),
             Self::CommentTooLong => write!(f, "comment exceeds maximum length"),
+            Self::AppealWindowClosed => write!(f, "the appeal window has closed"),
+            Self::QueueFull => write!(f, "the moderation queue is full"),
+            Self::ReportLimitReached => write!(f, "this review has reached its report limit"),
+            Self::InvalidAppealWindow => write!(f, "appeal window is zero or above the maximum"),
         }
     }
 }

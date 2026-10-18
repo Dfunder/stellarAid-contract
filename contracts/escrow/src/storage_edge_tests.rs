@@ -221,3 +221,15 @@ fn dispute_ttl_boundary_values_storable() {
         assert_eq!(storage::get_dispute_ttl_ledgers(env), u32::MAX);
     });
 }
+
+#[test]
+fn dispute_ttl_default_is_the_shared_cross_contract_source() {
+    // #977: escrow and dispute_arbiter must agree on a dispute's time bound, so
+    // both source their default from `shared::dispute`. If either drifts back to
+    // a private literal, the arbiter's deadline and escrow's TTL diverge — the
+    // exact coordination bug the issue describes.
+    assert_eq!(
+        DEFAULT_DISPUTE_TTL_LEDGERS,
+        shared::dispute::DEFAULT_DISPUTE_TTL_LEDGERS
+    );
+}

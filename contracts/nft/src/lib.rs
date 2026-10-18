@@ -426,3 +426,6 @@ impl NftOwnership {
             .ok_or(NftError::NftNotFound)
     }
 }
+
+#[cfg(test)]
+mod test;

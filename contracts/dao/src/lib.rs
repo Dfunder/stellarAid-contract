@@ -20,7 +20,10 @@ use soroban_sdk::{
 const DEFAULT_TIMELOCK_LEDGERS: u32 = 17_280;
 
 /// Minimum quorum required for a proposal to pass (numerator out of 10 000).
-const QUORUM_BPS: u32 = 1_000; // 10 %
+const QUORUM_BPS: u32 = 1_000; // 10 % (1_000 / 10_000)
+
+/// Basis-point denominator: 10_000 bps = 100 %.
+const BPS_DENOMINATOR: u32 = 10_000;
 
 // ── Data Types ────────────────────────────────────────────────────────────────
 
@@ -353,7 +356,7 @@ impl DaoGovernance {
 
         // Check quorum: total votes cast must be ≥ QUORUM_BPS of total supply.
         let total_votes = proposal.votes_for + proposal.votes_against;
-        let quorum = (total_supply * QUORUM_BPS as i128) / 10_000;
+        let quorum = (total_supply * QUORUM_BPS as i128) / BPS_DENOMINATOR as i128;
 
         let passed = total_votes >= quorum && proposal.votes_for > proposal.votes_against;
 

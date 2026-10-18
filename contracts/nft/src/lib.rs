@@ -18,6 +18,10 @@ pub mod errors;
 
 use errors::NftError;
 
+/// Maximum royalty a creator may set on secondary sales, in basis points.
+/// 3000 bps = 30%; the cap protects buyers from prohibitive resale fees.
+const MAX_ROYALTY_BPS: u32 = 3000;
+
 // ── Data Types ────────────────────────────────────────────────────────────────
 
 /// Current state of an NFT certificate.
@@ -119,7 +123,7 @@ impl NftOwnership {
     /// * `owner`         — initial owner (may differ from creator on primary sale).
     /// * `title`         — human-readable certificate name.
     /// * `metadata_uri`  — URI pointing to off-chain metadata (IPFS / HTTPS).
-    /// * `royalty_bps`   — basis points paid to creator on secondary sales (≤ 3000).
+    /// * `royalty_bps`   — basis points paid to creator on secondary sales (≤ MAX_ROYALTY_BPS).
     /// * `commission_id` — linked commission id; 0 if standalone.
     /// * `transferable`  — whether the NFT may be transferred after minting.
     /// * `burnable`      — whether the NFT may be burned by the owner.
@@ -137,7 +141,7 @@ impl NftOwnership {
         burnable: bool,
     ) -> Result<u64, NftError> {
         creator.require_auth();
-        if royalty_bps > 3000 {
+        if royalty_bps > MAX_ROYALTY_BPS {
             return Err(NftError::RoyaltyTooHigh);
         }
 
@@ -302,7 +306,7 @@ impl NftOwnership {
     /// Only the original creator may update royalties.
     pub fn update_royalty(env: Env, creator: Address, nft_id: u64, new_royalty_bps: u32) -> Result<(), NftError> {
         creator.require_auth();
-        if new_royalty_bps > 3000 {
+        if new_royalty_bps > MAX_ROYALTY_BPS {
             return Err(NftError::RoyaltyTooHigh);
         }
 

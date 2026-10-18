@@ -14,8 +14,40 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, String, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String, Vec,
 };
+
+/// Typed errors returned by the contract entry points.
+///
+/// These replace the `assert!`/`expect` panics that previously guarded the
+/// entry points, so a caller can handle each failure programmatically.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum LicensingError {
+    /// The contract has not been initialized (no admin).
+    NotInitialized = 1,
+    /// No license exists for the given id.
+    LicenseNotFound = 2,
+    /// The parent license does not exist.
+    ParentNotFound = 3,
+    /// The parent license is not active.
+    ParentNotActive = 4,
+    /// The parent license does not allow sub-licensing.
+    NotSubLicensable = 5,
+    /// The license is not active.
+    NotActive = 6,
+    /// The caller is not the licensee.
+    NotLicensee = 7,
+    /// The license has expired.
+    Expired = 8,
+    /// The caller is not permitted to perform this action.
+    Unauthorized = 9,
+    /// No dispute exists for the given id.
+    DisputeNotFound = 10,
+    /// The dispute has already been resolved.
+    AlreadyResolved = 11,
+}
 
 // ── Data Types ────────────────────────────────────────────────────────────────
 
@@ -238,21 +270,22 @@ impl LicensingMarketplace {
         sub_licensee: Address,
         price: i128,
         expires_at: u32,
-    ) -> u64 {
+    ) -> Result<u64, LicensingError> {
         let parent: LicenseRecord = env
             .storage()
             .persistent()
             .get(&DataKey::License(parent_id))
-            .expect("parent license not found");
+            .ok_or(LicensingError::ParentNotFound)?;
 
         // Only the parent licensee may sub-license.
         parent.licensee.require_auth();
 
-        assert!(
-            parent.status == LicenseStatus::Active,
-            "parent license is not active"
-        );
-        assert!(parent.sub_licensable, "parent license does not allow sub-licensing");
+        if !(parent.status == LicenseStatus::Active) {
+ return Err(LicensingError::ParentNotActive);
+ }
+        if !(parent.sub_licensable) {
+ return Err(LicensingError::NotSubLicensable);
+ }
 
         let id = Self::next_license_id(&env);
         let record = LicenseRecord {
@@ -281,7 +314,7 @@ impl LicensingMarketplace {
             (id, parent_id, sub_licensee),
         );
 
-        id
+        Ok(id)
     }
 
     // ── License Management ────────────────────────────────────────────────
@@ -296,18 +329,17 @@ impl LicensingMarketplace {
     ///
     /// # Panics
     /// Panics if the license is missing or if `caller` is not the owner.
-    pub fn revoke_license(env: Env, caller: Address, license_id: u64) {
+    pub fn revoke_license(env: Env, caller: Address, license_id: u64) -> Result<(), LicensingError> {
         caller.require_auth();
         let mut record: LicenseRecord = env
             .storage()
             .persistent()
             .get(&DataKey::License(license_id))
-            .expect("license not found");
+            .ok_or(LicensingError::LicenseNotFound)?;
 
-        assert!(
-            record.owner == caller,
-            "only the license owner can revoke"
-        );
+        if !(record.owner == caller) {
+ return Err(LicensingError::Unauthorized);
+ }
 
         record.status = LicenseStatus::Revoked;
         env.storage()
@@ -316,6 +348,7 @@ impl LicensingMarketplace {
 
         env.events()
             .publish((symbol_short!("revoked"),), license_id);
+        Ok(())
     }
 
     /// Mark a license as expired (admin or owner action).
@@ -329,24 +362,23 @@ impl LicensingMarketplace {
     /// # Panics
     /// Panics if the contract is not initialized, the license is missing, or
     /// `caller` is neither the admin nor the owner.
-    pub fn expire_license(env: Env, caller: Address, license_id: u64) {
+    pub fn expire_license(env: Env, caller: Address, license_id: u64) -> Result<(), LicensingError> {
         caller.require_auth();
         let admin: Address = env
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .expect("contract not initialized");
+            .ok_or(LicensingError::NotInitialized)?;
 
         let mut record: LicenseRecord = env
             .storage()
             .persistent()
             .get(&DataKey::License(license_id))
-            .expect("license not found");
+            .ok_or(LicensingError::LicenseNotFound)?;
 
-        assert!(
-            caller == admin || caller == record.owner,
-            "unauthorized"
-        );
+        if !(caller == admin || caller == record.owner) {
+ return Err(LicensingError::Unauthorized);
+ }
 
         record.status = LicenseStatus::Expired;
         env.storage()
@@ -355,6 +387,7 @@ impl LicensingMarketplace {
 
         env.events()
             .publish((symbol_short!("expired"),), license_id);
+        Ok(())
     }
 
     // ── Usage Tracking ────────────────────────────────────────────────────
@@ -373,25 +406,28 @@ impl LicensingMarketplace {
     /// # Panics
     /// Panics if the license is missing or not active, if `user` is not the
     /// licensee, or if the license has already expired.
-    pub fn record_usage(env: Env, user: Address, license_id: u64, context: String) {
+    pub fn record_usage(env: Env, user: Address, license_id: u64, context: String) -> Result<(), LicensingError> {
         user.require_auth();
 
         let record: LicenseRecord = env
             .storage()
             .persistent()
             .get(&DataKey::License(license_id))
-            .expect("license not found");
+            .ok_or(LicensingError::LicenseNotFound)?;
 
-        assert!(
-            record.status == LicenseStatus::Active,
-            "license is not active"
-        );
-        assert!(record.licensee == user, "caller is not the licensee");
+        if !(record.status == LicenseStatus::Active) {
+ return Err(LicensingError::NotActive);
+ }
+        if !(record.licensee == user) {
+ return Err(LicensingError::NotLicensee);
+ }
 
         // Check expiry.
         let now = env.ledger().sequence();
         if record.expires_at > 0 {
-            assert!(now <= record.expires_at, "license has expired");
+            if !(now <= record.expires_at) {
+ return Err(LicensingError::Expired);
+ }
         }
 
         let count: u64 = env
@@ -416,6 +452,7 @@ impl LicensingMarketplace {
 
         env.events()
             .publish((symbol_short!("usage"), license_id), (user, context));
+        Ok(())
     }
 
     /// Return the number of recorded usage events for a license.
@@ -454,14 +491,14 @@ impl LicensingMarketplace {
         complainant: Address,
         license_id: u64,
         description: String,
-    ) -> u64 {
+    ) -> Result<u64, LicensingError> {
         complainant.require_auth();
 
         let mut record: LicenseRecord = env
             .storage()
             .persistent()
             .get(&DataKey::License(license_id))
-            .expect("license not found");
+            .ok_or(LicensingError::LicenseNotFound)?;
 
         // Flag the license as disputed while under review.
         record.status = LicenseStatus::Disputed;
@@ -488,7 +525,7 @@ impl LicensingMarketplace {
             (dispute_id, complainant, description),
         );
 
-        dispute_id
+        Ok(dispute_id)
     }
 
     /// Resolve an open dispute.  Only the admin may call this.
@@ -509,25 +546,26 @@ impl LicensingMarketplace {
         admin: Address,
         dispute_id: u64,
         outcome: DisputeOutcome,
-    ) {
+    ) -> Result<(), LicensingError> {
         admin.require_auth();
         let stored_admin: Address = env
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .expect("contract not initialized");
-        assert!(admin == stored_admin, "only admin can resolve disputes");
+            .ok_or(LicensingError::NotInitialized)?;
+        if !(admin == stored_admin) {
+ return Err(LicensingError::Unauthorized);
+ }
 
         let mut dispute: LicenseDispute = env
             .storage()
             .persistent()
             .get(&DataKey::Dispute(dispute_id))
-            .expect("dispute not found");
+            .ok_or(LicensingError::DisputeNotFound)?;
 
-        assert!(
-            dispute.outcome == DisputeOutcome::Pending,
-            "dispute already resolved"
-        );
+        if !(dispute.outcome == DisputeOutcome::Pending) {
+ return Err(LicensingError::AlreadyResolved);
+ }
 
         dispute.outcome = outcome.clone();
         env.storage()
@@ -539,7 +577,7 @@ impl LicensingMarketplace {
             .storage()
             .persistent()
             .get(&DataKey::License(dispute.license_id))
-            .expect("license not found");
+            .ok_or(LicensingError::LicenseNotFound)?;
 
         record.status = match outcome {
             DisputeOutcome::UpheldForLicensor => LicenseStatus::Revoked,
@@ -552,6 +590,7 @@ impl LicensingMarketplace {
 
         env.events()
             .publish((symbol_short!("resolved"),), (dispute_id, outcome));
+        Ok(())
     }
 
     // ── Queries ───────────────────────────────────────────────────────────
@@ -566,11 +605,11 @@ impl LicensingMarketplace {
     ///
     /// # Panics
     /// Panics if the license is not found.
-    pub fn get_license(env: Env, license_id: u64) -> LicenseRecord {
+    pub fn get_license(env: Env, license_id: u64) -> Result<LicenseRecord, LicensingError> {
         env.storage()
             .persistent()
             .get(&DataKey::License(license_id))
-            .expect("license not found")
+            .ok_or(LicensingError::LicenseNotFound)
     }
 
     /// Retrieve a dispute record.
@@ -583,11 +622,11 @@ impl LicensingMarketplace {
     ///
     /// # Panics
     /// Panics if the dispute is not found.
-    pub fn get_dispute(env: Env, dispute_id: u64) -> LicenseDispute {
+    pub fn get_dispute(env: Env, dispute_id: u64) -> Result<LicenseDispute, LicensingError> {
         env.storage()
             .persistent()
             .get(&DataKey::Dispute(dispute_id))
-            .expect("dispute not found")
+            .ok_or(LicensingError::DisputeNotFound)
     }
 
     /// Return a paginated slice of usage entries for a license.

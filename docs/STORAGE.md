@@ -28,6 +28,40 @@ Per-contract storage layout and TTL policy for every crate in the workspace.
 > - **Dependency supply chain:** §9 of this document.
 > - **Design rationale:** [ADR-0007](./ADRs/0007-storage-data-model-and-ttl-management.md).
 
+## Table of contents
+
+- [How to read this](#how-to-read-this)
+- [Summary across the workspace](#summary-across-the-workspace)
+- [Storage-schema changes: #983 and #985](#storage-schema-changes-983-and-985)
+- [Per-contract storage layout](#per-contract-storage-layout)
+- [9. Supply-chain posture](#9-supply-chain-posture)
+  - [9.1 What runs, and when](#91-what-runs-and-when)
+  - [9.2 Initial audit result](#92-initial-audit-result)
+  - [9.3 What is deliberately still a warning](#93-what-is-deliberately-still-a-warning)
+  - [9.4 Licence and source policy](#94-licence-and-source-policy)
+  - [9.5 Reproducing this](#95-reproducing-this)
+
+### Contract storage index
+
+Every per-contract layout in this document, in the order it appears. Each link
+jumps to that contract's storage table.
+
+| Contract | |
+|---|---|
+| [analytics](#analytics) | [audit](#audit) |
+| [campaign](#campaign) | [commission_agreement](#commission_agreement) |
+| [competitions](#competitions) | [creator_fund](#creator_fund) |
+| [dao](#dao) | [dispute_arbiter](#dispute_arbiter) |
+| [donation](#donation) | [ecosystem_funding](#ecosystem_funding) |
+| [escrow](#escrow) | [licensing](#licensing) |
+| [mentorship](#mentorship) | [messaging](#messaging) |
+| [multi_sig](#multi_sig) | [nft](#nft) |
+| [platform_config](#platform_config) | [rate_limiter](#rate_limiter) |
+| [recruitment](#recruitment) | [reputation](#reputation) |
+| [revenue_sharing](#revenue_sharing) | [search](#search) |
+| [subscription](#subscription) | [verification](#verification) |
+| [withdrawal](#withdrawal) | [shared](#shared) |
+
 ## How to read this
 
 Soroban exposes three storage classes, and the choice is a cost decision rather

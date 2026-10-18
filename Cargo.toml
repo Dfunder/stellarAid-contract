@@ -52,7 +52,12 @@ min-compatible = "0.1.0"
 
 [workspace.dependencies]
 soroban-sdk = { version = "21.0.0" }
-stellar-strkey = "0.0.2"
+# 0.0.8 is the API the SDK is written against (`stellar_strkey::ed25519::*`
+# and `stellar_strkey::Contract`); it is also the version `stellar-xdr` 21
+# already pulls in, so this removes the duplicate 0.0.2 copy. The 0.0.2 pin
+# only exposed `Strkey::{PublicKeyEd25519, PrivateKeyEd25519}` and had no
+# `ed25519` module, so `sdk` could not compile against it (issue #5).
+stellar-strkey = "0.0.8"
 stellar-xdr = "21.0.0"
 reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1", features = ["derive"] }

@@ -16,44 +16,44 @@ This guide describes the steps required to migrate StellarAid contracts to the l
 
 Deploy the updated contract to the network:
 
-`ash
+```bash
 stellar contract deploy \
   --wasm target/wasm32-unknown-unknown/release/stellar_aid.wasm \
   --source admin \
   --network mainnet
-`
+```
 
 ### Step 2: Upgrade Existing Contract
 
 Run the upgrade instruction on the existing contract:
 
-`ash
+```bash
 stellar contract invoke \
   --id <CONTRACT_ID> \
   --source admin \
   --network mainnet \
   -- upgrade \
   --new_wasm_hash <NEW_WASM_HASH>
-`
+```
 
 ### Step 3: Migrate Storage
 
 If storage schema changed, run the migration helper:
 
-`ash
+```bash
 stellar contract invoke \
   --id <CONTRACT_ID> \
   --source admin \
   -- migrate_storage
-`
+```
 
 ### Step 4: Verify Upgrade
 
 Confirm the contract version is updated:
 
-`ash
+```bash
 stellar contract invoke --id <CONTRACT_ID> -- version
-`
+```
 
 ## Rollback
 

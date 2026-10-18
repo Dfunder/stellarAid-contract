@@ -6,6 +6,18 @@ use thiserror::Error;
 pub enum ConfigError {
     #[error("Missing required environment variable: {0}")]
     MissingVar(String),
+    #[error("Invalid URL for {0}: {1}")]
+    InvalidUrl(String, String),
+    #[error("Unknown network passphrase: {0}")]
+    UnknownNetwork(String),
+    #[error(
+        "Network passphrase does not match network '{network}': expected '{expected}', got '{actual}'"
+    )]
+    NetworkMismatch {
+        network: String,
+        expected: String,
+        actual: String,
+    },
 }
 
 /// Predefined network configurations for Stellar.
@@ -72,6 +84,62 @@ impl Config {
             soroban_network_passphrase: network.network_passphrase.to_string(),
         }
     }
+
+    /// Validate the *contents* of the configuration, not just their presence
+    /// (#980).
+    ///
+    /// Checks that both URLs parse as `http(s)` URLs, and that the network
+    /// passphrase matches the named network — or, when `stellar_network` is not
+    /// recognised, is at least one of the two known networks. A wrong
+    /// passphrase is the single most common integration mistake and produces
+    /// the most confusing failure, so it is caught here, immediately, with a
+    /// clear message.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        Self::validate_url("HORIZON_URL", &self.horizon_url)?;
+        Self::validate_url("SOROBAN_RPC_URL", &self.soroban_rpc_url)?;
+
+        match Self::known_passphrase(&self.stellar_network) {
+            Some(expected) if self.soroban_network_passphrase != expected => {
+                Err(ConfigError::NetworkMismatch {
+                    network: self.stellar_network.clone(),
+                    expected: expected.to_string(),
+                    actual: self.soroban_network_passphrase.clone(),
+                })
+            }
+            Some(_) => Ok(()),
+            None => {
+                if matches!(
+                    self.soroban_network_passphrase.as_str(),
+                    TESTNET.network_passphrase | MAINNET.network_passphrase
+                ) {
+                    Ok(())
+                } else {
+                    Err(ConfigError::UnknownNetwork(
+                        self.soroban_network_passphrase.clone(),
+                    ))
+                }
+            }
+        }
+    }
+
+    fn validate_url(key: &str, value: &str) -> Result<(), ConfigError> {
+        match reqwest::Url::parse(value) {
+            Ok(u)
+                if matches!(u.scheme(), "http" | "https") && u.host_str().is_some() =>
+            {
+                Ok(())
+            }
+            _ => Err(ConfigError::InvalidUrl(key.to_string(), value.to_string())),
+        }
+    }
+
+    fn known_passphrase(network: &str) -> Option<&'static str> {
+        match network.trim().to_ascii_lowercase().as_str() {
+            "testnet" => Some(TESTNET.network_passphrase),
+            "mainnet" | "public" => Some(MAINNET.network_passphrase),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -86,5 +154,52 @@ mod tests {
         }
         let result = Config::from_env();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_accepts_a_known_network() {
+        let cfg = Config::from_network(&TESTNET, "SDUMMY");
+        assert!(cfg.validate().is_ok());
+        let cfg = Config::from_network(&MAINNET, "SDUMMY");
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_a_wrong_passphrase_immediately() {
+        // Everything is present and the URL is fine, but the passphrase is for
+        // the other network — the most common integration mistake.
+        let mut cfg = Config::from_network(&TESTNET, "SDUMMY");
+        cfg.soroban_network_passphrase = MAINNET.network_passphrase.to_string();
+        let err = cfg.validate().unwrap_err();
+        assert!(matches!(err, ConfigError::NetworkMismatch { .. }));
+        assert!(err.to_string().contains("does not match"));
+    }
+
+    #[test]
+    fn validate_rejects_a_malformed_url() {
+        let mut cfg = Config::from_network(&TESTNET, "SDUMMY");
+        cfg.horizon_url = "not a url".to_string();
+        assert!(matches!(
+            cfg.validate().unwrap_err(),
+            ConfigError::InvalidUrl(_, _)
+        ));
+
+        let mut cfg = Config::from_network(&TESTNET, "SDUMMY");
+        cfg.soroban_rpc_url = "ftp://rpc.example.com".to_string();
+        assert!(matches!(
+            cfg.validate().unwrap_err(),
+            ConfigError::InvalidUrl(_, _)
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_an_unknown_passphrase_for_an_unknown_network() {
+        let mut cfg = Config::from_network(&TESTNET, "SDUMMY");
+        cfg.stellar_network = "futurenet".to_string();
+        cfg.soroban_network_passphrase = "Future Network ; 2030".to_string();
+        assert!(matches!(
+            cfg.validate().unwrap_err(),
+            ConfigError::UnknownNetwork(_)
+        ));
     }
 }

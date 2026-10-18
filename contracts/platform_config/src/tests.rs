@@ -38,7 +38,7 @@ fn test_initialize_success() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "Error(Contract, #4)")]
 fn test_set_fee_bps_too_high() {
     let env = Env::default();
     let (client, _, _, _) = setup(&env);
@@ -67,7 +67,7 @@ fn test_accept_admin_updates_admin() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "Error(Contract, #1)")]
 fn test_initialize_already_initialized() {
     let env = Env::default();
     env.mock_all_auths();
@@ -81,7 +81,7 @@ fn test_initialize_already_initialized() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "Error(Contract, #4)")]
 fn test_initialize_fee_bps_too_high() {
     let env = Env::default();
     env.mock_all_auths();

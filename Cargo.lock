@@ -1828,13 +1828,14 @@ name = "sdk"
 version = "0.1.0"
 dependencies = [
  "dotenvy",
+ "ed25519-dalek",
  "flate2",
  "rand",
  "reqwest",
  "serde",
  "serde_json",
  "soroban-sdk",
- "stellar-strkey 0.0.2",
+ "stellar-strkey",
  "stellar-xdr",
  "thiserror 2.0.20",
  "tokio",
@@ -2137,7 +2138,7 @@ dependencies = [
  "soroban-env-common",
  "soroban-wasmi",
  "static_assertions",
- "stellar-strkey 0.0.8",
+ "stellar-strkey",
  "wasmparser",
 ]
 
@@ -2189,7 +2190,7 @@ dependencies = [
  "soroban-env-host",
  "soroban-ledger-snapshot",
  "soroban-sdk-macros",
- "stellar-strkey 0.0.8",
+ "stellar-strkey",
 ]
 
 [[package]]
@@ -2283,15 +2284,6 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stellar-strkey"
-version = "0.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "350ec80765002d972f7fa9bc2bd9e550fc3bf9fbe3f1c0e55b30755fccc2fd34"
-dependencies = [
- "base32",
-]
-
-[[package]]
-name = "stellar-strkey"
 version = "0.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "12d2bf45e114117ea91d820a846fd1afbe3ba7d717988fee094ce8227a3bf8bd"
@@ -2314,7 +2306,7 @@ dependencies = [
  "hex",
  "serde",
  "serde_with",
- "stellar-strkey 0.0.8",
+ "stellar-strkey",
 ]
 
 [[package]]

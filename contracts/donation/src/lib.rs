@@ -337,12 +337,42 @@ impl DonationContract {
         env.storage().persistent().get(&DataKey::CampaignRaised(campaign_id)).unwrap_or(0_i128)
     }
 
+    /// Current number of donation records retained for `campaign_id` (#998).
+    ///
+    /// Read-only and O(1): it reads the stored list and returns its length
+    /// without walking it. Because the list is ring-trimmed to the retention
+    /// cap on every write, this is the **current size against the cap** rather
+    /// than a lifetime total — an operator sees utilisation before a write
+    /// starts failing. Storage tier: persistent
+    /// (`DataKey::CampaignDonations`). Compare against
+    /// [`Self::get_donation_retention_cap`] for the utilisation fraction.
+    pub fn get_donation_count(env: Env, campaign_id: u64) -> u32 {
+        env.storage()
+            .persistent()
+            .get::<DataKey, Vec<Donation>>(&DataKey::CampaignDonations(campaign_id))
+            .unwrap_or(Vec::new(&env))
+            .len()
+    }
+
     /// One bounded page of a donor's donation history across all campaigns
     /// (#986). Same retention cap and page contract as
     /// [`Self::get_donations_for_campaign`].
     pub fn get_donor_history(env: Env, donor: Address, start: u32, limit: u32) -> (Vec<Donation>, PageInfo) {
         let history = env.storage().persistent().get(&DataKey::DonationHistory(donor)).unwrap_or(Vec::new(&env));
         pagination::paginated(&env, &history, start, limit)
+    }
+
+    /// Current number of records retained in `donor`'s history (#998).
+    ///
+    /// O(1) length read of `DataKey::DonationHistory`. Persistent tier; the
+    /// same current-size-against-cap meaning as
+    /// [`Self::get_donation_count`].
+    pub fn get_donor_history_count(env: Env, donor: Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get::<DataKey, Vec<Donation>>(&DataKey::DonationHistory(donor))
+            .unwrap_or(Vec::new(&env))
+            .len()
     }
 
     // ── Retention policy (#986) ────────────────────────────────────────────

@@ -23,11 +23,7 @@ fn has_admin(env: &Env) -> bool {
 }
 
 fn require_initialized(env: &Env) -> Result<(), RevenueError> {
-    if has_admin(env) {
-        Ok(())
-    } else {
-        Err(RevenueError::NotInitialized)
-    }
+    shared::initialization::require_initialized(env, &DataKey::Admin, RevenueError::NotInitialized)
 }
 
 fn load_agreement(env: &Env, id: &Bytes) -> Result<Agreement, RevenueError> {

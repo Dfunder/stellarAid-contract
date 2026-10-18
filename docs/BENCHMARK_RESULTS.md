@@ -174,7 +174,38 @@ real constraints for these contracts are the `write_bytes` / `disk_read_entries`
 list-length ceilings, which are shape analyses (see `PERFORMANCE_TARGETS.md` §2),
 not instruction counts, and are unchanged by these runs.
 
-## 8. Re-running
+## 8. Re-running (#997)
+
+This section is the single place to reproduce the numbers above. Everything
+needed — the command, the toolchain, the SDK version and the environment
+variables that change what is measured — is listed here.
+
+### Toolchain and SDK
+
+Results are only comparable when produced with the same toolchain and SDK the
+numbers in this document were recorded with. Record both alongside any
+re-run:
+
+- **SDK:** `soroban-sdk` 21 (`Cargo.toml` pins `soroban-sdk = "21.0.0"`). The
+  mainnet ceilings quoted in §1 are from SDK 25.1.1, so they are an upper
+  bound, not the current contract.
+- **Toolchain:** pinned by `rust-toolchain.toml`; run `rustc --version` and
+  record it. The `harness = false` benches build and run on the **stable**
+  toolchain (the older `escrow`/`verification` `#[bench]` approach needs
+  nightly and is out of scope here).
+
+### Commands
+
+The Makefile wraps the four benchmarks that this document records (one owner,
+`make bench`; see issue #860):
+
+```sh
+make bench                       # every benchmark in the workspace
+make bench CONTRACT=competitions # a single crate
+make bench-report                # the four documented benches, one after another
+```
+
+Run them individually if you prefer the raw cargo invocation:
 
 ```sh
 cargo bench -p competitions --bench competitions_benchmark
@@ -183,6 +214,28 @@ cargo bench -p reputation --bench reputation_benchmark
 cargo bench -p revenue_sharing --bench revenue_sharing_benchmark
 ```
 
-Each prints a per-op table with wall ns, cpu and mem columns. Do not compare wall
-ns across machines; do not re-base the ceilings from them either — re-derive the
-ceilings from the SDK you pin, as §1 of `PERFORMANCE_TARGETS.md` says.
+`make -n bench` prints the commands the target will run without running them.
+
+### Environment variables that affect results
+
+- `REVENUE_SHARING_BENCH_CHECK=1` — gate the `revenue_sharing` run on the
+  deterministic **event budgets** rather than only reporting them.
+- `REVENUE_SHARING_BENCH_ENFORCE_NS=1` — additionally gate on wall-clock time.
+  This is intentionally **not** portable across CI hardware and should not be
+  enabled in CI.
+- Wall-clock budgets in general are opt-in behind an env var; the deterministic
+  event-budget checks are the ones asserted by `make test`, so a plain
+  `cargo test` catches an event-volume regression without running any
+  benchmark binary.
+
+### Measured vs derived
+
+Consistent with `PERFORMANCE_TARGETS.md` §6: the `wall ns`, `cpu` and `mem`
+columns in §§2–4 are **measured** (native host, `n = 50`); the ceilings they are
+compared against are **derived** from the pinned SDK, and the event counts in
+§5 are **deterministic and asserted**. Do not re-base the ceilings from a
+re-run — re-derive them from the SDK you pin, as §1 of
+`PERFORMANCE_TARGETS.md` says.
+
+Each command prints a per-op table with wall ns, cpu and mem columns. Do not
+compare wall ns across machines.

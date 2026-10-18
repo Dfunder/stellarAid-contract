@@ -20,3 +20,7 @@ tracing-subscriber = { workspace = true }
 axum = { version = "0.7", features = ["macros"] }
 tower-http = { version = "0.5", features = ["cors", "timeout", "trace"] }
 sdk = { path = "../sdk" }
+# Used by `webhooks::WebhookManager::verify_signature` (HMAC-SHA256).
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"

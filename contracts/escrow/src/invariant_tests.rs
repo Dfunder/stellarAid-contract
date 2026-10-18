@@ -1,9 +1,8 @@
 extern crate std;
-use soroban_sdk::testutils::Address as _;
-use soroban_sdk::Env;
+use crate::errors::EscrowError;
 use crate::invariants;
 use crate::storage::{CommissionStatus, EscrowRecord};
-use crate::errors::EscrowError;
+use soroban_sdk::{testutils::Address as _, Env};
 
 fn make_record(env: &Env, amount: i128, released: i128, status: CommissionStatus) -> EscrowRecord {
     EscrowRecord {

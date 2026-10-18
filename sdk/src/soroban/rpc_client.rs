@@ -1,7 +1,10 @@
 use crate::compression::{self, CompressionFormat, CompressionStats};
+use crate::errors::StellarAidError;
+use crate::health::{EndpointHealth, HEALTH_PROBE_TIMEOUT};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Instant;
 use thiserror::Error;
 use tokio::sync::Mutex;
 
@@ -169,6 +172,39 @@ impl SorobanRpcClient {
     pub async fn get_health(&self) -> Result<(), RpcError> {
         let _: serde_json::Value = self.call("getHealth", serde_json::json!({})).await?;
         Ok(())
+    }
+
+    /// Typed liveness probe (#980).
+    ///
+    /// Returns `Ok` when the node answers `getHealth` — with `healthy` reflecting
+    /// that answer — and distinguishes the two failure modes a caller cares
+    /// about: `Err(EndpointUnreachable)` when the node cannot be reached at all,
+    /// and `Err(RequestTimeout)` when it does not answer within
+    /// [`HEALTH_PROBE_TIMEOUT`]. The probe is bounded by that short timeout so it
+    /// can never hang; it is for setup and diagnostics, not a precondition on
+    /// every operation.
+    pub async fn health(&self) -> Result<EndpointHealth, StellarAidError> {
+        let started = Instant::now();
+        let probe = tokio::time::timeout(
+            HEALTH_PROBE_TIMEOUT,
+            self.call::<serde_json::Value>("getHealth", serde_json::json!({})),
+        )
+        .await;
+        let elapsed = started.elapsed().as_millis();
+
+        match probe {
+            Ok(Ok(_)) => Ok(EndpointHealth::up(self.rpc_url.clone(), elapsed)),
+            Ok(Err(RpcError::Http(e))) => Err(StellarAidError::from_reqwest(e)),
+            Ok(Err(other)) => Ok(EndpointHealth::down(
+                self.rpc_url.clone(),
+                other.to_string(),
+                elapsed,
+            )),
+            Err(_) => Err(StellarAidError::request_timeout(format!(
+                "Soroban RPC health probe to {} exceeded {:?}",
+                self.rpc_url, HEALTH_PROBE_TIMEOUT
+            ))),
+        }
     }
 
     #[tracing::instrument(skip(self), fields(hash))]

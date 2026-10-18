@@ -12,6 +12,7 @@ pub mod correlation;
 pub mod circuit_breaker;
 pub mod pagination;
 pub mod dispute;
+pub mod initialization;
 
 pub use health::{
     AlertConfig, HealthMetrics, HealthReport, HealthStatus, SlaTargets,

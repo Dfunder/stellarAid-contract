@@ -276,6 +276,8 @@ impl EscrowContract {
         shared::circuit_breaker::require_not_halted(&env)?;
         if amount <= 0 { return Err(EscrowError::InvalidAmount); }
         if escrow_exists(&env, &commission_id) { return Err(EscrowError::AlreadyExists); }
+        // Self-dealing guard (#801): a client must not escrow funds to themselves.
+        if client == artist { return Err(EscrowError::InvalidAddress); }
 
         let fee_bps: u32 = env.invoke_contract(
             &config_contract, &symbol_short!("get_fee_b"), soroban_sdk::vec![&env],
@@ -309,10 +311,23 @@ impl EscrowContract {
                 &client, &env.current_contract_address(), &amount,
             );
 
-            // EVENT
+            // EVENT — additive funding notification (#978). The existing
+            // `created` topic and payload are unchanged; `funded` carries the
+            // extra facts (funder, asset, ledger) a client needs to notify an
+            // artist without polling `get_escrow`.
             env.events().publish(
                 (symbol_short!("escrow"), symbol_short!("created")),
                 (commission_id.clone(), amount),
+            );
+            env.events().publish(
+                (symbol_short!("escrow"), symbol_short!("funded")),
+                (
+                    commission_id.clone(),
+                    client.clone(),
+                    amount,
+                    usdc_token.clone(),
+                    env.ledger().sequence(),
+                ),
             );
             correlation_publish(&env, "escrow", symbol_short!("created"), &commission_id, &commission_id);
             Ok(())
@@ -1036,3 +1051,5 @@ mod atomic_flow_tests;
 mod correlation_tests;
 #[cfg(test)]
 mod invariant_tests;
+#[cfg(test)]
+mod funding_event_tests;

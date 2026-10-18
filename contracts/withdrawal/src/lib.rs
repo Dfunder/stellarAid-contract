@@ -233,6 +233,23 @@ impl WithdrawalContract {
         })
     }
 
+    /// Current number of withdrawal ids retained in the per-campaign index
+    /// (#998).
+    ///
+    /// Read-only and O(1): it reads the stored id index and returns its length
+    /// without loading any canonical `Withdrawal` record, so it never triggers
+    /// the write path. The index is ring-trimmed to the retention cap on every
+    /// write, so this is the **current size against the cap** — compare with
+    /// [`Self::get_withdrawal_retention_cap`] for utilisation. Storage tier:
+    /// persistent (`DataKey::WithdrawalsByCampaign`).
+    pub fn get_withdrawal_count(env: Env, campaign_id: u64) -> u32 {
+        env.storage()
+            .persistent()
+            .get::<DataKey, Vec<u64>>(&DataKey::WithdrawalsByCampaign(campaign_id))
+            .unwrap_or(Vec::new(&env))
+            .len()
+    }
+
     // ── Retention policy (#986) ────────────────────────────────────────────
 
     /// The cap currently applied to the per-campaign withdrawal index.

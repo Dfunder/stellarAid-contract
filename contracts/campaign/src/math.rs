@@ -92,8 +92,14 @@ pub fn add_u32(env: &Env, a: u32, b: u32) -> u32 {
 /// would drive the payout negative aborts through the checked subtraction
 /// rather than paying out a negative net amount.
 pub fn fee_split(env: &Env, amount: i128, fee_bps: u32) -> (i128, i128) {
+    if amount < 0 {
+        panic_with_error!(env, Error::Overflow);
+    }
     let bps = i128::from(fee_bps);
-    let gross_fee = mul(env, amount, bps) / BPS_DENOM;
+    let gross_fee = (amount / BPS_DENOM) * bps + ((amount % BPS_DENOM) * bps) / BPS_DENOM;
+    if gross_fee > amount {
+        panic_with_error!(env, Error::Overflow);
+    }
     let net = sub(env, amount, gross_fee);
     (gross_fee, net)
 }
@@ -169,7 +175,8 @@ mod tests {
         let env = Env::default();
         assert_eq!(fee_split(&env, 2_500, 500), (125, 2_375));
         assert_eq!(fee_split(&env, 100, 0), (0, 100));
-        assert_eq!(fee_split(&env, 100, 1_000), (100, 0));
+        assert_eq!(fee_split(&env, 100, 1_000), (10, 90));
+        assert_eq!(fee_split(&env, 100, 10_000), (100, 0));
     }
 
     #[test]

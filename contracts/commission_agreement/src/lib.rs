@@ -45,13 +45,11 @@ mod cancellation_tests;
 #[cfg(test)]
 mod revision_tests;
 
-use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Bytes, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Bytes, Env, IntoVal, String, Symbol, Vec};
 use agency::{AgencyAnalytics, AgencyProfile, BatchPayment, RosterEntry};
 use cancellation::{CancellationPolicy, CancellationQuote, CancellationReason, CancellationRecord};
 use errors::AgreementError;
-// use types::{AgreementRecord, AgreementStatus, DataKey, MilestoneRecord, MilestoneStatus};
 use revision::{RevisionPolicy, RevisionRequest, RevisionStatus};
-use types::{AgreementRecord, AgreementStatus, DataKey, MilestoneRecord, MilestoneStatus};
 
 include!("../../semver_types.rs");
 
@@ -197,6 +195,8 @@ impl CommissionAgreementContract {
     /// - [`AgreementError::DeadlineInPast`] if `deadline_ledger <= current sequence`
     /// - [`AgreementError::DeadlineTooFar`] if `deadline_ledger > current + MAX_DEADLINE_OFFSET_LEDGERS`
     /// - [`AgreementError::InputTooLong`] if `title` or `commission_id` exceeds limits
+    /// - [`AgreementError::EmptyCommissionId`] if `commission_id` is empty
+    /// - [`AgreementError::SelfDealing`] if `client == artist`
     /// - [`AgreementError::AlreadyExists`] if an agreement with the same `commission_id` exists
     pub fn create_agreement(
         env: Env,
@@ -209,27 +209,32 @@ impl CommissionAgreementContract {
     ) -> Result<(), AgreementError> {
         client.require_auth();
 
-        // ── Rate limiting for commission creation (closes #XXX) ─────────────
-        // Check rate limit for commission creation per artist
-        let rate_limiter_contract: Address = env.storage().instance()
-            .get(&DataKey::RateLimiter)
-            .ok_or(AgreementError::RateLimiterNotConfigured)?;
-        env.invoke_contract::<()>(
-            &rate_limiter_contract,
-            &symbol_short!("check_rate_limit"),
-            soroban_sdk::vec![
-                &env,
-                types::RateLimitKey::CommissionsPerArtist.into_val(&env),
-                artist.clone().into_val(&env),
-            ],
-        )?;
+        // ── Rate limiting for commission creation (closes #710) ─────────────
+        // Check rate limit for commission creation per artist if configured
+        if let Some(rate_limiter_contract) = env.storage().instance().get::<_, Address>(&DataKey::RateLimiter) {
+            env.invoke_contract::<()>(
+                &rate_limiter_contract,
+                &Symbol::new(&env, "check_rate_limit"),
+                soroban_sdk::vec![
+                    &env,
+                    types::RateLimitKey::CommissionsPerArtist.into_val(&env),
+                    artist.clone().into_val(&env),
+                ],
+            );
+        }
 
         // ── Input length validation (closes #591) ──────────────────────────
+        if commission_id.is_empty() {
+            return Err(AgreementError::EmptyCommissionId);
+        }
         if commission_id.len() > MAX_ID_LEN {
             return Err(AgreementError::InputTooLong);
         }
         if title.len() > MAX_TITLE_LEN {
             return Err(AgreementError::InputTooLong);
+        }
+        if client == artist {
+            return Err(AgreementError::SelfDealing);
         }
 
         if budget_usdc <= 0 {
@@ -266,8 +271,7 @@ impl CommissionAgreementContract {
         attribute_commission(&env, &artist, budget_usdc);
 
         env.events().publish(
-            (symbol_short!("agr_crtd"),),
-            (symbol_short!("agr_new"),),
+            (symbol_short!("agr_crtd"), symbol_short!("agr_new")),
             (commission_id, client, artist, budget_usdc),
         );
 
@@ -291,7 +295,7 @@ impl CommissionAgreementContract {
         record.status = AgreementStatus::Active;
         env.storage().persistent().set(&DataKey::Agreement(commission_id.clone()), &record);
 
-        env.events().publish((symbol_short!("agr_acpt"),), (commission_id,));
+        env.events().publish((symbol_short!("agr_acpt"),), (commission_id.clone(),));
         env.events().publish((symbol_short!("agr_ok"),), (commission_id,));
         Ok(())
     }
@@ -319,7 +323,7 @@ impl CommissionAgreementContract {
         record.status = AgreementStatus::Cancelled;
         env.storage().persistent().set(&DataKey::Agreement(commission_id.clone()), &record);
 
-        env.events().publish((symbol_short!("agr_rjct"),), (commission_id, reason));
+        env.events().publish((symbol_short!("agr_rjct"),), (commission_id.clone(), reason.clone()));
         env.events().publish((symbol_short!("agr_rej"),), (commission_id, reason));
         Ok(())
     }
@@ -380,8 +384,7 @@ impl CommissionAgreementContract {
         env.storage().persistent().set(&DataKey::MilestonesForAgreement(commission_id.clone()), &updated);
 
         env.events().publish(
-            (symbol_short!("ms_prop"),),
-            (symbol_short!("ms_new"),),
+            (symbol_short!("ms_prop"), symbol_short!("ms_new")),
             (commission_id, milestone_id, amount_usdc),
         );
         Ok(())
@@ -445,7 +448,7 @@ impl CommissionAgreementContract {
             env.storage().persistent().set(&DataKey::Agreement(commission_id.clone()), &record);
         }
 
-        env.events().publish((symbol_short!("ms_appr"),), (commission_id, milestone_id));
+        env.events().publish((symbol_short!("ms_appr"),), (commission_id.clone(), milestone_id.clone()));
         // Release the serialization lock
         env.storage().persistent().remove(&lock_key);
 
@@ -505,7 +508,7 @@ impl CommissionAgreementContract {
     /// returns 0 so the escrow's invariant check knows the agreement side has
     /// not yet registered the commission.
     pub fn get_agreement_escrow_amount(env: Env, commission_id: Bytes) -> i128 {
-        match env.storage().persistent().get(&DataKey::Agreement(commission_id)) {
+        match env.storage().persistent().get::<_, AgreementRecord>(&DataKey::Agreement(commission_id)) {
             Some(record) => record.budget_usdc,
             None => 0,
         }

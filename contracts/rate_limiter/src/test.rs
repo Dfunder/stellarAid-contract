@@ -42,7 +42,12 @@ impl Fixture<'_> {
     }
 
     fn check(&self, key: &RateLimitKey, who: &Address) -> Result<(), RateLimitError> {
-        self.client.check_rate_limit(key, who)
+        match self.client.try_check_rate_limit(key, who) {
+            Ok(Ok(())) => Ok(()),
+            Err(Ok(err)) => Err(err),
+            Err(Err(e)) => panic!("invoke error: {:?}", e),
+            Ok(Err(e)) => panic!("conversion error: {:?}", e),
+        }
     }
 
     fn advance(&self, ledgers: u32) {
@@ -76,6 +81,32 @@ fn a_fresh_account_has_no_record() {
     let key = RateLimitKey::EscrowsPerUser;
     assert_eq!(f.client.get_count(&key, &f.artist), None);
     assert!(f.client.get_status(&key, &f.artist).is_none());
+}
+
+// ── get_limits_page (#984) ───────────────────────────────────────────────────
+
+#[test]
+fn limits_page_clamps_the_limit_and_pages_past_the_end() {
+    let f = setup();
+
+    // `limit == 0` serves the default page; all three keys are always present.
+    let (page, info) = f.client.get_limits_page(&0, &0);
+    assert_eq!(page.len(), 3);
+    assert_eq!(info.total, 3);
+    assert_eq!(info.count, 3);
+    assert!(!info.has_more);
+    assert_eq!(info.next_start, None);
+
+    // A limit above `MAX_LIMIT` is capped, not rejected.
+    let (page, info) = f.client.get_limits_page(&0, &u32::MAX);
+    assert_eq!(page.len(), 3);
+    assert_eq!(info.limit, 3);
+
+    // A cursor past the end is an empty final page, not a trap.
+    let (page, info) = f.client.get_limits_page(&99, &10);
+    assert!(page.is_empty());
+    assert!(!info.has_more);
+    assert_eq!(info.next_start, None);
 }
 
 // ── set_limit validation ─────────────────────────────────────────────────────

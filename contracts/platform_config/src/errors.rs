@@ -9,10 +9,10 @@ pub enum ConfigError {
     InvalidFeeBps = 4,
     NoPendingAdmin = 5,
     AddressNotRegistered = 6,
-    InvalidTier = 6,
-    InvalidPromotion = 7,
-    InvalidReferralBps = 8,
-    PromotionNotActive = 9,
+    InvalidTier = 7,
+    InvalidPromotion = 8,
+    InvalidReferralBps = 9,
+    PromotionNotActive = 10,
 }
 
 impl core::fmt::Display for ConfigError {

@@ -22,13 +22,17 @@ pub enum AgreementError {
     /// Too many members (enforced at 10).
     TeamSizeLimit = 13,
     /// Input string exceeds the allowed maximum length (closes #591).
-    InputTooLong = 10,
+    InputTooLong = 27,
     /// Deadline exceeds the maximum permitted future ledger (closes #592).
-    DeadlineTooFar = 11,
+    DeadlineTooFar = 28,
     /// Milestone state transition is locked — a concurrent update is in
     /// progress; retry the operation. Closes #589.
-    MilestoneLocked = 12,
-    NotCancellable = 13,
+    MilestoneLocked = 29,
+    NotCancellable = 30,
+    /// `commission_id` must not be empty.
+    EmptyCommissionId = 31,
+    /// A client cannot open an agreement with themselves (self-dealing).
+    SelfDealing = 32,
     AlreadyCancelled = 14,
     InvalidPolicy = 15,
     AgencyExists = 16,
@@ -65,6 +69,8 @@ impl core::fmt::Display for AgreementError {
             Self::DeadlineTooFar => write!(f, "deadline exceeds the maximum permitted future date"),
             Self::MilestoneLocked => write!(f, "milestone is locked for concurrent update; retry"),
             Self::NotCancellable => write!(f, "agreement cannot be cancelled in this state"),
+            Self::EmptyCommissionId => write!(f, "commission id must not be empty"),
+            Self::SelfDealing => write!(f, "client and artist must be distinct parties"),
             Self::AlreadyCancelled => write!(f, "agreement is already cancelled"),
             Self::InvalidPolicy => write!(f, "invalid cancellation policy"),
             Self::AgencyExists => write!(f, "agency already registered"),
@@ -102,6 +108,8 @@ pub fn get_suggestion(error: AgreementError) -> Symbol {
         AgreementError::DeadlineTooFar => symbol_short!("FAR_DDL"),
         AgreementError::MilestoneLocked => symbol_short!("MS_LOCK"),
         AgreementError::NotCancellable => symbol_short!("NO_CANCL"),
+        AgreementError::EmptyCommissionId => symbol_short!("EMPTY_ID"),
+        AgreementError::SelfDealing => symbol_short!("SELF_DEAL"),
         AgreementError::AlreadyCancelled => symbol_short!("CANCELLED"),
         AgreementError::InvalidPolicy => symbol_short!("BAD_POL"),
         AgreementError::AgencyExists => symbol_short!("AGY_DUP"),

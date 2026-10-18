@@ -29,6 +29,18 @@ pub struct ArtistListing {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtistIndexEntry {
+    pub artist: Address,
+    pub skills: Vec<String>,
+    pub price: i128,
+    pub rating: u32,
+    pub keywords: Vec<String>,
+    pub indexed_ledger: u32,
+    pub active: bool,
+}
+
+#[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SortBy {
     PriceAsc = 0,
@@ -53,11 +65,18 @@ pub struct SearchFilters {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SearchResultPage {
     pub results: Vec<ArtistListing>,
-    /// Total listings matching the filters, before pagination — lets a
-    /// client compute how many pages exist.
+    /// Total listings matching the filters **within the scanned window**,
+    /// before pagination — lets a client compute how many pages exist.
     pub total_matches: u32,
     pub page: u32,
     pub page_size: u32,
+    /// Number of index entries examined on this call. Bounded by
+    /// `MAX_SCAN`, independent of how many artists are indexed.
+    pub scanned: u32,
+    /// `true` when there were more index entries than the scanner examined, so
+    /// the result set is **partial**. A client must page/refresh rather than
+    /// treat this as the complete set (#987).
+    pub truncated: bool,
 }
 
 #[contracttype]
@@ -70,9 +89,18 @@ pub struct SearchAnalytics {
 #[contracttype]
 pub enum DataKey {
     Admin,
+    /// Full listing record. Read only for the artists that appear on the
+    /// returned page (#987).
     Listing(Address),
-    /// All artist addresses ever indexed, in indexing order. Search scans
-    /// this list and filters/sorts/paginates in memory.
-    AllArtists,
+    /// Denormalised, filterable copy of a listing, keyed by scan position. The
+    /// search scan reads these instead of every `Listing`, so matching no longer
+    /// costs one persistent read per indexed artist.
+    Index(u32),
+    /// Number of index positions ever assigned. Monotonic: never decremented,
+    /// so positions are stable.
+    IndexCount,
+    /// Reverse map from artist to their index position, so re-indexing and the
+    /// rating/toggle writes can update the denormalised entry.
+    ArtistIndex(Address),
     Analytics,
 }

@@ -103,6 +103,44 @@ impl Fixture<'_> {
     }
 }
 
+// ── Bounded reads (#984) ─────────────────────────────────────────────────────
+
+#[test]
+fn page_getters_clamp_the_limit_and_page_past_the_end() {
+    let f = setup();
+    f.create();
+    f.submit(&f.alice);
+    f.submit(&f.bob);
+
+    // `limit == 0` serves the default page over the two entrants.
+    let (page, info) = f.client.get_entrants_page(&f.id, &0, &0);
+    assert_eq!(page.len(), 2);
+    assert_eq!(info.total, 2);
+    assert_eq!(info.count, 2);
+    assert!(!info.has_more);
+    assert_eq!(info.next_start, None);
+
+    // A limit above `MAX_LIMIT` is capped, not rejected.
+    let (page, info) = f.client.get_entrants_page(&f.id, &0, &u32::MAX);
+    assert_eq!(page.len(), 2);
+    assert_eq!(info.limit, 2);
+
+    // A cursor past the end is an empty final page.
+    let (page, info) = f.client.get_entrants_page(&f.id, &99, &10);
+    assert!(page.is_empty());
+    assert!(!info.has_more);
+    assert_eq!(info.next_start, None);
+
+    // History is empty until a competition is finalised.
+    let (page, info) = f.client.get_history_page(&0, &10);
+    assert!(page.is_empty());
+    assert_eq!(info.total, 0);
+    assert!(!info.has_more);
+
+    let (page, _) = f.client.get_winners_page(&f.id, &0, &10);
+    assert!(page.is_empty());
+}
+
 #[test]
 fn create_competition_escrows_the_prize_pool() {
     let f = setup();

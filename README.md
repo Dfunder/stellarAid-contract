@@ -13,7 +13,7 @@
 
 ---
 
-# 📖 About Lumora
+## 📖 About Lumora
 
 Lumora empowers creators to monetize their talents through a decentralized ecosystem built on the Stellar network.
 
@@ -21,7 +21,7 @@ Whether you're a graphic designer, illustrator, UI/UX designer, digital artist, 
 
 The platform combines the power of blockchain transparency, decentralized payments, and professional talent discovery into one unified ecosystem.
 
-## ✨ Core Features
+### ✨ Core Features
 
 * 🎨 Portfolio Showcase — Build a professional creative portfolio
 * 💼 Client Marketplace — Connect with businesses and potential clients
@@ -34,13 +34,13 @@ The platform combines the power of blockchain transparency, decentralized paymen
 
 ---
 
-# 🏗 Organization Repositories
+## 🏗 Organization Repositories
 
-## lumora-web
+### lumora-web
 
 Frontend Marketplace & Portfolio Platform
 
-### Features
+#### Features
 
 * Artist portfolio management
 * Creative marketplace
@@ -51,7 +51,7 @@ Frontend Marketplace & Portfolio Platform
 * Messaging system
 * Artist hiring workflow
 
-### Tech Stack
+#### Tech Stack
 
 * Next.js
 * TypeScript
@@ -62,11 +62,11 @@ Frontend Marketplace & Portfolio Platform
 
 ---
 
-## lumora-services
+### lumora-services
 
 Backend APIs & Core Services
 
-### Features
+#### Features
 
 * Authentication & authorization
 * User profile management
@@ -78,7 +78,7 @@ Backend APIs & Core Services
 * Notification system
 * Analytics & reporting
 
-### Tech Stack
+#### Tech Stack
 
 * NestJS
 * PostgreSQL
@@ -89,11 +89,11 @@ Backend APIs & Core Services
 
 ---
 
-## lumora-contracts
+### lumora-contracts
 
 Soroban Smart Contracts
 
-### Features
+#### Features
 
 * Escrow payments
 * Milestone-based releases
@@ -103,7 +103,7 @@ Soroban Smart Contracts
 * Dispute handling
 * Multi-asset support
 
-### Tech Stack
+#### Tech Stack
 
 * Rust
 * Soroban SDK
@@ -112,11 +112,11 @@ Soroban Smart Contracts
 
 ---
 
-## lumora-mobile
+### lumora-mobile
 
 Mobile Application
 
-### Features
+#### Features
 
 * Artist portfolio management
 * Client communication
@@ -125,7 +125,7 @@ Mobile Application
 * Wallet integration
 * Secure payments
 
-### Tech Stack
+#### Tech Stack
 
 * React Native
 * Expo
@@ -133,11 +133,11 @@ Mobile Application
 
 ---
 
-## lumora-design-system
+### lumora-design-system
 
 Shared Design Components
 
-### Features
+#### Features
 
 * UI components
 * Design tokens
@@ -147,7 +147,7 @@ Shared Design Components
 
 ---
 
-## Repository Structure
+### Repository Structure
 
 Each repository includes:
 
@@ -160,9 +160,9 @@ Each repository includes:
 
 ---
 
-# 🔑 How Lumora Works
+## 🔑 How Lumora Works
 
-## For Artists
+### For Artists
 
 1. Create an account and connect your Stellar wallet
 2. Build your portfolio and showcase your work
@@ -173,7 +173,7 @@ Each repository includes:
 
 ---
 
-## For Clients
+### For Clients
 
 1. Discover talented artists and designers
 2. Browse portfolios and completed work
@@ -184,7 +184,7 @@ Each repository includes:
 
 ---
 
-## For Businesses
+### For Businesses
 
 1. Search for creative talent
 2. Post design opportunities
@@ -194,7 +194,7 @@ Each repository includes:
 
 ---
 
-# 🌐 Powered by Stellar
+## 🌐 Powered by Stellar
 
 Lumora leverages Stellar's fast, low-cost, and borderless payment infrastructure.
 
@@ -216,9 +216,9 @@ Supported assets include:
 
 ---
 
-# 🛠 Tech Stack
+## 🛠 Tech Stack
 
-## 🌐 Frontend
+### 🌐 Frontend
 
 * Next.js
 * React
@@ -228,7 +228,7 @@ Supported assets include:
 * Zustand
 * Stellar Wallet SDK
 
-## ⚙️ Backend
+### ⚙️ Backend
 
 * NestJS
 * PostgreSQL
@@ -237,14 +237,14 @@ Supported assets include:
 * BullMQ
 * Nodemailer
 
-## 📝 Smart Contracts
+### 📝 Smart Contracts
 
 * Rust
 * Soroban SDK
 * Soroban CLI
 * Stellar RPC
 
-## 🗄 Storage Layer
+### 🗄 Storage Layer
 
 * PostgreSQL
 * Redis
@@ -253,11 +253,11 @@ Supported assets include:
 
 ---
 
-# 🚀 Roadmap
+## 🚀 Roadmap
 
-## Phase 1 — MVP
+### Phase 1 — MVP
 
-### Creator Platform
+#### Creator Platform
 
 * User registration
 * Wallet authentication
@@ -266,13 +266,13 @@ Supported assets include:
 * Artwork listings
 * Client discovery
 
-### Marketplace
+#### Marketplace
 
 * Purchase digital artwork
 * Stellar payments
 * Basic commission requests
 
-### Smart Contracts
+#### Smart Contracts
 
 * Escrow contracts
 * Artist payouts
@@ -280,7 +280,7 @@ Supported assets include:
 
 ---
 
-## Phase 2 — Professional Marketplace
+### Phase 2 — Professional Marketplace
 
 * Messaging system
 * Reviews & ratings
@@ -291,7 +291,7 @@ Supported assets include:
 
 ---
 
-## Phase 3 — Creative Economy
+### Phase 3 — Creative Economy
 
 * Talent recruitment portal
 * Creative agencies support
@@ -302,7 +302,7 @@ Supported assets include:
 
 ---
 
-## Phase 4 — Ecosystem Expansion
+### Phase 4 — Ecosystem Expansion
 
 * NFT ownership certificates
 * Creative licensing marketplace
@@ -313,7 +313,7 @@ Supported assets include:
 
 ---
 
-# 🤝 Contributing
+## 🤝 Contributing
 
 Lumora is fully open source and welcomes contributions from:
 
@@ -337,19 +337,19 @@ for development guidelines, contribution workflow, and code standards.
 
 ---
 
-# 🌍 Vision
+## 🌍 Vision
 
 Our vision is to become the leading decentralized creative economy platform where artists and clients connect without borders, enabling global collaboration, transparent payments, and equal opportunities for creative professionals everywhere.
 
 ---
 
-# 📜 License
+## 📜 License
 
 Lumora is released under the MIT License, allowing free use, modification, and distribution with attribution.
 
 ---
 
-# 🌟 Join the Lumora Journey
+## 🌟 Join the Lumora Journey
 
 We're building the future of creative work on Stellar.
 

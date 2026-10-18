@@ -37,6 +37,18 @@ fn require_initialized(env: &Env) -> Result<(), SubscriptionError> {
     }
 }
 
+/// Collapse the shared handover error onto `SubscriptionError` (#983).
+///
+/// `SubscriptionError` cannot grow new variants here, so a missing contract
+/// maps to `NotInitialized` and every other refusal (wrong caller, no pending
+/// transfer, proposing the current admin) is `Unauthorized`.
+fn map_admin_error(err: shared::admin::AdminError) -> SubscriptionError {
+    match err {
+        shared::admin::AdminError::NotInitialized => SubscriptionError::NotInitialized,
+        _ => SubscriptionError::Unauthorized,
+    }
+}
+
 fn get_u32(env: &Env, key: &DataKey) -> u32 {
     env.storage().instance().get(key).unwrap_or(0)
 }
@@ -133,6 +145,8 @@ impl SubscriptionContract {
         if history_limit == 0 {
             return Err(SubscriptionError::InvalidAmount);
         }
+        // Clamp the retained payment window to the shared page ceiling (#984).
+        let history_limit = shared::pagination::clamp_limit(history_limit);
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Token, &token);
         env.storage()
@@ -459,6 +473,86 @@ impl SubscriptionContract {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    // ── Bounded reads (closes #984) ──────────────────────────────────────
+    //
+    // `record_payment` retains at most `clamp_limit(history_limit)` records
+    // (see `initialize`), so `get_payments` is already bounded at
+    // `shared::pagination::MAX_LIMIT`. This variant adds an offset cursor and
+    // `PageInfo` so a client can page the retained window and tell a truncated
+    // page from a complete one; the caller's `limit` is clamped by
+    // `collect_window`.
+
+    /// One page of `subscriber`'s retained payment records, plus its
+    /// [`PageInfo`].
+    ///
+    /// [`PageInfo`]: shared::pagination::PageInfo
+    pub fn get_payments_page(
+        env: Env,
+        subscriber: Address,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<PaymentRecord>, shared::pagination::PageInfo) {
+        let all: Vec<PaymentRecord> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Payments(subscriber))
+            .unwrap_or_else(|| Vec::new(&env));
+        let total = all.len();
+        shared::pagination::collect_window(&env, total, start, limit, |i| all.get(i))
+    }
+
+    // ── Admin key rotation (closes #983) ─────────────────────────────────
+    //
+    // Two-step handover delegated to `shared::admin`; the active admin stays
+    // under `DataKey::Admin`, only the pending successor is shared.
+
+    /// Step 1 — the current admin proposes `new_admin` as its successor.
+    pub fn transfer_admin(
+        env: Env,
+        admin: Address,
+        new_admin: Address,
+    ) -> Result<(), SubscriptionError> {
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(SubscriptionError::NotInitialized)?;
+        if stored != admin {
+            return Err(SubscriptionError::Unauthorized);
+        }
+        shared::admin::propose(&env, &admin, &new_admin).map_err(map_admin_error)
+    }
+
+    /// Step 2 — the proposed successor accepts and becomes the active admin.
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), SubscriptionError> {
+        let previous: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(SubscriptionError::NotInitialized)?;
+        shared::admin::accept(&env, &previous, &new_admin).map_err(map_admin_error)?;
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        Ok(())
+    }
+
+    /// The current admin withdraws an in-flight proposal.
+    pub fn cancel_admin_transfer(env: Env, admin: Address) -> Result<(), SubscriptionError> {
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(SubscriptionError::NotInitialized)?;
+        if stored != admin {
+            return Err(SubscriptionError::Unauthorized);
+        }
+        shared::admin::cancel(&env, &admin).map_err(map_admin_error)
+    }
+
+    /// The proposed successor awaiting acceptance, if any.
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        shared::admin::pending_admin(&env)
+    }
+
     // ── Health monitoring (#678) and gradual rollout (#684) ──────────────
     pub fn health_check(env: Env) -> shared::health::HealthReport {
         let report = shared::health::health_check(&env);
@@ -498,6 +592,24 @@ impl SubscriptionContract {
     }
     pub fn is_feature_enabled(env: Env, flag: soroban_sdk::Symbol) -> bool {
         shared::rollout::is_feature_enabled(&env, &flag)
+    }
+    /// Lower this contract's feature-flag cap within the shared ceiling (#985).
+    ///
+    /// `shared::rollout::MAX_FEATURE_FLAGS` is the hard ceiling; this only ever
+    /// lowers the effective cap, so future tuning needs no new code. The current
+    /// value is returned by [`get_flag_cap`] and in
+    /// `get_rollout_state().flag_cap`.
+    pub fn set_flag_cap(
+        env: Env,
+        admin: Address,
+        cap: u32,
+    ) -> Result<(), shared::rollout::RolloutError> {
+        admin.require_auth();
+        shared::rollout::set_flag_cap(&env, cap)
+    }
+    /// The effective feature-flag cap for this contract (#985).
+    pub fn get_flag_cap(env: Env) -> u32 {
+        shared::rollout::flag_cap(&env)
     }
     pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
         admin.require_auth();

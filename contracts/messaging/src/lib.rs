@@ -206,7 +206,18 @@ impl MessagingContract {
             return Err(MessagingError::Unauthorized);
         }
 
-        let cap = limit.min(MAX_HISTORY);
+        // A zero `limit` reads as "return nothing" here, and that is the
+        // documented contract of this entry point (`pagination.rs` calls it
+        // out by name); every other value is clamped by the shared helper so
+        // the cap lives in one place. `MAX_HISTORY == MAX_LIMIT`, so the
+        // contract's own cap is retained and this is behaviour-preserving. See
+        // `get_messages_page` for the canonical clamp, where a zero yields the
+        // default page (#984).
+        let cap = if limit == 0 {
+            0
+        } else {
+            shared::pagination::clamp_limit(limit).min(MAX_HISTORY)
+        };
         let mut result: Vec<Message> = Vec::new(&env);
         let end_seq = from_seq.saturating_add(cap).min(conv.message_count + 1);
         let mut seq = from_seq;
@@ -220,6 +231,51 @@ impl MessagingContract {
             seq = seq.saturating_add(1);
         }
         Ok(result)
+    }
+
+    /// One page of a conversation's messages, plus its [`PageInfo`] (#984).
+    ///
+    /// `start` is a zero-based index into the conversation's message sequence —
+    /// message *i* has sequence number `i + 1` — and `limit` is clamped by
+    /// `shared::pagination::collect_window`, so a page visits at most
+    /// `shared::pagination::MAX_LIMIT` positions and reads at most that many
+    /// storage keys, however large `limit` is. This is the indexed counterpart
+    /// to [`get_messages`]: use it when a client wants to page with a
+    /// `PageInfo` cursor rather than a 1-based `from_seq`. The caller must be a
+    /// participant.
+    ///
+    /// [`PageInfo`]: shared::pagination::PageInfo
+    pub fn get_messages_page(
+        env: Env,
+        conv_id: Bytes,
+        caller: Address,
+        start: u32,
+        limit: u32,
+    ) -> Result<(Vec<Message>, shared::pagination::PageInfo), MessagingError> {
+        let conv: Conversation = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Conversation(conv_id.clone()))
+            .ok_or(MessagingError::ConversationNotFound)?;
+
+        if caller != conv.participant_a && caller != conv.participant_b {
+            return Err(MessagingError::Unauthorized);
+        }
+
+        // Indexed storage: one key per sequence number, so `collect_window`
+        // bounds the read itself rather than materialising the whole history.
+        let total = conv.message_count;
+        Ok(shared::pagination::collect_window(
+            &env,
+            total,
+            start,
+            limit,
+            |i| {
+                env.storage()
+                    .persistent()
+                    .get::<DataKey, Message>(&DataKey::Message(conv_id.clone(), i + 1))
+            },
+        ))
     }
 
     // ── Soft delete ───────────────────────────────────────────────────────────
@@ -414,6 +470,24 @@ impl MessagingContract {
     pub fn is_feature_enabled(env: Env, flag: soroban_sdk::Symbol) -> bool {
         shared::rollout::is_feature_enabled(&env, &flag)
     }
+    /// Lower this contract's feature-flag cap within the shared ceiling (#985).
+    ///
+    /// `shared::rollout::MAX_FEATURE_FLAGS` is the hard ceiling; this only ever
+    /// lowers the effective cap, so future tuning needs no new code. The current
+    /// value is returned by [`get_flag_cap`] and in
+    /// `get_rollout_state().flag_cap`.
+    pub fn set_flag_cap(
+        env: Env,
+        admin: Address,
+        cap: u32,
+    ) -> Result<(), shared::rollout::RolloutError> {
+        admin.require_auth();
+        shared::rollout::set_flag_cap(&env, cap)
+    }
+    /// The effective feature-flag cap for this contract (#985).
+    pub fn get_flag_cap(env: Env) -> u32 {
+        shared::rollout::flag_cap(&env)
+    }
     pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
         admin.require_auth();
         shared::rollout::set_canary_deployment(&env, canary, stable, canary_bps);
@@ -474,6 +548,45 @@ mod test {
         let messages = client.get_messages(&conv_id, &alice, &1, &10);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages.get(0).unwrap().body, body);
+    }
+
+    #[test]
+    fn test_messages_page_clamps_limit_and_pages_past_the_end() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MessagingContract);
+        let client = MessagingContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+
+        client.initialize(&admin);
+        let conv_id = soroban_sdk::Bytes::from_slice(&env, b"conv-page");
+        client.create_conversation(&conv_id, &alice, &bob);
+
+        // One message per sender per window, so advance between sends.
+        env.ledger().with_mut(|l| l.sequence_number = RATE_LIMIT_LEDGERS + 1);
+        client.send_message(&conv_id, &alice, &String::from_str(&env, "one"));
+        env.ledger().with_mut(|l| l.sequence_number += RATE_LIMIT_LEDGERS + 1);
+        client.send_message(&conv_id, &alice, &String::from_str(&env, "two"));
+
+        // `limit == 0` serves the default page; both messages fit.
+        let (page, info) = client.get_messages_page(&conv_id, &alice, &0, &0);
+        assert_eq!(page.len(), 2);
+        assert_eq!(info.total, 2);
+        assert_eq!(info.count, 2);
+        assert!(!info.has_more);
+
+        // A limit above `MAX_LIMIT` is capped, not rejected.
+        let (page, _) = client.get_messages_page(&conv_id, &alice, &0, &u32::MAX);
+        assert_eq!(page.len(), 2);
+
+        // A cursor past the end is an empty final page.
+        let (page, info) = client.get_messages_page(&conv_id, &alice, &99, &10);
+        assert!(page.is_empty());
+        assert!(!info.has_more);
+        assert_eq!(info.next_start, None);
     }
 
     #[test]

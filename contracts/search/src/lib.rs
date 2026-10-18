@@ -18,7 +18,7 @@ pub mod types;
 mod test;
 
 use errors::SearchError;
-use types::{ArtistListing, DataKey, SearchAnalytics, SearchFilters, SearchResultPage, SortBy};
+use types::{ArtistIndexEntry, ArtistListing, DataKey, SearchAnalytics, SearchFilters, SearchResultPage, SortBy};
 
 include!("../../semver_types.rs");
 
@@ -28,6 +28,15 @@ const MAX_SKILLS: u32 = 20;
 const MAX_KEYWORDS: u32 = 30;
 /// Hard cap on a single page of search results, bounding per-call cost.
 const MAX_PAGE_SIZE: u32 = 50;
+/// Hard cap on how many index entries one `search` call examines, bounding the
+/// scan cost independently of how many artists are indexed (#987).
+///
+/// Chosen to match the workspace's largest bounded read
+/// (`shared::pagination::MAX_LIMIT`), so one search costs no more read entries
+/// than the most expensive read the platform already ships. When the index has
+/// more entries than this, the result is partial: `SearchResultPage::truncated`
+/// is set and `scanned` reports how far the scan reached.
+const MAX_SCAN: u32 = 200;
 
 #[contract]
 pub struct Search;
@@ -77,39 +86,70 @@ fn contains_string(haystack: &Vec<String>, needle: &String) -> bool {
     haystack.iter().any(|s| s == *needle)
 }
 
-fn matches_filters(listing: &ArtistListing, filters: &SearchFilters) -> bool {
-    if !listing.active {
+/// Build the denormalised index entry for a listing (#987).
+fn index_entry(listing: &ArtistListing) -> ArtistIndexEntry {
+    ArtistIndexEntry {
+        artist: listing.artist.clone(),
+        skills: listing.skills.clone(),
+        price: listing.price,
+        rating: listing.rating,
+        keywords: listing.keywords.clone(),
+        indexed_ledger: listing.indexed_ledger,
+        active: listing.active,
+    }
+}
+
+/// Load the artist's index position, if they have been indexed.
+fn artist_index(env: &Env, artist: &Address) -> Option<u32> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ArtistIndex(artist.clone()))
+}
+
+/// Persist the denormalised entry at `index`, keeping it consistent with the
+/// listing it mirrors. Every write that changes a filterable field must call
+/// this (#987).
+fn save_index_entry(env: &Env, index: u32, listing: &ArtistListing) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::Index(index), &index_entry(listing));
+}
+
+/// Filter using only the index entry's fields, so matching never reads the full
+/// `Listing` (#987).
+fn matches_filters(entry: &ArtistIndexEntry, filters: &SearchFilters) -> bool {
+    if !entry.active {
         return false;
     }
     if let Some(skill) = &filters.skill {
-        if !contains_string(&listing.skills, skill) {
+        if !contains_string(&entry.skills, skill) {
             return false;
         }
     }
     if let Some(min_price) = filters.min_price {
-        if listing.price < min_price {
+        if entry.price < min_price {
             return false;
         }
     }
     if let Some(max_price) = filters.max_price {
-        if listing.price > max_price {
+        if entry.price > max_price {
             return false;
         }
     }
     if let Some(min_rating) = filters.min_rating {
-        if listing.rating < min_rating {
+        if entry.rating < min_rating {
             return false;
         }
     }
     if let Some(keyword) = &filters.keyword {
-        if !contains_string(&listing.keywords, keyword) {
+        if !contains_string(&entry.keywords, keyword) {
             return false;
         }
     }
     true
 }
 
-fn is_ordered(a: &ArtistListing, b: &ArtistListing, sort_by: SortBy) -> bool {
+fn is_ordered(a: &ArtistIndexEntry, b: &ArtistIndexEntry, sort_by: SortBy) -> bool {
     // True when `a` should come at or before `b` under `sort_by`.
     match sort_by {
         SortBy::PriceAsc => a.price <= b.price,
@@ -122,24 +162,24 @@ fn is_ordered(a: &ArtistListing, b: &ArtistListing, sort_by: SortBy) -> bool {
 
 /// Stable insertion sort over the (already filtered, so bounded) match set.
 /// `soroban_sdk::Vec` gives O(1) get/set, which is all insertion sort needs.
-fn sort_listings(mut listings: Vec<ArtistListing>, sort_by: SortBy) -> Vec<ArtistListing> {
-    let n = listings.len();
+fn sort_entries(mut entries: Vec<ArtistIndexEntry>, sort_by: SortBy) -> Vec<ArtistIndexEntry> {
+    let n = entries.len();
     let mut i = 1;
     while i < n {
-        let key = listings.get(i).unwrap();
+        let key = entries.get(i).unwrap();
         let mut j = i;
         while j > 0 {
-            let prev = listings.get(j - 1).unwrap();
+            let prev = entries.get(j - 1).unwrap();
             if is_ordered(&prev, &key, sort_by) {
                 break;
             }
-            listings.set(j, prev);
+            entries.set(j, prev);
             j -= 1;
         }
-        listings.set(j, key);
+        entries.set(j, key);
         i += 1;
     }
-    listings
+    entries
 }
 
 #[contractimpl]
@@ -200,15 +240,29 @@ impl Search {
         };
         save_listing(&env, &listing);
 
-        if is_new {
-            let mut all: Vec<Address> = env
-                .storage()
-                .instance()
-                .get(&DataKey::AllArtists)
-                .unwrap_or_else(|| Vec::new(&env));
-            all.push_back(artist.clone());
-            env.storage().instance().set(&DataKey::AllArtists, &all);
+        // #987: maintain the denormalised index entry. A new artist gets the next
+        // position; an existing one keeps their position and has the entry
+        // rewritten, so `search` never filters on stale values.
+        let idx = match artist_index(&env, &artist) {
+            Some(i) => i,
+            None => {
+                let i: u32 = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::IndexCount)
+                    .unwrap_or(0);
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::ArtistIndex(artist.clone()), &i);
+                env.storage()
+                    .instance()
+                    .set(&DataKey::IndexCount, &(i + 1));
+                i
+            }
+        };
+        save_index_entry(&env, idx, &listing);
 
+        if is_new {
             let mut analytics = load_analytics(&env);
             analytics.total_indexed += 1;
             save_analytics(&env, &analytics);
@@ -230,6 +284,11 @@ impl Search {
         let mut listing = load_listing(&env, &artist)?;
         listing.rating = rating;
         save_listing(&env, &listing);
+        // #987: keep the filterable index copy consistent, or `search` would rank
+        // on the stale rating.
+        if let Some(idx) = artist_index(&env, &artist) {
+            save_index_entry(&env, idx, &listing);
+        }
         env.events()
             .publish((symbol_short!("rating"),), (artist, rating));
         Ok(())
@@ -246,6 +305,11 @@ impl Search {
         let mut listing = load_listing(&env, &artist)?;
         listing.active = false;
         save_listing(&env, &listing);
+        // #987: the index carries `active`, so it must follow the toggle or a
+        // deactivated artist stays discoverable.
+        if let Some(idx) = artist_index(&env, &artist) {
+            save_index_entry(&env, idx, &listing);
+        }
         env.events()
             .publish((symbol_short!("deact"),), artist);
         Ok(())
@@ -260,6 +324,9 @@ impl Search {
         let mut listing = load_listing(&env, &artist)?;
         listing.active = true;
         save_listing(&env, &listing);
+        if let Some(idx) = artist_index(&env, &artist) {
+            save_index_entry(&env, idx, &listing);
+        }
         env.events().publish((symbol_short!("react"),), artist);
         Ok(())
     }
@@ -289,34 +356,51 @@ impl Search {
             }
         }
 
-        let all: Vec<Address> = env
+        // #987: scan a bounded window of denormalised index entries. Cost is
+        // capped at `MAX_SCAN` reads regardless of how many artists exist, and
+        // the filter needs no per-artist `Listing` read at all.
+        let count: u32 = env
             .storage()
             .instance()
-            .get(&DataKey::AllArtists)
-            .unwrap_or_else(|| Vec::new(&env));
+            .get(&DataKey::IndexCount)
+            .unwrap_or(0);
+        let scan_end = count.min(MAX_SCAN);
 
-        let mut matched: Vec<ArtistListing> = Vec::new(&env);
-        for artist in all.iter() {
-            let maybe_listing: Option<ArtistListing> =
-                env.storage().persistent().get(&DataKey::Listing(artist));
-            if let Some(listing) = maybe_listing {
-                if matches_filters(&listing, &filters) {
-                    matched.push_back(listing);
+        let mut matched: Vec<ArtistIndexEntry> = Vec::new();
+        let mut i = 0u32;
+        while i < scan_end {
+            if let Some(entry) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, ArtistIndexEntry>(&DataKey::Index(i))
+            {
+                if matches_filters(&entry, &filters) {
+                    matched.push_back(entry);
                 }
             }
+            i += 1;
         }
 
         let total_matches = matched.len();
-        let sorted = sort_listings(matched, sort_by);
+        let sorted = sort_entries(matched, sort_by);
 
+        // Only the returned page's full listings are read from persistent
+        // storage, so a page of k costs k reads, not n.
         let start = page.saturating_mul(page_size);
-        let mut page_results: Vec<ArtistListing> = Vec::new(&env);
+        let mut page_results: Vec<ArtistListing> = Vec::new();
         if start < total_matches {
             let end = core::cmp::min(start.saturating_add(page_size), total_matches);
-            let mut i = start;
-            while i < end {
-                page_results.push_back(sorted.get(i).unwrap());
-                i += 1;
+            let mut j = start;
+            while j < end {
+                let entry = sorted.get(j).unwrap();
+                if let Some(listing) = env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, ArtistListing>(&DataKey::Listing(entry.artist))
+                {
+                    page_results.push_back(listing);
+                }
+                j += 1;
             }
         }
 
@@ -329,6 +413,8 @@ impl Search {
             total_matches,
             page,
             page_size,
+            scanned: scan_end,
+            truncated: count > MAX_SCAN,
         })
     }
 

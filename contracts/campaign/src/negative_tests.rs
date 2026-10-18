@@ -15,6 +15,7 @@ use crate::math;
 use crate::require;
 use shared::types::CampaignStatus;
 use soroban_sdk::Env;
+use std::vec::Vec;
 
 /// Maximum end-time horizon, mirroring `MAX_DEADLINE_OFFSET_SECS`.
 const TWO_YEARS: u64 = 63_115_200;
@@ -360,11 +361,14 @@ fn reentrancy_guard_uses_the_shared_error_code() {
 #[test]
 fn contract_guard_rejects_a_nested_state_changing_call() {
     let env = Env::default();
-    // `check_not_locked` is the pure half of the guard used by the contract.
-    guard::acquire(&env);
-    assert_eq!(require::check_not_locked(guard::is_locked(&env)), Err(Error::Reentrant));
-    guard::release(&env);
-    assert_eq!(require::check_not_locked(guard::is_locked(&env)), Ok(()));
+    let contract_id = env.register_contract(None, crate::CampaignContract);
+    env.as_contract(&contract_id, || {
+        // `check_not_locked` is the pure half of the guard used by the contract.
+        guard::acquire(&env);
+        assert_eq!(require::check_not_locked(guard::is_locked(&env)), Err(Error::Reentrant));
+        guard::release(&env);
+        assert_eq!(require::check_not_locked(guard::is_locked(&env)), Ok(()));
+    });
 }
 
 #[test]

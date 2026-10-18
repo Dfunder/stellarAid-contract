@@ -14,6 +14,10 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec,
 };
 
+pub mod errors;
+
+use errors::NftError;
+
 // ── Data Types ────────────────────────────────────────────────────────────────
 
 /// Current state of an NFT certificate.
@@ -131,9 +135,11 @@ impl NftOwnership {
         commission_id: u64,
         transferable: bool,
         burnable: bool,
-    ) -> u64 {
+    ) -> Result<u64, NftError> {
         creator.require_auth();
-        assert!(royalty_bps <= 3000, "royalty_bps must not exceed 3000 (30%)");
+        if royalty_bps > 3000 {
+            return Err(NftError::RoyaltyTooHigh);
+        }
 
         let id = Self::next_id(&env);
 
@@ -159,7 +165,7 @@ impl NftOwnership {
             (id, creator, owner),
         );
 
-        id
+        Ok(id)
     }
 
     // ── Transfer ──────────────────────────────────────────────────────────
@@ -174,15 +180,23 @@ impl NftOwnership {
     /// * `to`    — recipient address.
     /// * `nft_id`— certificate identifier.
     /// * `price` — sale price in token base units (0 for a gift/no royalty).
-    pub fn transfer(env: Env, from: Address, to: Address, nft_id: u64, price: i128) {
+    pub fn transfer(env: Env, from: Address, to: Address, nft_id: u64, price: i128) -> Result<(), NftError> {
         from.require_auth();
-        assert!(price >= 0, "price must be non-negative");
+        if price < 0 {
+            return Err(NftError::NegativePrice);
+        }
 
-        let mut nft = Self::load_nft(&env, nft_id);
+        let mut nft = Self::load_nft(&env, nft_id)?;
 
-        assert!(nft.status == NftStatus::Active, "NFT is not active");
-        assert!(nft.owner == from, "caller is not the NFT owner");
-        assert!(nft.transferable, "this NFT cannot be transferred");
+        if nft.status != NftStatus::Active {
+            return Err(NftError::NotActive);
+        }
+        if nft.owner != from {
+            return Err(NftError::NotOwner);
+        }
+        if !nft.transferable {
+            return Err(NftError::NotTransferable);
+        }
 
         // Settle royalty on secondary sale.
         if price > 0 && nft.royalty_bps > 0 {
@@ -192,7 +206,7 @@ impl NftOwnership {
                     .storage()
                     .persistent()
                     .get(&DataKey::RoyaltyToken)
-                    .expect("contract not initialized");
+                    .ok_or(NftError::NotInitialized)?;
                 let tok = token::Client::new(&env, &royalty_token);
                 // Transfer royalty from the buyer (caller context) to creator.
                 tok.transfer(&from, &nft.creator, &royalty_amount);
@@ -224,6 +238,8 @@ impl NftOwnership {
             (symbol_short!("transfer"), nft_id),
             (from, to, price),
         );
+
+        Ok(())
     }
 
     // ── Burn ──────────────────────────────────────────────────────────────
@@ -231,19 +247,27 @@ impl NftOwnership {
     /// Permanently destroy an NFT certificate.
     ///
     /// Only the current owner may burn, and only if `burnable` is true.
-    pub fn burn(env: Env, owner: Address, nft_id: u64) {
+    pub fn burn(env: Env, owner: Address, nft_id: u64) -> Result<(), NftError> {
         owner.require_auth();
 
-        let mut nft = Self::load_nft(&env, nft_id);
+        let mut nft = Self::load_nft(&env, nft_id)?;
 
-        assert!(nft.status == NftStatus::Active, "NFT is not active");
-        assert!(nft.owner == owner, "caller is not the NFT owner");
-        assert!(nft.burnable, "this NFT cannot be burned");
+        if nft.status != NftStatus::Active {
+            return Err(NftError::NotActive);
+        }
+        if nft.owner != owner {
+            return Err(NftError::NotOwner);
+        }
+        if !nft.burnable {
+            return Err(NftError::NotBurnable);
+        }
 
         nft.status = NftStatus::Burned;
         env.storage().persistent().set(&DataKey::Nft(nft_id), &nft);
 
         env.events().publish((symbol_short!("burned"),), (nft_id, owner));
+
+        Ok(())
     }
 
     // ── Admin Freeze ──────────────────────────────────────────────────────
@@ -251,20 +275,24 @@ impl NftOwnership {
     /// Admin may restrict a certificate (mark as non-transferable).
     ///
     /// Used in cases of IP dispute or fraudulent minting.
-    pub fn freeze(env: Env, admin: Address, nft_id: u64) {
+    pub fn freeze(env: Env, admin: Address, nft_id: u64) -> Result<(), NftError> {
         admin.require_auth();
         let stored_admin: Address = env
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .expect("contract not initialized");
-        assert!(admin == stored_admin, "only admin can freeze");
+            .ok_or(NftError::NotInitialized)?;
+        if admin != stored_admin {
+            return Err(NftError::Unauthorized);
+        }
 
-        let mut nft = Self::load_nft(&env, nft_id);
+        let mut nft = Self::load_nft(&env, nft_id)?;
         nft.transferable = false;
         env.storage().persistent().set(&DataKey::Nft(nft_id), &nft);
 
         env.events().publish((symbol_short!("frozen"),), (nft_id, admin));
+
+        Ok(())
     }
 
     // ── Royalty Configuration ─────────────────────────────────────────────
@@ -272,13 +300,19 @@ impl NftOwnership {
     /// Update the royalty basis points for a certificate.
     ///
     /// Only the original creator may update royalties.
-    pub fn update_royalty(env: Env, creator: Address, nft_id: u64, new_royalty_bps: u32) {
+    pub fn update_royalty(env: Env, creator: Address, nft_id: u64, new_royalty_bps: u32) -> Result<(), NftError> {
         creator.require_auth();
-        assert!(new_royalty_bps <= 3000, "royalty_bps must not exceed 3000 (30%)");
+        if new_royalty_bps > 3000 {
+            return Err(NftError::RoyaltyTooHigh);
+        }
 
-        let mut nft = Self::load_nft(&env, nft_id);
-        assert!(nft.creator == creator, "only the creator can update royalties");
-        assert!(nft.status == NftStatus::Active, "NFT is not active");
+        let mut nft = Self::load_nft(&env, nft_id)?;
+        if nft.creator != creator {
+            return Err(NftError::NotCreator);
+        }
+        if nft.status != NftStatus::Active {
+            return Err(NftError::NotActive);
+        }
 
         nft.royalty_bps = new_royalty_bps;
         env.storage().persistent().set(&DataKey::Nft(nft_id), &nft);
@@ -287,12 +321,14 @@ impl NftOwnership {
             (symbol_short!("royalty"),),
             (nft_id, creator, new_royalty_bps),
         );
+
+        Ok(())
     }
 
     // ── Queries ───────────────────────────────────────────────────────────
 
     /// Retrieve a certificate record.
-    pub fn get_nft(env: Env, nft_id: u64) -> NftCertificate {
+    pub fn get_nft(env: Env, nft_id: u64) -> Result<NftCertificate, NftError> {
         Self::load_nft(&env, nft_id)
     }
 
@@ -383,10 +419,13 @@ impl NftOwnership {
         next
     }
 
-    fn load_nft(env: &Env, nft_id: u64) -> NftCertificate {
+    fn load_nft(env: &Env, nft_id: u64) -> Result<NftCertificate, NftError> {
         env.storage()
             .persistent()
             .get(&DataKey::Nft(nft_id))
-            .expect("NFT not found")
+            .ok_or(NftError::NftNotFound)
     }
 }
+
+#[cfg(test)]
+mod test;

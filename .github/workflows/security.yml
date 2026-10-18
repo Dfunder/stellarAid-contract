@@ -12,16 +12,22 @@
 #   security-lint scripts/security_lint.sh — the repo-specific rules
 #   clippy        with the correctness/security lint groups promoted to errors
 #
-# NO CONFIG FILES HERE, DELIBERATELY
-#   `deny.toml` and the cargo-audit configuration are tracked as their own
-#   issues (#879, #880) so that the policy decision — which advisories are
-#   ignorable, which licences are acceptable — lands in its own reviewable diff
-#   rather than being buried in a CI file. Until those land this workflow runs
-#   both tools with their defaults, which is the strictest possible setting:
-#   every advisory and every non-permissive licence is a failure.
+# POLICY LIVES IN ITS OWN FILES, DELIBERATELY
+#   The policy decision — which advisories are ignorable, which licences are
+#   acceptable — lives in `deny.toml` (repository root) and `.cargo/audit.toml`,
+#   each landed as its own reviewable diff (#879, #880) rather than buried in
+#   this CI file. Both tools read those files automatically, so this workflow
+#   runs the reviewed policy, not tool defaults.
 #
-#   That means the first run is expected to be red. That is correct: it is a
-#   measurement of the current tree, not a statement about the PR.
+#   Every ignored advisory in both files carries the advisory ID and a reason,
+#   and `unused-ignored-advisory = "warn"` in deny.toml checks that a waiver
+#   cannot silently rot. The initial-audit baseline and the reasoning for every
+#   waiver are recorded in docs/STORAGE.md §9.2 and summarised in the PR that
+#   added them.
+#
+#   `--all-features` and the explicit `deny` assertion below are unchanged on
+#   purpose: the policy narrows *which* findings are accepted, not *whether* a
+#   finding is enforced.
 
 name: Security
 
@@ -40,7 +46,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: security-${{ github.ref }}
+  group: security-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -52,15 +58,17 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show
       - name: Install cargo-audit
-        uses: rustsec/audit-check@v2
+        # Install the tool only; the audit itself is run in the next step so
+        # the outcome is explicit and --deny is applied unconditionally.
+        uses: taiki-e/install-action@v2
         with:
-          # `deny` is the outcome we want. Without it the action's default is to
-          # annotate and continue, which would make a red advisory look green.
-          token: ${{ secrets.GITHUB_TOKEN }}
+          tool: cargo-audit
       - name: Audit the dependency graph
-        # --ignore is intentionally absent: see the header. Every RUSTSEC
-        # advisory fails the job until an explicit, reviewed ignore is added.
-        run: cargo audit
+        # `cargo audit` reads `.cargo/audit.toml` automatically; its
+        # `[advisories] ignore` list mirrors deny.toml and carries the reason
+        # for every waiver. Any advisory not in that reviewed list still fails
+        # the job, so this remains a gate rather than a report.
+        run: cargo audit --deny warnings
 
   cargo-deny:
     name: cargo deny (licences, sources, duplicates)
@@ -69,9 +77,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: rustup show
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - name: Install cargo-deny
+        # Install the tool only; the check is run explicitly below so
+        # --all-features and the deny assertion are applied unconditionally.
+        uses: taiki-e/install-action@v2
         with:
-          manifest-path: Cargo.toml
+          tool: cargo-deny
       - name: cargo deny check
         # --all-features so a vulnerability hidden behind a feature flag is
         # still counted. The `deny` advisory is re-asserted explicitly because

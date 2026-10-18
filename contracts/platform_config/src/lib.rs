@@ -14,9 +14,9 @@ pub mod types;
 use errors::ConfigError;
 use storage::*;
 use types::{
-    AddressEnvironment, FeeTokenMetadata, PlatformConfig, RegistryEntry, ResolutionCacheEntry,
+    AddressEnvironment, FeeBreakdown, FeeTier, FeeTokenMetadata, PlatformConfig, Promotion,
+    ReferralConfig, RegistryEntry, ResolutionCacheEntry,
 };
-use types::{FeeBreakdown, FeeTier, FeeTokenMetadata, PlatformConfig, Promotion, ReferralConfig};
 
 include!("../../semver_types.rs");
 
@@ -259,6 +259,8 @@ impl PlatformConfigContract {
         name: Symbol,
     ) -> Result<ResolutionCacheEntry, ConfigError> {
         get_resolution_cache(&env, &e, &name).ok_or(ConfigError::AddressNotRegistered)
+    }
+
     // ── Advanced fee structures (closes #690) ────────────────────────────
     // Entry points above (tiers, promotions, referral, volume) are written
     // directly in the `#[contractimpl]` block — SDK-21 does not export

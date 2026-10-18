@@ -1,8 +1,21 @@
 #![no_std]
 
 use soroban_sdk::{contract, contractclient, contractimpl, contracttype, token, Address, BytesN, Env, String, Symbol, Vec};
+use shared::pagination::{self, PageInfo};
 use shared::pause;
 use shared::types::Withdrawal;
+
+/// Code-constant ceiling on how many withdrawal *index* entries are retained per
+/// campaign (#986). The canonical `Withdrawal(id)` record is always retained; only
+/// this derived per-campaign index is capped.
+pub const MAX_WITHDRAWALS_PER_CAMPAIGN: u32 = 500;
+
+/// Effective per-campaign index cap until an admin overrides it (#986).
+pub const DEFAULT_WITHDRAWALS_PER_CAMPAIGN: u32 = 100;
+
+/// Hard cap on how many index entries one `prune_withdrawals_by_campaign` call
+/// may remove (#986). Mirrors `analytics::PRUNE_MAX_BATCH`.
+pub const PRUNE_MAX_BATCH: u32 = 100;
 
 #[contractclient(name = "DonationContractClient")]
 trait DonationContractTrait {
@@ -12,12 +25,20 @@ trait DonationContractTrait {
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
+    /// Canonical withdrawal record — never pruned (RETENTION §1).
     Withdrawal(u64) = 0,
+    /// Per-campaign index of withdrawal ids, oldest-first. This is the derived,
+    /// bounded list; it no longer duplicates the full record (#986).
     WithdrawalsByCampaign(u64) = 1,
     Admin = 2,
     Initialized = 3,
     DonationContract = 4,
+    /// Running total withdrawn per campaign — never pruned, the reconciliation
+    /// figure (#986).
     WithdrawnAmount(u64) = 5,
+    /// Admin-configurable per-campaign index cap, bounded above by
+    /// [`MAX_WITHDRAWALS_PER_CAMPAIGN`] (#986).
+    RetentionCap = 6,
 }
 
 #[contracttype]
@@ -90,9 +111,30 @@ impl WithdrawalContract {
             approved: false,
         };
         env.storage().persistent().set(&DataKey::Withdrawal(id), &withdrawal);
-        let mut withdrawals = env.storage().persistent().get(&DataKey::WithdrawalsByCampaign(campaign_id)).unwrap_or(Vec::new(&env));
-        withdrawals.push_back(withdrawal.clone());
-        env.storage().persistent().set(&DataKey::WithdrawalsByCampaign(campaign_id), &withdrawals);
+        // #986: the per-campaign list stores only the id. The full record lives
+        // once, at `Withdrawal(id)`, so storage is no longer doubled. The index is
+        // ring-trimmed to the (bounded) retention cap on every write.
+        let cap = Self::effective_retention_cap(&env);
+        let mut index: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::WithdrawalsByCampaign(campaign_id))
+            .unwrap_or(Vec::new(&env));
+        index.push_back(id);
+        let mut trimmed = 0u32;
+        while index.len() > cap {
+            index.pop_front();
+            trimmed += 1;
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::WithdrawalsByCampaign(campaign_id), &index);
+        if trimmed > 0 {
+            env.events().publish(
+                (Symbol::new(&env, "prune"),),
+                (campaign_id, trimmed, cap),
+            );
+        }
         env.events().publish((Symbol::new(&env, "withdrawal_requested"),), WithdrawalRequestedEvent {
             withdrawal_id: id,
             campaign_id,
@@ -164,9 +206,134 @@ impl WithdrawalContract {
         env.storage().persistent().get(&DataKey::Withdrawal(withdrawal_id))
     }
 
-    /// Get all withdrawal requests for a given campaign.
-    pub fn get_withdrawals_by_campaign(env: Env, campaign_id: u64) -> Vec<Withdrawal> {
-        env.storage().persistent().get(&DataKey::WithdrawalsByCampaign(campaign_id)).unwrap_or(Vec::new(&env))
+    /// One bounded page of a campaign's withdrawal history (#986, #803).
+    ///
+    /// Walks the per-campaign id index via
+    /// [`shared::pagination::collect_window`] and loads the canonical record for
+    /// each id in the page, so only the returned page's records are read. A
+    /// pruned index position is skipped, which is why `count` can be below
+    /// `limit`; the [`PageInfo`] tells a caller how to continue.
+    pub fn get_withdrawals_by_campaign(
+        env: Env,
+        campaign_id: u64,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<Withdrawal>, PageInfo) {
+        let index: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::WithdrawalsByCampaign(campaign_id))
+            .unwrap_or(Vec::new(&env));
+        let total = index.len();
+        pagination::collect_window(&env, total, start, limit, |i| {
+            let id = index.get(i)?;
+            env.storage()
+                .persistent()
+                .get::<DataKey, Withdrawal>(&DataKey::Withdrawal(id))
+        })
+    }
+
+    /// Current number of withdrawal ids retained in the per-campaign index
+    /// (#998).
+    ///
+    /// Read-only and O(1): it reads the stored id index and returns its length
+    /// without loading any canonical `Withdrawal` record, so it never triggers
+    /// the write path. The index is ring-trimmed to the retention cap on every
+    /// write, so this is the **current size against the cap** — compare with
+    /// [`Self::get_withdrawal_retention_cap`] for utilisation. Storage tier:
+    /// persistent (`DataKey::WithdrawalsByCampaign`).
+    pub fn get_withdrawal_count(env: Env, campaign_id: u64) -> u32 {
+        env.storage()
+            .persistent()
+            .get::<DataKey, Vec<u64>>(&DataKey::WithdrawalsByCampaign(campaign_id))
+            .unwrap_or(Vec::new(&env))
+            .len()
+    }
+
+    // ── Retention policy (#986) ────────────────────────────────────────────
+
+    /// The cap currently applied to the per-campaign withdrawal index.
+    pub fn get_withdrawal_retention_cap(env: Env) -> u32 {
+        Self::effective_retention_cap(&env)
+    }
+
+    /// Read the retention policy: `(code_ceiling, effective_cap, prune_batch_cap)`.
+    pub fn get_withdrawal_retention_policy(env: Env) -> (u32, u32, u32) {
+        (
+            MAX_WITHDRAWALS_PER_CAMPAIGN,
+            Self::effective_retention_cap(&env),
+            PRUNE_MAX_BATCH,
+        )
+    }
+
+    /// Set the admin-configurable per-campaign index cap (#986).
+    ///
+    /// Must be in `1..=MAX_WITHDRAWALS_PER_CAMPAIGN`, so the code ceiling that
+    /// bounds storage growth can never be raised away.
+    pub fn set_withdrawal_retention_cap(env: Env, admin: Address, cap: u32) {
+        admin.require_auth();
+        Self::ensure_admin(&env, &admin);
+        if cap == 0 || cap > MAX_WITHDRAWALS_PER_CAMPAIGN {
+            panic!("retention cap out of range");
+        }
+        env.storage().instance().set(&DataKey::RetentionCap, &cap);
+        env.events().publish((Symbol::new(&env, "retcap"),), cap);
+    }
+
+    /// Remove a bounded batch of the oldest **index** entries for a campaign
+    /// (#986).
+    ///
+    /// Follows `analytics::prune_earnings`: `limit` is mandatory, capped at
+    /// [`PRUNE_MAX_BATCH`], and bounds both removals and examinations;
+    /// `upto_index` states the window; the admin must authenticate; and the scan
+    /// stops at the first index entry whose withdrawal is **not yet approved**,
+    /// so a pending (claimable) withdrawal is never dropped from the list.
+    ///
+    /// Only the derived index is touched. The canonical `Withdrawal(id)` record
+    /// and the `WithdrawnAmount(campaign_id)` reconciliation total are never
+    /// modified — a caller that still holds an id can always resolve the record
+    /// through [`Self::get_withdrawal`].
+    pub fn prune_withdrawals_by_campaign(
+        env: Env,
+        admin: Address,
+        campaign_id: u64,
+        upto_index: u32,
+        limit: u32,
+    ) -> u32 {
+        admin.require_auth();
+        Self::ensure_admin(&env, &admin);
+        if upto_index == 0 || limit == 0 || limit > PRUNE_MAX_BATCH {
+            panic!("invalid prune bounds");
+        }
+
+        let mut index: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::WithdrawalsByCampaign(campaign_id))
+            .unwrap_or(Vec::new(&env));
+        let target = upto_index.min(index.len()).min(limit);
+        let mut removed = 0u32;
+        while removed < target {
+            let id = index.get(0).unwrap();
+            let terminal = env
+                .storage()
+                .persistent()
+                .get::<DataKey, Withdrawal>(&DataKey::Withdrawal(id))
+                .map(|w| w.approved)
+                .unwrap_or(true);
+            if !terminal {
+                break;
+            }
+            index.pop_front();
+            removed += 1;
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::WithdrawalsByCampaign(campaign_id), &index);
+        env.events()
+            .publish((Symbol::new(&env, "prune"),), (campaign_id, removed));
+        removed
     }
 
     /// Upgrade the contract to a new WASM implementation.
@@ -186,6 +353,17 @@ impl WithdrawalContract {
         if stored_admin != *admin {
             panic!("unauthorized");
         }
+    }
+
+    /// The per-campaign index cap actually applied (#986): the stored admin value
+    /// (or [`DEFAULT_WITHDRAWALS_PER_CAMPAIGN`]), clamped to
+    /// [`MAX_WITHDRAWALS_PER_CAMPAIGN`].
+    fn effective_retention_cap(env: &Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::RetentionCap)
+            .unwrap_or(DEFAULT_WITHDRAWALS_PER_CAMPAIGN)
+            .min(MAX_WITHDRAWALS_PER_CAMPAIGN)
     }
 
     fn next_withdrawal_id(env: &Env) -> u64 {
@@ -291,53 +469,145 @@ impl WithdrawalContract {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{contract, contractimpl, testutils::Address as _, token, Address, Env};
 
-    #[test]
-    fn withdrawal_requests_and_approval_flow() {
+    /// Minimal stand-in for the donation contract, exposing only the probe the
+    /// withdrawal contract uses to size a campaign's available balance.
+    #[contract]
+    pub struct MockDonation;
+
+    #[contractimpl]
+    impl MockDonation {
+        pub fn init(env: Env, total_raised: i128) {
+            env.storage().instance().set(&0u32, &total_raised);
+        }
+        pub fn get_total_raised(env: Env, _campaign_id: u64) -> i128 {
+            env.storage().instance().get(&0u32).unwrap()
+        }
+    }
+
+    struct Fixture<'a> {
+        env: Env,
+        client: WithdrawalContractClient<'a>,
+        contract_id: Address,
+        token: Address,
+        admin: Address,
+        owner: Address,
+        recipient: Address,
+    }
+
+    fn setup<'a>() -> Fixture<'a> {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, WithdrawalContract);
-        let client = WithdrawalContractClient::new(&env, &contract_id);
+
         let admin = Address::generate(&env);
         let owner = Address::generate(&env);
         let recipient = Address::generate(&env);
-        let donation_contract = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
 
-        client.initialize(&admin, &donation_contract);
-        let withdrawal_id = client.request_withdrawal(&7_u64, &owner, &120_i128, &recipient);
+        let donation_id = env.register_contract(None, MockDonation);
+        MockDonationClient::new(&env, &donation_id).init(&1_000_000);
 
-        let withdrawal = client.get_withdrawal(&withdrawal_id).unwrap();
+        let contract_id = env.register_contract(None, WithdrawalContract);
+        let client = WithdrawalContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &donation_id);
+
+        // Fund the withdrawal contract so an approved transfer can settle.
+        token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1_000_000);
+
+        Fixture {
+            env,
+            client,
+            contract_id,
+            token,
+            admin,
+            owner,
+            recipient,
+        }
+    }
+
+    #[test]
+    fn withdrawal_requests_and_approval_flow() {
+        let f = setup();
+        let id = f.client.request_withdrawal(&7_u64, &f.owner, &120_i128, &f.recipient);
+
+        let withdrawal = f.client.get_withdrawal(&id).unwrap();
         assert_eq!(withdrawal.amount, 120_i128);
         assert!(!withdrawal.approved);
 
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            client.approve_withdrawal(&withdrawal_id, &admin);
-        }));
-        assert!(result.is_err());
+        f.client.approve_withdrawal(&id, &f.admin, &f.token);
+        assert!(f.client.get_withdrawal(&id).unwrap().approved);
+        assert_eq!(f.client.get_withdrawn_amount(&7_u64), 120_i128);
+        assert_eq!(
+            token::Client::new(&f.env, &f.token).balance(&f.recipient),
+            120
+        );
+    }
+
+    /// The index stores only ids, and a lookup still resolves the full record
+    /// through the canonical key (#986: no double storage).
+    #[test]
+    fn index_resolves_to_the_single_canonical_record() {
+        let f = setup();
+        let id = f.client.request_withdrawal(&7_u64, &f.owner, &50_i128, &f.recipient);
+
+        let (page, info) = f.client.get_withdrawals_by_campaign(&7_u64, &0, &10);
+        assert_eq!(page.len(), 1);
+        assert_eq!(info.total, 1);
+        assert_eq!(page.get(0).unwrap().amount, 50_i128);
+        // Same record the canonical getter returns.
+        assert_eq!(f.client.get_withdrawal(&id).unwrap().amount, 50_i128);
+    }
+
+    #[test]
+    fn retention_cap_trims_the_index() {
+        let f = setup();
+        f.client.set_withdrawal_retention_cap(&f.admin, &3);
+        for _ in 0..5 {
+            f.client.request_withdrawal(&7_u64, &f.owner, &10_i128, &f.recipient);
+        }
+
+        let (page, info) = f.client.get_withdrawals_by_campaign(&7_u64, &0, &10);
+        assert_eq!(page.len(), 3);
+        assert_eq!(info.total, 3);
+        assert_eq!(f.client.get_withdrawal_retention_cap(), 3);
+    }
+
+    /// Pruning removes index entries only, and never a pending (unapproved)
+    /// withdrawal.
+    #[test]
+    fn prune_is_bounded_and_stops_at_a_pending_withdrawal() {
+        let f = setup();
+        let approved_id = f.client.request_withdrawal(&7_u64, &f.owner, &10_i128, &f.recipient);
+        f.client.approve_withdrawal(&approved_id, &f.admin, &f.token);
+        let pending_id = f.client.request_withdrawal(&7_u64, &f.owner, &10_i128, &f.recipient);
+
+        // Only the approved (terminal) head can be pruned; the scan stops at the
+        // pending record behind it.
+        let removed = f
+            .client
+            .prune_withdrawals_by_campaign(&f.admin, &7_u64, &5, &5);
+        assert_eq!(removed, 1);
+        // The canonical record and reconciliation total survive regardless.
+        assert!(f.client.get_withdrawal(&pending_id).is_some());
+        assert_eq!(f.client.get_withdrawn_amount(&7_u64), 10_i128);
     }
 
     #[test]
     fn pause_blocks_withdrawal_requests() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, WithdrawalContract);
-        let client = WithdrawalContractClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        let owner = Address::generate(&env);
-        let recipient = Address::generate(&env);
-        let donation_contract = Address::generate(&env);
-
-        client.initialize(&admin, &donation_contract);
-        client.pause(&admin);
+        let f = setup();
+        f.client.pause(&f.admin);
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            client.request_withdrawal(&7_u64, &owner, &120_i128, &recipient);
+            f.client.request_withdrawal(&7_u64, &f.owner, &120_i128, &f.recipient);
         }));
         assert!(result.is_err());
 
-        client.unpause(&admin);
-        let id = client.request_withdrawal(&7_u64, &owner, &120_i128, &recipient);
+        f.client.unpause(&f.admin);
+        let id = f.client.request_withdrawal(&7_u64, &f.owner, &120_i128, &f.recipient);
         assert_eq!(id, 1);
     }
 }

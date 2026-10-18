@@ -10,7 +10,7 @@
 //!   that only ever increases. A sequence number is therefore never reused, so
 //!   an existing entry can never be overwritten.
 //! * **There is no `update_entry`, no `delete_entry`, and no `clear`.** Their
-//!     absence *is* the guarantee: there is no code path, authenticated or not,
+//!   absence *is* the guarantee: there is no code path, authenticated or not,
 //!   that can mutate or remove a stored entry. A status change is not an update
 //!   — it is a further append under the same `reference`, so the earlier state
 //!   is still readable and the whole trail is preserved.
@@ -47,6 +47,7 @@
 //! float arithmetic anywhere in this crate, and no place for PII to land.
 
 #![no_std]
+#![allow(clippy::too_many_arguments)]
 use soroban_sdk::{contract, contractimpl, symbol_short, Address, Bytes, Env, Vec};
 
 pub mod errors;

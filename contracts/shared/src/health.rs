@@ -187,7 +187,7 @@ pub fn record_error(env: &Env) {
     save_metrics(env, &metrics);
 }
 
-#[allow(clippy::manual_checked_ops)]
+#[allow(unknown_lints, clippy::manual_checked_ops)]
 pub fn error_bps(metrics: &HealthMetrics) -> u32 {
     let total = (metrics.ok_count as u128).saturating_add(metrics.error_count as u128);
     if total == 0 {

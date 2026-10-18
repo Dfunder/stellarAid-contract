@@ -276,6 +276,8 @@ impl EscrowContract {
         shared::circuit_breaker::require_not_halted(&env)?;
         if amount <= 0 { return Err(EscrowError::InvalidAmount); }
         if escrow_exists(&env, &commission_id) { return Err(EscrowError::AlreadyExists); }
+        // Self-dealing guard (#801): a client must not escrow funds to themselves.
+        if client == artist { return Err(EscrowError::InvalidAddress); }
 
         let fee_bps: u32 = env.invoke_contract(
             &config_contract, &symbol_short!("get_fee_b"), soroban_sdk::vec![&env],
@@ -702,7 +704,10 @@ impl EscrowContract {
         // CHECKS
         shared::circuit_breaker::require_not_halted(&env)?;
         let mut r = get_escrow(&env, &commission_id);
-        if r.status != CommissionStatus::Locked && r.status != CommissionStatus::PartiallyReleased {
+        if r.status != CommissionStatus::Locked
+            && r.status != CommissionStatus::Disputed
+            && r.status != CommissionStatus::PartiallyReleased
+        {
             return Err(EscrowError::InvalidStatus);
         }
         if artist_amount < 0 || client_refund < 0 {
@@ -803,14 +808,15 @@ impl EscrowContract {
     }
 
     /// Read the current commit marker.
+    ///
+    /// Refreshes the marker's TTL and resolves an `InProgress` marker that has
+    /// outlived `ATOMIC_COMMIT_MAX_LIFETIME_LEDGERS` to the terminal
+    /// `RolledBack` state (#988).
     pub fn get_atomic_commit(
         env: Env,
         commission_id: Bytes,
     ) -> Result<AtomicCommitMarker, EscrowError> {
-        if !storage::atomic_marker_exists(&env, &commission_id) {
-            return Err(EscrowError::NotFound);
-        }
-        Ok(storage::get_atomic_marker(&env, &commission_id))
+        cross_contract::get_atomic_commit(&env, &commission_id)
     }
 
     /// Cross-contract consistency probe: does the commission agreement expect

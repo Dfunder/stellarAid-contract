@@ -90,6 +90,30 @@ impl Fixture<'_> {
     }
 }
 
+// ── Bounded reads (#984) ─────────────────────────────────────────────────────
+
+#[test]
+fn payments_page_clamps_the_limit_and_pages_past_the_end() {
+    let f = setup();
+
+    // A member with no payments has an empty, final page at every limit.
+    let (page, info) = f.client.get_payments_page(&f.member, &0, &0);
+    assert!(page.is_empty());
+    assert_eq!(info.total, 0);
+    assert!(!info.has_more);
+    assert_eq!(info.next_start, None);
+
+    // A limit above `MAX_LIMIT` is capped, not rejected.
+    let (page, _) = f.client.get_payments_page(&f.member, &0, &u32::MAX);
+    assert!(page.is_empty());
+
+    // A cursor past the end is an empty final page.
+    let (page, info) = f.client.get_payments_page(&f.member, &99, &10);
+    assert!(page.is_empty());
+    assert!(!info.has_more);
+    assert_eq!(info.next_start, None);
+}
+
 #[test]
 fn initialize_is_one_shot() {
     let f = setup();

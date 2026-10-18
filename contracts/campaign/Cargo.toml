@@ -6,11 +6,11 @@ publish = false
 
 [package.metadata.stellar-aid]
 versioning = "semver"
-storage-schema = 1
+storage-schema = 2
 min-compatible = "0.1.0"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 soroban-sdk = { workspace = true }

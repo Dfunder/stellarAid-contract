@@ -23,8 +23,9 @@
 //! window cannot keep its position warm.
 
 #![no_std]
+#![allow(dead_code)]
 
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Map, Symbol};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Map, Symbol, Vec};
 
 pub mod types;
 pub mod errors;
@@ -91,7 +92,7 @@ fn load_config(env: &Env, key: &RateLimitKey) -> Option<RateLimitConfig> {
         .instance()
         .get(&types::DataKey::RateLimitConfig)
         .unwrap_or_else(|| Map::new(env));
-    configs.get(key.clone())
+    configs.get(*key)
 }
 
 /// Every configured key, in declaration order. `reset_limits` walks this list.
@@ -119,7 +120,15 @@ impl RateLimiter {
         Ok(())
     }
 
-    /// Set a new rate limit configuration
+    /// Set a new rate limit configuration.
+    ///
+    /// `limit` here is a *domain* threshold — the number of actions an account
+    /// may take per window — not a page size, so it is **validated** (must be
+    /// non-zero) rather than run through `shared::pagination::clamp_limit`. A
+    /// legitimate policy may allow thousands of actions per window, and clamping
+    /// it to `MAX_LIMIT` would silently weaken the limit an admin asked for. The
+    /// bounded-read concern addressed by #984 lives in `get_limits_page`, which
+    /// does clamp its own `limit` through the shared helper.
     pub fn set_limit(
         env: Env,
         admin: Address,
@@ -142,7 +151,7 @@ impl RateLimiter {
             .unwrap_or_else(|| Map::<RateLimitKey, RateLimitConfig>::new(&env));
 
         configs.set(
-            key.clone(),
+            key,
             RateLimitConfig {
                 limit,
                 window_ledgers,
@@ -162,6 +171,37 @@ impl RateLimiter {
     /// Get the current rate limit configuration for a key
     pub fn get_limit(env: Env, key: RateLimitKey) -> Option<RateLimitConfig> {
         load_config(&env, &key)
+    }
+
+    /// One page of every configured `(key, config)` pair, plus its [`PageInfo`]
+    /// (#984).
+    ///
+    /// The key set is the fixed `all_keys()` vocabulary, so this read is small
+    /// by construction, but it is routed through
+    /// `shared::pagination::collect_window` all the same: the workspace's list
+    /// readers share one shape, and the caller's `limit` is clamped there (a
+    /// zero serves the default page, anything above `MAX_LIMIT` is capped).
+    ///
+    /// [`PageInfo`]: shared::pagination::PageInfo
+    pub fn get_limits_page(
+        env: Env,
+        start: u32,
+        limit: u32,
+    ) -> (
+        Vec<(RateLimitKey, RateLimitConfig)>,
+        shared::pagination::PageInfo,
+    ) {
+        let keys = all_keys();
+        let configs: Map<RateLimitKey, RateLimitConfig> = env
+            .storage()
+            .instance()
+            .get(&types::DataKey::RateLimitConfig)
+            .unwrap_or_else(|| Map::new(&env));
+        let total = keys.len() as u32;
+        shared::pagination::collect_window(&env, total, start, limit, |i| {
+            let key = *keys.get(i as usize)?;
+            configs.get(key).map(|config| (key, config))
+        })
     }
 
     /// Check if an action is allowed for an account.
@@ -191,14 +231,14 @@ impl RateLimiter {
             None => return Err(RateLimitError::NotInitialized),
         };
 
-        let record_key = RateLimitRecord::key(key.clone(), account.clone());
+        let record_key = RateLimitRecord::key(key, account.clone());
         let current_ledger = env.ledger().sequence();
 
         // Get existing record or create a new one
         let mut record: RateLimitRecord = env.storage().persistent()
             .get(&record_key)
             .unwrap_or_else(|| RateLimitRecord {
-                key: key.clone(),
+                key,
                 account: account.clone(),
                 count: 0,
                 first_ledger: current_ledger,
@@ -276,7 +316,7 @@ impl RateLimiter {
 
     /// Get the current count for a rate limit key and account
     pub fn get_count(env: Env, key: RateLimitKey, account: Address) -> Option<u32> {
-        let record_key = RateLimitRecord::key(key.clone(), account.clone());
+        let record_key = RateLimitRecord::key(key, account.clone());
         let record: Option<RateLimitRecord> = env.storage().persistent().get(&record_key);
 
         match record {
@@ -291,13 +331,13 @@ impl RateLimiter {
 
         // Remove all records for this account
         for key in all_keys().iter() {
-            let record_key = RateLimitRecord::key(key.clone(), account.clone());
+            let record_key = RateLimitRecord::key(*key, account.clone());
             env.storage().persistent().remove(&record_key);
         }
 
         env.events().publish(
             (symbol_short!("rl_reset"),),
-            (account),
+            account,
         );
 
         Ok(())
@@ -305,7 +345,7 @@ impl RateLimiter {
 
     /// Get the current rate limit status for an account
     pub fn get_status(env: Env, key: RateLimitKey, account: Address) -> Option<RateLimitRecord> {
-        let record_key = RateLimitRecord::key(key.clone(), account.clone());
+        let record_key = RateLimitRecord::key(key, account.clone());
         env.storage().persistent().get(&record_key)
     }
 

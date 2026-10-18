@@ -25,6 +25,21 @@ impl Default for RetryConfig {
     }
 }
 
+/// Returns `true` for transient errors that are worth retrying (network
+/// hiccups, timeouts, 5xx responses) and `false` for permanent errors
+/// (validation, auth, not-found) that will never succeed on a retry.
+///
+/// The classification is based on the error's `Display` text so it works for
+/// any error type without extra bounds.
+pub fn is_retryable<E: std::fmt::Display>(e: &E) -> bool {
+    let msg = e.to_string().to_ascii_lowercase();
+    const PERMANENT: [&str; 12] = [
+        "invalid", "unauthorized", "forbidden", "not found", "bad request",
+        "malformed", "unsupported", "already exists", "400", "401", "403", "404",
+    ];
+    !PERMANENT.iter().any(|marker| msg.contains(marker))
+}
+
 pub async fn retry_async<F, Fut, T, E>(config: &RetryConfig, f: F) -> Result<T, E>
 where
     F: Fn() -> Fut,
@@ -45,6 +60,16 @@ where
                 return Ok(val);
             }
             Err(e) => {
+                // Non-retryable errors fail immediately instead of burning
+                // attempts on a request that can never succeed (#805).
+                if !is_retryable(&e) {
+                    warn!(
+                        attempt = attempt,
+                        error = %e,
+                        "non-retryable error, failing immediately"
+                    );
+                    return Err(e);
+                }
                 if attempt >= config.max_attempts {
                     warn!(
                         attempt = attempt,
@@ -212,6 +237,7 @@ mod tests {
     #[test]
     fn delay_calculation_backs_off() {
         let config = RetryConfig {
+            max_attempts: 5,
             base_delay_ms: 100,
             max_delay_ms: 10_000,
             backoff_factor: 2.0,
@@ -226,6 +252,7 @@ mod tests {
     #[test]
     fn delay_capped_at_max() {
         let config = RetryConfig {
+            max_attempts: 5,
             base_delay_ms: 1000,
             max_delay_ms: 2500,
             backoff_factor: 2.0,
@@ -240,6 +267,7 @@ mod tests {
     #[test]
     fn jitter_adds_variation() {
         let config = RetryConfig {
+            max_attempts: 5,
             base_delay_ms: 100,
             max_delay_ms: 500,
             backoff_factor: 1.0,

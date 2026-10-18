@@ -215,7 +215,7 @@ impl AnalyticsContract {
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
 
-        if score_x10 < 10 || score_x10 > 50 {
+        if !(10..=50).contains(&score_x10) {
             return Err(AnalyticsError::InvalidScore);
         }
 
@@ -466,8 +466,8 @@ impl AnalyticsContract {
                 }
                 env.storage().persistent().remove(&key);
                 removed = removed.saturating_add(1);
+                scanned = scanned.saturating_add(1);
             }
-            scanned = scanned.saturating_add(1);
             idx = idx.saturating_add(1);
         }
 

@@ -17,6 +17,12 @@ name = "competitions_benchmark"
 path = "benches/competitions_benchmark.rs"
 harness = false
 
+# Deterministic event-budget regression guard (closes #994).
+# Runs under `cargo test` without needing `cargo bench`.
+[[test]]
+name = "event_budgets"
+path = "tests/event_budgets.rs"
+
 [dependencies]
 soroban-sdk.workspace = true
 shared = { path = "../shared", version = "0.1.0" }

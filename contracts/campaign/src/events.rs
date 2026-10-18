@@ -184,7 +184,7 @@ pub struct DeadlineExtendedEvent {
 /// evaluated lazily as `env.current_contract_address()`.
 pub fn publish<T>(env: &soroban_sdk::Env, event_name: &str, data: T)
 where
-    T: soroban_sdk::Val,
+    T: soroban_sdk::IntoVal<soroban_sdk::Env, soroban_sdk::Val>,
 {
     env.events().publish(
         (

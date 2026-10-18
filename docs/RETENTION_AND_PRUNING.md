@@ -40,7 +40,19 @@ a record that the network was still preserving *and* is cheaper for the user
 than restoring it.
 
 **Pruning is only ever permitted for derived, reproducible, non-claimable
-data.** In this workspace that means analytics history and nothing else.
+data.** In this workspace that means analytics history, the derived per-campaign
+donation/withdrawal **lists**, and the search index — never the record they point
+at.
+
+The one nuance worth stating explicitly, because #986 relies on it: a
+**derived index is not a claim**. `donation::DataKey::CampaignDonations` and
+`withdrawal::DataKey::WithdrawalsByCampaign` are views onto records that are
+retained separately, and the financial total each accompanies
+(`CampaignRaised`, `WithdrawnAmount`) is retained regardless. Bounding those
+lists on write — the same distinction the policy already draws between
+`analytics::Earning` (prunable) and `analytics::Metrics` (never) — does not
+delete anything a user could be told "we have no record of": the canonical
+`Donation`/`Withdrawal` record is still retained until network archival.
 
 ---
 
@@ -98,6 +110,9 @@ would still plausibly need it", and expressed in ledgers so it is deterministic.
 | Dispute state | Until network archival, TTL renewed on every action | §1. |
 | Analytics earnings history (`analytics::DataKey::Earning`) | `ANALYTICS_TTL_LEDGERS` — 1,296,000 ledgers (~90 d) | Derived from commission payouts, reconstructible from events, not a claim. |
 | Analytics aggregates (`analytics::DataKey::Metrics`) | **Indefinite** | Lifetime earnings totals are the entire point of the contract. Never pruned. |
+| Donation lists (`donation::DataKey::CampaignDonations`, `DataKey::DonationHistory`) | `MAX_DONATION_HISTORY` — 500 records per list; effective default `DEFAULT_DONATION_HISTORY` 100 | Derived history view. Ring-trimmed on write; explicitly prunable after `MIN_RETENTION_SECONDS` (~90 d). The `CampaignRaised` aggregate is never pruned. |
+| Withdrawal index (`withdrawal::DataKey::WithdrawalsByCampaign`) | `MAX_WITHDRAWALS_PER_CAMPAIGN` — 500 ids; effective default `DEFAULT_WITHDRAWALS_PER_CAMPAIGN` 100 | Derived id index. The canonical `Withdrawal(id)` records and `WithdrawnAmount` totals are never pruned. |
+| Search index (`search::DataKey::Index`, `IndexCount`, `ArtistIndex`) | `MAX_SCAN` — 200 index entries examined per `search` call | A denormalised copy of `Listing`, reconstructible by re-indexing. The scan is bounded per call; entries are not deleted. |
 | Payer volume (`platform_config::DataKey::Volume`) | `VOLUME_TTL_LEDGERS` — 432,000 ledgers (~30 d) | Rolling input to fee tiering. A payer who transacts is renewed. |
 | Registry resolution cache | `RESOLUTION_CACHE_TTL_LEDGERS` — 86,400 ledgers (~5 d) | A cache. Staleness is detected, not prevented. |
 | Messaging history | `MAX_HISTORY` — 100 messages per conversation (read cap) | See §7. |
@@ -201,6 +216,69 @@ Unit tests in `contracts/analytics/src/tests.rs`:
 `test_prune_earnings_rejects_out_of_range_arguments`,
 `test_prune_earnings_stops_at_a_protected_record`.
 
+### `donation::prune_campaign_donations` and the write-time cap (#986)
+
+`contracts/donation` carried two instances of the §2.2 defect: an unbounded
+per-donor history and an unbounded per-campaign list that is **shared by every
+donor of the campaign**.
+
+| Key | Before | After |
+|-----|--------|-------|
+| `DataKey::CampaignDonations(campaign_id)` | appended on every donation, never trimmed | ring-trimmed to the retention cap on every write |
+| `DataKey::DonationHistory(donor)` | appended on every (non-anonymous) donation, never trimmed | ring-trimmed to the same cap on every write |
+
+The cap is a code constant first and a configurable value second:
+`MAX_DONATION_HISTORY` (500) is the ceiling, `DEFAULT_DONATION_HISTORY` (100) the
+starting value, and `set_donation_retention_cap` accepts only `1..=500`. The
+effective value is re-clamped to the ceiling on every read
+(`get_donation_retention_cap`), so a corrupt stored value cannot raise it.
+`get_donation_retention_policy()` returns `(ceiling, effective, prune_batch)` so
+an operator can read the bounds on-chain.
+
+What is **not** trimmed: `DataKey::CampaignRaised(campaign_id)`, the
+reconciliation total. A campaign's financial summary survives any trim or prune,
+which is what keeps the change inside §1 — the lists are history views, the total
+is the claim.
+
+The write-time trim is the primary mechanism; the explicit prune is the
+`analytics` mechanism applied unchanged. `prune_campaign_donations(admin,
+campaign_id, upto_index, limit)`:
+
+| Requirement | How it is enforced |
+|-------------|--------------------|
+| Explicit bound, never unbounded | `limit` is mandatory; `limit == 0` and `limit > PRUNE_MAX_BATCH` (100) are both rejected. |
+| Explicit scope | `upto_index` is a caller-supplied window, not "everything". |
+| Authorisation required | The stored admin must pass `require_auth` and match `DataKey::Admin`. |
+| Never deletes protected data | The scan **stops** at the first record whose `timestamp` is newer than `now - MIN_RETENTION_SECONDS` (~90 d). |
+| Aggregates untouched | Only `DataKey::CampaignDonations` is touched. `CampaignRaised` is never removed. |
+| Observable | Publishes `(prune)` with `(campaign_id, removed, cutoff)`; the write-time trim publishes a `(prune)` whenever it drops a record. |
+
+### `withdrawal::prune_withdrawals_by_campaign` and the id index (#986)
+
+`contracts/withdrawal` had the worst shape in §2.2: `DataKey::WithdrawalsByCampaign`
+was an unbounded append-only list **and** a duplicate of data already stored at
+`DataKey::Withdrawal(id)`. It now holds only `Vec<u64>` ids, oldest-first:
+
+- The canonical `DataKey::Withdrawal(id)` record is written once and **never
+  pruned** (a settled payment is a record; a pending withdrawal is a claim).
+- `DataKey::WithdrawnAmount(campaign_id)` — the reconciliation total — is never
+  pruned.
+- Only the derived id index is ring-trimmed
+  (`MAX_WITHDRAWALS_PER_CAMPAIGN` 500 ceiling,
+  `DEFAULT_WITHDRAWALS_PER_CAMPAIGN` 100 starting value) and is the sole target
+  of `prune_withdrawals_by_campaign`.
+
+`get_withdrawals_by_campaign` walks the index with
+`shared::pagination::collect_window` and loads the canonical record for each id
+**in the returned page only**, so a pruned index position is skipped (`count` may
+be below `limit`) rather than trapping.
+
+`prune_withdrawals_by_campaign(admin, campaign_id, upto_index, limit)` follows the
+same bounds as the donation prune and additionally **stops at the first index
+entry whose withdrawal is not yet approved** — so a pending (claimable)
+withdrawal is never dropped from the list, even when it is old. It publishes
+`(prune)` with `(campaign_id, removed)`.
+
 ### The messaging precedent, and what is actually there
 
 `contracts/messaging/src/types.rs` declares:
@@ -245,7 +323,8 @@ owner, not a mechanical addition:
 | `reputation` | Indexed `ReportRecord`, `Moderator` | Prune moderation reports only after an appeals window is defined. Reviews themselves: no. |
 | `platform_config` | `DataKey::Volume` | TTL-only. Already correct. Do not add a prune. |
 | `rate_limiter` | `RateLimitRecord` | TTL-only. Already correct. `reset_limits` is an admin override, not a retention mechanism. |
-| `escrow`, `dispute_arbiter`, `donation`, `withdrawal`, `commission_agreement`, `revenue_sharing`, `creator_fund`, `subscription`, `campaign`, `competition*`, `verification` | money movement, disputes, claims | **TTL-only, never pruned.** §1. |
+| `escrow`, `dispute_arbiter`, `commission_agreement`, `revenue_sharing`, `creator_fund`, `subscription`, `campaign`, `competition*`, `verification` | money movement, disputes, claims | **TTL-only, never pruned.** §1. |
+| `donation`, `withdrawal` | **derived** per-campaign list/index; canonical records and reconciliation totals | **Bounded and prunable (#986).** The canonical record and the total are still never pruned. See §7. |
 
 ---
 
@@ -256,8 +335,13 @@ assumed.
 
 ### On-chain
 
-- **The `(prune)` event.** Every `prune_earnings` call emits
-  `(artist, removed, scanned, cutoff)`. Index these and alert on:
+- **The `(prune)` event.** Every bounded prune emits it: `prune_earnings` as
+  `(artist, removed, scanned, cutoff)`, `donation::prune_campaign_donations` as
+  `(campaign_id, removed, cutoff)`, and
+  `withdrawal::prune_withdrawals_by_campaign` as `(campaign_id, removed)`. The
+  write-time list trims in `donation`/`withdrawal` also emit `(prune)` when they
+  drop a record, so a saturated retention cap is visible without a separate
+  prune cycle. Index these and alert on:
   - `removed == 0` across a full prune cycle — the prune is running but never
     removing anything. Usually means the retention window was raised, or the
     wrong `upto_index` is being passed.
@@ -307,3 +391,57 @@ a single call more expensive; adding calls does not.
 - **The §7 correction to `messaging::MAX_HISTORY` was not made.** It is listed
   as a follow-up rather than quietly included, because changing that comment
   changes what the codebase appears to guarantee and deserves its own review.
+- **`donation` and `withdrawal` are not workspace members.** Neither appears in
+  the root `Cargo.toml` (see the `NOTE` there), so the #986 code and its unit
+  tests have **never been compiled** in this repository. They are written to the
+  same storage and pagination conventions as the member crates, but a maintainer
+  must add them to the workspace before trusting the build. The audit-prune
+  contract in both is therefore reviewed by reading, not by a passing test.
+- **The donation/withdrawal prune's `upto_index` is not an independent scan
+  bound.** `limit` bounds what is removed (and the scan stops at the first
+  protected record), but `upto_index` only caps the removal target as
+  `min(upto_index, len, limit)`; it does not itself bound how many records are
+  *examined*. In practice the loop examines at most `limit` records, because it
+  removes before advancing — the same order of magnitude as
+  `analytics::PRUNE_MAX_BATCH` — but it is a weaker guarantee than the analytics
+  text implies and is called out rather than glossed.
+
+---
+
+## 10. Storage-growth metrics (#998)
+
+Unbounded growth announces itself by failing, and by then the fix is a
+migration. Every growing collection therefore exposes a **read-only size
+query** so an operator can watch utilisation instead of discovering it at the
+first failed write. Each count below is O(1) — it reads a stored length or a
+maintained counter, never walks the collection — so it is cheap enough to poll.
+
+| Structure | Storage tier | Cap | Current-size query |
+|---|---|---|---|
+| `donation::DataKey::CampaignDonations(campaign_id)` | persistent | `MAX_DONATION_HISTORY` = 500, effective default `DEFAULT_DONATION_HISTORY` = 100 | `donation::get_donation_count(campaign_id)` |
+| `donation::DataKey::DonationHistory(donor)` | persistent | same cap as above | `donation::get_donor_history_count(donor)` |
+| `withdrawal::DataKey::WithdrawalsByCampaign(campaign_id)` | persistent | `MAX_WITHDRAWALS_PER_CAMPAIGN` = 500, effective default `DEFAULT_WITHDRAWALS_PER_CAMPAIGN` = 100 | `withdrawal::get_withdrawal_count(campaign_id)` |
+| `shared::rollout` feature flags (`RolloutKey::Flag*`) | instance | `MAX_FEATURE_FLAGS` = 32, effective via `rollout::flag_cap` | `shared::rollout::get_state(env).flag_count` alongside `.flag_cap` |
+| `analytics::DataKey::Earning` | persistent | retention window `ANALYTICS_TTL_LEDGERS` (~90 d); prune batch `PRUNE_MAX_BATCH` = 100 | `analytics::get_earning_count(artist)` |
+| `reputation` moderation queue | persistent | none — no eviction path | `reputation::get_moderation_queue_size()` |
+| `search` listing index (`DataKey::Index`, `IndexCount`) | persistent | `MAX_SCAN` = 200 entries examined per `search` call | `search::get_indexed_count()` |
+| `campaign` proposals | persistent | — | `campaign::get_proposal_count()` |
+| `campaign` campaigns | persistent | — | `campaign::get_campaign_count()` |
+| `rate_limiter` tracked windows | temporary | the configured window | no on-chain count; the off-chain analogue is the worker rate-limit status endpoint |
+
+Reading the table: a count well under its cap is healthy; a count pinned at the
+cap while writes keep arriving means the ring-trim is discarding history faster
+than it is produced, and the retention cap is the knob to revisit. Where a cap
+is absent (`reputation` moderation queue), the count is the only growth signal
+and an eviction policy is still owed.
+
+**Approximation note.** All counts above are exact, not approximate: each is a
+stored length or a counter maintained alongside the collection. The counts do
+not include records that have been archived by the network but are still
+restorable from the bucket list; for archival, see §5.
+
+**Consistency note.** The instance-storage counters (`rollout::FlagCount`,
+`analytics::EarningCount`) are maintained alongside their collections in the
+same invocation, so a single transaction cannot leave them disagreeing. The
+list-length counts (donation, withdrawal, search index) are derived from the
+list itself and cannot drift.

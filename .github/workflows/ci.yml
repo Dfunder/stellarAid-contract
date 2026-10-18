@@ -1,11 +1,16 @@
-# ci.yml — build, lint, test and coverage gates for the Soroban workspace.
+# ci.yml — build, lint, test, bench and coverage gates for the Soroban workspace.
 #
-# Closes #884.
+# Closes #884, #994, #996.
 #
 # WHAT THIS RUNS
 #   fmt        cargo fmt --all -- --check
 #   clippy     cargo clippy --workspace --all-targets -- -D warnings
 #   test       cargo test --workspace --no-fail-fast
+#              (includes deterministic event-budget regression guards for
+#               competitions, subscription, reputation and verification — #994)
+#   bench      cargo bench --workspace --no-fail-fast (reporting only; closes #996)
+#              Gating uses deterministic event counts enforced by the test job;
+#              wall-clock timings in the bench job are informational only.
 #   wasm       cargo build --workspace --target wasm32-unknown-unknown --release
 #   coverage   cargo llvm-cov, published to the coverage badge in README.md (#882)
 #
@@ -234,3 +239,61 @@ jobs:
         with:
           files: lcov.info
           fail_ci_if_error: false
+
+  # ── Benchmarks ────────────────────────────────────────────────────────────
+  # Closes #996. Runs the benchmark suite and reports results in the job
+  # summary so a reviewer can see cost trends in the PR. Wall-clock numbers
+  # are informational only (not portable across CI hardware); deterministic
+  # event-count budgets are enforced by the `test` job above.
+  #
+  # Scope: only contract source and benchmark files trigger this job.
+  # A docs-only PR skips it, following the `typescript-ci.yml` pattern.
+  #
+  # Non-blocking while `main` does not compile; the same BASELINE caveat
+  # applies here as to the other jobs above.
+  bench:
+    name: bench
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    if: >
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.changed_files_url, 'contracts/') ||
+      contains(github.event.pull_request.changed_files_url, 'benches/')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Cache cargo registry and host build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          # Separate cache key from the `test` job so bench and test builds
+          # do not thrash each other's incremental artifacts.
+          key: bench-host-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            bench-host-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
+      - name: Run benchmarks
+        # --no-fail-fast: one broken benchmark should not hide the state of
+        # the others. commission_agreement is excluded until it compiles.
+        # Gating is intentionally absent here; wall-clock timings are not
+        # portable. Deterministic event-budget enforcement runs in `test`.
+        run: |
+          make bench 2>&1 | tee bench_output.txt
+          exit ${PIPESTATUS[0]}
+      - name: Summarise benchmark results
+        if: always()
+        run: |
+          {
+            echo "## Benchmark results"
+            echo
+            echo "Wall-clock timings are informational only (not portable across CI hardware)."
+            echo "Deterministic event-budget enforcement runs in the \`test\` job."
+            echo
+            echo '```'
+            cat bench_output.txt 2>/dev/null || echo "(no output)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

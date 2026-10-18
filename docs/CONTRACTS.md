@@ -1,5 +1,7 @@
 # Contract Specification
 
+> **Summary.** This document provides reference specifications—purpose, authorization, public interfaces, emitted events, and error codes—for 24 crates under `contracts/` (23 contracts plus the `shared` library). It does *not* cover all 29 member directories in the workspace (notably omitting `campaign_factory`, `campaign_instance`, and `factory`, as well as the unbuilt `donation` and `withdrawal` crates). In accordance with the honest status model established in `PERFORMANCE_TARGETS.md` §6, these specifications reflect transcribed source code rather than live-verified invocations; several contracts (such as `escrow` and `commission_agreement`) currently have delimiter or compilation errors on `main` and have not been compiled to WASM. This guide is intended for smart contract engineers, protocol auditors, and backend integrators. New readers should start with [Conventions used below](#conventions-used-below) and [Shared machinery](#shared-machinery) before consulting specific contract sections.
+
 Reference documentation for every crate in the stellarAid workspace: what it is
 for, who may call it, what it emits, and how it fails.
 
@@ -7,6 +9,52 @@ for, who may call it, what it emits, and how it fails.
 > - **Event schemas:** [EVENTS.md](./EVENTS.md).
 > - **Error code catalogue:** [error_codes.md](./error_codes.md).
 > - **Bump rules and compatibility:** [VERSIONING.md](./VERSIONING.md).
+
+## Table of contents
+
+A text-only index so this reference can be navigated by heading — in the GitHub
+outline, with a screen reader, or by anchor link — without scrolling 400 KB.
+
+- [Scope](#scope)
+- [Conventions used below](#conventions-used-below)
+- [Architecture](#architecture)
+- [Versioning](#versioning)
+- [Shared machinery](#shared-machinery)
+- [Contracts](#contracts)
+- [Compile status summary](#compile-status-summary)
+- [Known gaps in the current implementation](#known-gaps-in-the-current-implementation)
+
+### Contract index
+
+Every contract in this document, in the order it appears, with a one-line
+purpose. Each link jumps directly to that contract's specification.
+
+| Contract | Purpose |
+|---|---|
+| [analytics](#analytics) | Earnings ledger and lifetime metrics. |
+| [audit](#audit) | Append-only audit trail of sensitive operations. |
+| [campaign](#campaign) | Campaign lifecycle and funding. |
+| [commission_agreement](#commission_agreement) | Commission terms, milestones and fee release. |
+| [competitions](#competitions) | Competition lifecycle, entries and prize distribution. |
+| [creator_fund](#creator_fund) | Creator-fund allocations and growth. |
+| [dao](#dao) | Governance proposals and voting. |
+| [dispute_arbiter](#dispute_arbiter) | Dispute raising and resolution. |
+| [ecosystem_funding](#ecosystem_funding) | Grant programmes and milestone review. |
+| [escrow](#escrow) | Custody, milestones and release of funds. |
+| [licensing](#licensing) | Creative licence records. |
+| [mentorship](#mentorship) | Mentorship programmes and milestones. |
+| [messaging](#messaging) | Per-conversation message history. |
+| [multi_sig](#multi_sig) | Multi-signature proposals and approvals. |
+| [nft](#nft) | NFT ownership and royalties. |
+| [platform_config](#platform_config) | Shared configuration: fees, tokens, feature flags. |
+| [rate_limiter](#rate_limiter) | Configurable per-key rate limits. |
+| [recruitment](#recruitment) | Job postings and applications. |
+| [reputation](#reputation) | Reviews, ratings and the moderation queue. |
+| [revenue_sharing](#revenue_sharing) | Revenue splits across recipients. |
+| [search](#search) | Denormalised listing index and search. |
+| [subscription](#subscription) | Tiered subscriptions and credit ledgers. |
+| [verification](#verification) | Artist verification records. |
+| [shared](#shared) | Reusable library machinery; no entry points of its own. |
 
 ## Scope
 

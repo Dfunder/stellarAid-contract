@@ -1,13 +1,7 @@
-use crate::types::AddressEnvironment;
-use crate::types::ResolutionCacheEntry;
-use crate::PlatformConfigContractClient;
-use soroban_sdk::testutils::Address as _;
-use soroban_sdk::testutils::Ledger;
-use soroban_sdk::{symbol_short, Address, Env, Symbol};
-use crate::types::{FeeTier, Promotion, ReferralConfig};
+use crate::types::{AddressEnvironment, FeeTier, Promotion, ReferralConfig, ResolutionCacheEntry};
 use crate::PlatformConfigContractClient;
 use soroban_sdk::testutils::{Address as _, Ledger};
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{symbol_short, Address, Env, Symbol};
 
 fn setup(env: &Env) -> (crate::PlatformConfigContractClient<'_>, Address, Address, Address) {
     env.mock_all_auths();
@@ -44,7 +38,7 @@ fn test_initialize_success() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "Error(Contract, #4)")]
 fn test_set_fee_bps_too_high() {
     let env = Env::default();
     let (client, _, _, _) = setup(&env);
@@ -73,7 +67,7 @@ fn test_accept_admin_updates_admin() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "Error(Contract, #1)")]
 fn test_initialize_already_initialized() {
     let env = Env::default();
     env.mock_all_auths();
@@ -87,7 +81,7 @@ fn test_initialize_already_initialized() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "Error(Contract, #4)")]
 fn test_initialize_fee_bps_too_high() {
     let env = Env::default();
     env.mock_all_auths();
@@ -281,6 +275,8 @@ fn registry_entry_returns_full_record() {
     assert_eq!(entry.env, AddressEnvironment::Test);
     assert_eq!(entry.name, ESCROW);
     assert_eq!(entry.address, escrow_addr);
+}
+
 // ── Advanced fee structures (#690) ─────────────────────────────────────────
 
 #[test]

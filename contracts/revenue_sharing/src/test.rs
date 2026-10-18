@@ -1,8 +1,10 @@
 extern crate std;
-use soroban_sdk::{testutils::Address as _, token, vec, Address, Bytes, Env, String, Vec};
+use soroban_sdk::{
+    testutils::Address as _, testutils::Events as _, token, vec, Address, Bytes, Env, String, Vec,
+};
 
 use crate::errors::RevenueError;
-use crate::types::{AgreementStatus, Participant};
+use crate::types::{AgreementStatus, Participant, TOTAL_BPS};
 use crate::{RevenueSharing, RevenueSharingClient};
 
 const HISTORY_LIMIT: u32 = 3;
@@ -80,6 +82,31 @@ impl Fixture<'_> {
     fn memo(&self) -> String {
         String::from_str(&self.env, "streaming payout")
     }
+}
+
+// ── Bounded reads (#984) ─────────────────────────────────────────────────────
+
+#[test]
+fn history_page_clamps_the_limit_and_pages_past_the_end() {
+    let f = setup();
+    f.create();
+
+    // No payouts yet: the history is empty, and every clamp path agrees.
+    let (page, info) = f.client.get_history_page(&f.id, &0, &0);
+    assert!(page.is_empty());
+    assert_eq!(info.total, 0);
+    assert!(!info.has_more);
+    assert_eq!(info.next_start, None);
+
+    // A limit above `MAX_LIMIT` is capped, not rejected.
+    let (page, _) = f.client.get_history_page(&f.id, &0, &u32::MAX);
+    assert!(page.is_empty());
+
+    // A cursor past the end is an empty final page.
+    let (page, info) = f.client.get_history_page(&f.id, &99, &10);
+    assert!(page.is_empty());
+    assert!(!info.has_more);
+    assert_eq!(info.next_start, None);
 }
 
 #[test]
@@ -297,4 +324,89 @@ fn history_is_capped_at_the_configured_limit() {
         HISTORY_LIMIT + 2
     );
     assert_eq!(f.client.get_report(&f.id).entry_count, HISTORY_LIMIT + 2);
+}
+
+// ── #989: deterministic event budget ─────────────────────────────────────────
+
+/// `record_revenue` publishes a deterministic number of contract events: one
+/// `revenue` event of its own, plus one `transfer` event from the Stellar Asset
+/// Contract for every positive payout. Under an equal split every recipient
+/// receives a positive payout, so the budget is exactly `participants + 1`.
+///
+/// This mirrors the `budget_for` table in
+/// `benches/revenue_sharing_benchmark.rs`. The benchmark gates on it when
+/// `REVENUE_SHARING_BENCH_CHECK=1`; this test makes a change that breaks it fail
+/// under a plain `cargo test`, with no benchmark run needed.
+#[test]
+fn event_budget_scales_with_participants() {
+    for participants in [2u32, 5, 20] {
+        let f = setup();
+        let id = Bytes::from_slice(&f.env, b"budget");
+        f.client.create_agreement(
+            &id,
+            &f.artist,
+            &f.token,
+            &equal_splits(&f.env, participants),
+        );
+
+        let events_before = f.env.events().all().len();
+        f.client.record_revenue(&id, &f.source, &100_000, &f.memo());
+        let events = (f.env.events().all().len() - events_before) as u32;
+        assert_eq!(
+            events,
+            participants + 1,
+            "one revenue event + one transfer event per recipient"
+        );
+    }
+}
+
+/// A batch that exhausts its source partway through must abort atomically: the
+/// error is surfaced, and no earnings, totals or history entry are committed
+/// for the half-distributed batch. This is the failure path the benchmark
+/// measures (`record_revenue/insufficient`).
+#[test]
+fn insufficient_balance_mid_batch_is_atomic() {
+    let f = setup();
+    let participants = 20u32;
+    let id = Bytes::from_slice(&f.env, b"mid-batch");
+    f.client.create_agreement(
+        &id,
+        &f.artist,
+        &f.token,
+        &equal_splits(&f.env, participants),
+    );
+
+    // Fund a fresh source for only half the batch, so the transfer loop runs
+    // out of funds partway through.
+    let poor = Address::generate(&f.env);
+    let per_payout = 100_000i128 / participants as i128;
+    let funded = per_payout * (participants as i128 / 2);
+    token::StellarAssetClient::new(&f.env, &f.token).mint(&poor, &funded);
+
+    let result = f.client.try_record_revenue(&id, &poor, &100_000, &f.memo());
+    assert!(
+        !matches!(&result, Ok(Ok(_))),
+        "a mid-batch shortfall must abort, not succeed"
+    );
+
+    // Atomicity: nothing was committed.
+    let report = f.client.get_report(&id);
+    assert_eq!(report.total_revenue, 0);
+    assert_eq!(report.total_distributed, 0);
+    assert_eq!(report.entry_count, 0);
+    assert_eq!(f.client.get_history(&id).len(), 0);
+    assert_eq!(f.balance(&poor), funded, "no partial transfer left the source");
+}
+
+/// An equal split of `participants` recipients that sums to `TOTAL_BPS`.
+fn equal_splits(env: &Env, participants: u32) -> Vec<Participant> {
+    let share = TOTAL_BPS / participants;
+    let mut splits = Vec::new(env);
+    for _ in 0..participants {
+        splits.push_back(Participant {
+            account: Address::generate(env),
+            share_bps: share,
+        });
+    }
+    splits
 }

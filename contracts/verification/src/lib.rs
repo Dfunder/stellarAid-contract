@@ -187,6 +187,8 @@ impl Verification {
         if update_interval == 0 || history_limit == 0 {
             return Err(VerificationError::InvalidInterval);
         }
+        // Clamp the retained history window to the shared page ceiling (#984).
+        let history_limit = shared::pagination::clamp_limit(history_limit);
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::MinScore, &min_score);
         env.storage()
@@ -424,6 +426,33 @@ impl Verification {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    // ── Bounded reads (closes #984) ──────────────────────────────────────
+    //
+    // Both history vectors are retained at `clamp_limit(history_limit)` (see
+    // `initialize`), so the plain getters are already bounded at
+    // `shared::pagination::MAX_LIMIT`. The `_page` variants add an offset
+    // cursor and `PageInfo` so a client can page the retained window and tell
+    // a truncated page from a complete one; the caller's `limit` is clamped by
+    // `collect_window`.
+
+    /// One page of `artist`'s verification history, plus its [`PageInfo`].
+    ///
+    /// [`PageInfo`]: shared::pagination::PageInfo
+    pub fn get_history_page(
+        env: Env,
+        artist: Address,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<VerificationRecord>, shared::pagination::PageInfo) {
+        let all: Vec<VerificationRecord> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::History(artist))
+            .unwrap_or_else(|| Vec::new(&env));
+        let total = all.len();
+        shared::pagination::collect_window(&env, total, start, limit, |i| all.get(i))
+    }
+
     /// Badge eligibility: approved and not past its refresh deadline.
     pub fn is_verified(env: Env, artist: Address) -> bool {
         match load_portfolio(&env, &artist) {
@@ -571,11 +600,65 @@ impl Verification {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    /// Paginated variant of `get_artist_badge_types`.
+    pub fn get_artist_badge_types_page(
+        env: Env,
+        artist: Address,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<BadgeType>, shared::PageInfo) {
+        let types: Vec<BadgeType> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::BadgeTypes(artist))
+            .unwrap_or_else(|| Vec::new(&env));
+        shared::pagination::paginated(&env, &types, start, limit)
+    }
+
     pub fn get_badge_history(env: Env, artist: Address) -> Vec<BadgeEvent> {
         env.storage()
             .persistent()
             .get(&DataKey::BadgeHistory(artist))
             .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// One page of `artist`'s badge history, plus its [`PageInfo`] (#984).
+    ///
+    /// [`PageInfo`]: shared::pagination::PageInfo
+    pub fn get_badge_history_page(
+        env: Env,
+        artist: Address,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<BadgeEvent>, shared::pagination::PageInfo) {
+        let all: Vec<BadgeEvent> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::BadgeHistory(artist))
+            .unwrap_or_else(|| Vec::new(&env));
+        let total = all.len();
+        shared::pagination::collect_window(&env, total, start, limit, |i| all.get(i))
+    }
+
+    /// One page of the badge types ever issued to `artist`, plus its
+    /// [`PageInfo`] (#984). The set is bounded by the `BadgeType` vocabulary,
+    /// but it is paged for the same reason as the histories: one shape for
+    /// every collection reader.
+    ///
+    /// [`PageInfo`]: shared::pagination::PageInfo
+    pub fn get_artist_badge_types_page(
+        env: Env,
+        artist: Address,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<BadgeType>, shared::pagination::PageInfo) {
+        let all: Vec<BadgeType> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::BadgeTypes(artist))
+            .unwrap_or_else(|| Vec::new(&env));
+        let total = all.len();
+        shared::pagination::collect_window(&env, total, start, limit, |i| all.get(i))
     }
 
     pub fn set_min_score(env: Env, min_score: u32) -> Result<(), VerificationError> {
@@ -637,6 +720,24 @@ impl Verification {
     }
     pub fn is_feature_enabled(env: Env, flag: soroban_sdk::Symbol) -> bool {
         shared::rollout::is_feature_enabled(&env, &flag)
+    }
+    /// Lower this contract's feature-flag cap within the shared ceiling (#985).
+    ///
+    /// `shared::rollout::MAX_FEATURE_FLAGS` is the hard ceiling; this only ever
+    /// lowers the effective cap, so future tuning needs no new code. The current
+    /// value is returned by [`get_flag_cap`] and in
+    /// `get_rollout_state().flag_cap`.
+    pub fn set_flag_cap(
+        env: Env,
+        admin: Address,
+        cap: u32,
+    ) -> Result<(), shared::rollout::RolloutError> {
+        admin.require_auth();
+        shared::rollout::set_flag_cap(&env, cap)
+    }
+    /// The effective feature-flag cap for this contract (#985).
+    pub fn get_flag_cap(env: Env) -> u32 {
+        shared::rollout::flag_cap(&env)
     }
     pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
         admin.require_auth();

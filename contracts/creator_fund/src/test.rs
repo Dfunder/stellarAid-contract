@@ -100,6 +100,45 @@ impl Fixture<'_> {
     }
 }
 
+// ── Bounded reads (#984) ─────────────────────────────────────────────────────
+
+#[test]
+fn growth_page_clamps_the_limit_and_pages_past_the_end() {
+    let f = setup();
+    f.fund_with_capital(); // one snapshot at creation plus one per contribution
+
+    // `limit == 0` serves the default page.
+    let (page, info) = f.client.get_growth_page(&f.fund_id, &0, &0);
+    assert_eq!(page.len(), 3);
+    assert_eq!(info.total, 3);
+    assert_eq!(info.count, 3);
+    assert!(!info.has_more);
+    assert_eq!(info.next_start, None);
+
+    // A limit above `MAX_LIMIT` is capped, not rejected.
+    let (page, info) = f.client.get_growth_page(&f.fund_id, &0, &u32::MAX);
+    assert_eq!(page.len(), 3);
+    assert_eq!(info.limit, 3);
+
+    // A cursor past the end is an empty final page.
+    let (page, info) = f.client.get_growth_page(&f.fund_id, &99, &10);
+    assert!(page.is_empty());
+    assert!(!info.has_more);
+    assert_eq!(info.next_start, None);
+}
+
+#[test]
+fn allocations_page_on_an_unallocated_fund_is_empty() {
+    let f = setup();
+    f.create(FundType::GrantPool, rule(5000, 0, 5000));
+
+    let (page, info) = f.client.get_allocations_page(&f.fund_id, &0, &10);
+    assert!(page.is_empty());
+    assert_eq!(info.total, 0);
+    assert!(!info.has_more);
+    assert_eq!(info.next_start, None);
+}
+
 #[test]
 fn funds_of_every_type_can_be_opened() {
     let f = setup();

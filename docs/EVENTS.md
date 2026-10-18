@@ -1,5 +1,7 @@
 # StellarAid Smart Contract Events Reference
 
+> **Summary.** This hand-maintained catalog specifies the on-chain event architecture—topics, payload types, correlation IDs, and client ingestion patterns—for 13 contract subsystems and shared runtime events. It does not provide exhaustive coverage of the repository, omitting more than ten workspace contracts (such as `analytics`, `audit`, `mentorship`, and `nft`) while including non-workspace crates (`donation` and `withdrawal`). In line with `PERFORMANCE_TARGETS.md` §6, event topic formats reflect code definitions, but the described RPC filtering, re-org handling, and TypeScript ingestion loops are aspirational integration designs rather than measurements from a live indexing pipeline. This reference is aimed at indexer engineers, frontend developers, and integration teams building event-driven services. Readers should start with [Architecture & Naming Conventions](#architecture--naming-conventions) and [Stellar RPC getEvents Filtering](#stellar-rpc-getevents-filtering).
+
 All Soroban smart contracts in the **StellarAid** ecosystem emit structured on-chain events for off-chain indexing, analytics, notifications, and client state synchronization.
 
 Events are emitted using the Soroban host environment method:

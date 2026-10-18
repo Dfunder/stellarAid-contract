@@ -51,6 +51,27 @@ macro_rules! require {
     };
 }
 
+pub use self::check_not_initialized as not_initialized;
+pub use self::check_initialized as initialized;
+pub use self::check_authorized as authorized;
+pub use self::check_not_frozen as not_frozen;
+pub use self::check_not_locked as not_locked;
+pub use self::check_campaign_open as campaign_open;
+pub use self::check_valid_goal as valid_goal;
+pub use self::check_valid_end_time as valid_end_time;
+pub use self::check_asset_accepted as asset_accepted;
+pub use self::check_valid_asset_code as valid_asset_code;
+pub use self::check_donation_minimum as donation_minimum;
+pub use self::check_contract_balance as contract_balance;
+pub use self::check_no_funds_held as no_funds_held;
+pub use self::check_refund_window_open as refund_window_open;
+pub use self::check_no_open_dispute as no_open_dispute;
+pub use self::check_active_dispute as active_dispute;
+pub use self::check_dispute_cooldown as dispute_cooldown;
+pub use self::check_withdrawal_window as withdrawal_window;
+pub use self::check_pending_withdrawal as pending_withdrawal;
+pub use self::check_accumulate as accumulate;
+
 // ── Lifecycle ──────────────────────────────────────────────────────────────────
 
 /// `initialize` refuses to run twice.
@@ -156,7 +177,7 @@ pub fn check_asset_accepted(accepted: bool) -> Result<(), Error> {
 /// An asset code is at most `max_len` bytes and non-empty.
 #[inline]
 pub fn check_valid_asset_code(code: &String, max_len: u32) -> Result<(), Error> {
-    if code.len() == 0 || code.len() > max_len {
+    if code.is_empty() || code.len() > max_len {
         Err(Error::InvalidAssets)
     } else {
         Ok(())

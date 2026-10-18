@@ -1,4 +1,4 @@
-﻿//! Review Moderation & Appeal System
+//! Review Moderation & Appeal System
 //!
 //! Provides on-chain review management including:
 //! - Review submission with rating and comment
@@ -57,7 +57,7 @@ impl ReputationContract {
     ) -> Result<(), ReputationError> {
         reviewer.require_auth();
 
-        if rating_x10 < 10 || rating_x10 > 50 {
+        if !(10..=50).contains(&rating_x10) {
             return Err(ReputationError::InvalidRating);
         }
         if env.storage().persistent().has(&DataKey::Review(review_id.clone())) {
@@ -108,10 +108,6 @@ impl ReputationContract {
             .get(&DataKey::Review(review_id.clone()))
             .ok_or(ReputationError::ReviewNotFound)?;
 
-        if review.status != ReviewStatus::Active && review.status != ReviewStatus::Cleared {
-            return Err(ReputationError::InvalidStatus);
-        }
-
         let count: u32 = env.storage()
             .persistent()
             .get(&DataKey::ReportCount(review_id.clone()))
@@ -124,6 +120,10 @@ impl ReputationContract {
             if r.reporter == reporter {
                 return Err(ReputationError::AlreadyReported);
             }
+        }
+
+        if review.status != ReviewStatus::Active && review.status != ReviewStatus::Cleared {
+            return Err(ReputationError::InvalidStatus);
         }
 
         let report = ReportRecord {
@@ -200,7 +200,7 @@ impl ReputationContract {
             return Err(ReputationError::InvalidStatus);
         }
 
-        review.status = new_status.clone();
+        review.status = new_status;
         env.storage()
             .persistent()
             .set(&DataKey::Review(review_id.clone()), &review);
@@ -318,7 +318,7 @@ impl ReputationContract {
             return Err(ReputationError::InvalidStatus);
         }
 
-        appeal.status = decision.clone();
+        appeal.status = decision;
         env.storage().persistent().set(&DataKey::Appeal(review_id.clone()), &appeal);
 
         if decision == AppealStatus::Upheld {

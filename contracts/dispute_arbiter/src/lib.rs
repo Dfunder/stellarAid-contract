@@ -89,6 +89,20 @@ fn save_dispute(env: &Env, record: &DisputeRecord) {
         .set(&DataKey::Dispute(record.commission_id.clone()), record);
 }
 
+/// Collapse the shared handover error onto this contract's error enum (#983).
+///
+/// `DisputeError` predates `shared::admin` and cannot grow new variants here,
+/// so the three shared failure modes map onto the two it already has: a missing
+/// contract is `NotInitialized`, and every other refusal (wrong caller, no
+/// pending transfer, proposing the current admin) is an authorization answer,
+/// so `Unauthorized`.
+fn map_admin_error(err: shared::admin::AdminError) -> DisputeError {
+    match err {
+        shared::admin::AdminError::NotInitialized => DisputeError::NotInitialized,
+        _ => DisputeError::Unauthorized,
+    }
+}
+
 #[contractimpl]
 impl DisputeArbiter {
     pub fn initialize(
@@ -345,6 +359,59 @@ impl DisputeArbiter {
         load_dispute(&env, &commission_id)
     }
 
+    // ── Admin key rotation (closes #983) ─────────────────────────────────
+    //
+    // Two-step handover, with the state machine defined once in
+    // `shared::admin`. The active admin stays under this contract's
+    // `DataKey::Admin`; only the pending successor lives in the shared key
+    // space. Each entry point checks the caller against the stored admin
+    // *before* delegating, because the shared layer cannot read a
+    // contract-specific key.
+
+    /// Step 1 — the current admin proposes `new_admin` as its successor.
+    pub fn transfer_admin(env: Env, admin: Address, new_admin: Address) -> Result<(), DisputeError> {
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(DisputeError::NotInitialized)?;
+        if stored != admin {
+            return Err(DisputeError::Unauthorized);
+        }
+        shared::admin::propose(&env, &admin, &new_admin).map_err(map_admin_error)
+    }
+
+    /// Step 2 — the proposed successor accepts and becomes the active admin.
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), DisputeError> {
+        let previous: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(DisputeError::NotInitialized)?;
+        shared::admin::accept(&env, &previous, &new_admin).map_err(map_admin_error)?;
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        Ok(())
+    }
+
+    /// The current admin withdraws an in-flight proposal; the active admin is
+    /// left in place.
+    pub fn cancel_admin_transfer(env: Env, admin: Address) -> Result<(), DisputeError> {
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(DisputeError::NotInitialized)?;
+        if stored != admin {
+            return Err(DisputeError::Unauthorized);
+        }
+        shared::admin::cancel(&env, &admin).map_err(map_admin_error)
+    }
+
+    /// The proposed successor awaiting acceptance, if any.
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        shared::admin::pending_admin(&env)
+    }
+
     // ── Health monitoring (#678) and gradual rollout (#684) ──────────────
     pub fn health_check(env: Env) -> shared::health::HealthReport {
         let report = shared::health::health_check(&env);
@@ -384,6 +451,24 @@ impl DisputeArbiter {
     }
     pub fn is_feature_enabled(env: Env, flag: soroban_sdk::Symbol) -> bool {
         shared::rollout::is_feature_enabled(&env, &flag)
+    }
+    /// Lower this contract's feature-flag cap within the shared ceiling (#985).
+    ///
+    /// `shared::rollout::MAX_FEATURE_FLAGS` is the hard ceiling; this only ever
+    /// lowers the effective cap, so future tuning needs no new code. The current
+    /// value is returned by [`get_flag_cap`] and in
+    /// `get_rollout_state().flag_cap`.
+    pub fn set_flag_cap(
+        env: Env,
+        admin: Address,
+        cap: u32,
+    ) -> Result<(), shared::rollout::RolloutError> {
+        admin.require_auth();
+        shared::rollout::set_flag_cap(&env, cap)
+    }
+    /// The effective feature-flag cap for this contract (#985).
+    pub fn get_flag_cap(env: Env) -> u32 {
+        shared::rollout::flag_cap(&env)
     }
     pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
         admin.require_auth();

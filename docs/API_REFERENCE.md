@@ -20,13 +20,13 @@ Conventions:
 | Function | Signature (client) | Returns |
 |---|---|---|
 | `initialize` | `(admin: &Address)` | — sets admin, defaults |
-| `create_escrow` | `(admin: &Address, token: &Address, amount: i128, recipient: &Address, ... )` | — |
-| `release_payment` | `(admin: &Address, escrow_id: &Bytes)` | — |
-| `refund_client` | `(admin: &Address, escrow_id: &Bytes)` | — |
-| `cancel_escrow` | `(admin: &Address, escrow_id: &Bytes)` | — |
-| `expire_escrow` | `(admin: &Address, escrow_id: &Bytes)` | — |
-| `open_dispute` | `(admin: &Address, escrow_id: &Bytes)` | — |
-| `get_escrow` | `(escrow_id: &Bytes)` | `Option<EscrowRecord>` |
+| `create_escrow` | `(commission_id: &Bytes, client: &Address, artist: &Address, amount: i128, config_contract: &Address)` | — |
+| `release_payment` | `(commission_id: &Bytes, config_contract: &Address)` | — |
+| `refund_client` | `(commission_id: &Bytes, config_contract: &Address)` | — |
+| `cancel_escrow` | `(commission_id: &Bytes, config_contract: &Address, artist_amount: i128, client_refund: i128)` | — |
+| `expire_escrow` | `(commission_id: &Bytes, expiry_ledger: u32)` | — |
+| `open_dispute` | `(commission_id: &Bytes, initiator: &Address)` | — |
+| `get_escrow` | `(commission_id: &Bytes)` | `EscrowRecord` |
 
 `EscrowError` codes used here: `InvalidEscrow`, `NotActive`,
 `OnlyRecipient`, `NoAuth`, `DisputeOpen`, `AlreadyActive`, `Expired`,

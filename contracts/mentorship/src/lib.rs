@@ -11,8 +11,44 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec,
 };
+
+/// Typed errors returned by the contract entry points.
+///
+/// These replace the `assert!`/`expect` panics that previously guarded the
+/// entry points, so a caller can handle each failure programmatically.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum MentorshipError {
+    /// The contract has not been initialized (no admin).
+    NotInitialized = 1,
+    /// No engagement exists for the given id.
+    EngagementNotFound = 2,
+    /// No milestones are stored for the engagement.
+    MilestonesNotFound = 3,
+    /// The milestone index is out of range.
+    MilestoneOutOfRange = 4,
+    /// Compensation must be non-negative.
+    InvalidCompensation = 5,
+    /// At least one milestone is required.
+    NoMilestones = 6,
+    /// The caller is not the mentee.
+    NotMentee = 7,
+    /// The caller is not the mentor.
+    NotMentor = 8,
+    /// The caller is not permitted to perform this action.
+    Unauthorized = 9,
+    /// The engagement is not in a state that allows this action.
+    InvalidStatus = 10,
+    /// The milestone is not in a state that allows this action.
+    InvalidMilestoneStatus = 11,
+    /// Rating must be between 1 and 5.
+    InvalidRating = 12,
+    /// A certificate has already been issued.
+    CertificateAlreadyIssued = 13,
+}
 
 // ── Data Types ────────────────────────────────────────────────────────────────
 
@@ -149,10 +185,14 @@ impl MentorshipProgram {
         milestones: Vec<(String, String)>,
         compensation: i128,
         token: Address,
-    ) -> u64 {
+    ) -> Result<u64, MentorshipError> {
         mentor.require_auth();
-        assert!(compensation >= 0, "compensation must be non-negative");
-        assert!(!milestones.is_empty(), "at least one milestone required");
+        if !(compensation >= 0) {
+ return Err(MentorshipError::InvalidCompensation);
+ }
+        if !(!milestones.is_empty()) {
+ return Err(MentorshipError::NoMilestones);
+ }
 
         let id = Self::next_id(&env);
 
@@ -191,18 +231,19 @@ impl MentorshipProgram {
         env.events()
             .publish((symbol_short!("proposed"),), (id, mentor, mentee));
 
-        id
+        Ok(id)
     }
 
     /// Mentee accepts the proposed engagement, activating it.
-    pub fn accept_engagement(env: Env, mentee: Address, engagement_id: u64) {
+    pub fn accept_engagement(env: Env, mentee: Address, engagement_id: u64) -> Result<(), MentorshipError> {
         mentee.require_auth();
-        let mut engagement = Self::load_engagement(&env, engagement_id);
-        assert!(engagement.mentee == mentee, "caller is not the mentee");
-        assert!(
-            engagement.status == EngagementStatus::Proposed,
-            "engagement is not in Proposed state"
-        );
+        let mut engagement = Self::load_engagement(&env, engagement_id)?;
+        if !(engagement.mentee == mentee) {
+ return Err(MentorshipError::NotMentee);
+ }
+        if !(engagement.status == EngagementStatus::Proposed) {
+ return Err(MentorshipError::InvalidStatus);
+ }
 
         engagement.status = EngagementStatus::Active;
         env.storage()
@@ -211,21 +252,19 @@ impl MentorshipProgram {
 
         env.events()
             .publish((symbol_short!("accepted"),), engagement_id);
+        Ok(())
     }
 
     /// Cancel an active or proposed engagement.
-    pub fn cancel_engagement(env: Env, caller: Address, engagement_id: u64) {
+    pub fn cancel_engagement(env: Env, caller: Address, engagement_id: u64) -> Result<(), MentorshipError> {
         caller.require_auth();
-        let mut engagement = Self::load_engagement(&env, engagement_id);
-        assert!(
-            caller == engagement.mentor || caller == engagement.mentee,
-            "only mentor or mentee can cancel"
-        );
-        assert!(
-            engagement.status == EngagementStatus::Proposed
-                || engagement.status == EngagementStatus::Active,
-            "cannot cancel a completed or already-cancelled engagement"
-        );
+        let mut engagement = Self::load_engagement(&env, engagement_id)?;
+        if !(caller == engagement.mentor || caller == engagement.mentee) {
+ return Err(MentorshipError::Unauthorized);
+ }
+        if !(engagement.status == EngagementStatus::Proposed || engagement.status == EngagementStatus::Active) {
+ return Err(MentorshipError::InvalidStatus);
+ }
 
         engagement.status = EngagementStatus::Cancelled;
         env.storage()
@@ -234,34 +273,35 @@ impl MentorshipProgram {
 
         env.events()
             .publish((symbol_short!("cancelled"),), (engagement_id, caller));
+        Ok(())
     }
 
     // ── Milestone Tracking ────────────────────────────────────────────────
 
     /// Mentee submits a milestone for mentor review.
-    pub fn submit_milestone(env: Env, mentee: Address, engagement_id: u64, milestone_index: u32) {
-        shared::guard::with_reentrancy_guard(&env, || {
+    pub fn submit_milestone(env: Env, mentee: Address, engagement_id: u64, milestone_index: u32) -> Result<(), MentorshipError> {
+        shared::guard::with_reentrancy_guard(&env, || -> Result<(), MentorshipError> {
             mentee.require_auth();
-            let engagement = Self::load_engagement(&env, engagement_id);
-            assert!(engagement.mentee == mentee, "caller is not the mentee");
-            assert!(
-                engagement.status == EngagementStatus::Active,
-                "engagement is not active"
-            );
+            let engagement = Self::load_engagement(&env, engagement_id)?;
+            if !(engagement.mentee == mentee) {
+ return Err(MentorshipError::NotMentee);
+ }
+            if !(engagement.status == EngagementStatus::Active) {
+ return Err(MentorshipError::InvalidStatus);
+ }
 
             let mut milestones: Vec<MentoringMilestone> = env
                 .storage()
                 .persistent()
                 .get(&DataKey::Milestones(engagement_id))
-                .expect("milestones not found");
+                .ok_or(MentorshipError::MilestonesNotFound)?;
 
             let ms = milestones
                 .get(milestone_index)
-                .expect("milestone index out of range");
-            assert!(
-                ms.status == MilestoneStatus::Pending,
-                "milestone already submitted or approved"
-            );
+                .ok_or(MentorshipError::MilestoneOutOfRange)?;
+            if !(ms.status == MilestoneStatus::Pending) {
+ return Err(MentorshipError::InvalidMilestoneStatus);
+ }
 
             milestones.set(
                 milestone_index,
@@ -278,7 +318,8 @@ impl MentorshipProgram {
                 (symbol_short!("ms_sub"), engagement_id),
                 milestone_index,
             );
-        });
+            Ok(())
+        })
     }
 
     /// Mentor approves or rejects a submitted milestone.
@@ -295,30 +336,30 @@ impl MentorshipProgram {
         engagement_id: u64,
         milestone_index: u32,
         approve: bool,
-    ) {
-        shared::guard::with_reentrancy_guard(&env, || {
+    ) -> Result<(), MentorshipError> {
+        shared::guard::with_reentrancy_guard(&env, || -> Result<(), MentorshipError> {
             // Checks
             mentor.require_auth();
-            let mut engagement = Self::load_engagement(&env, engagement_id);
-            assert!(engagement.mentor == mentor, "caller is not the mentor");
-            assert!(
-                engagement.status == EngagementStatus::Active,
-                "engagement is not active"
-            );
+            let mut engagement = Self::load_engagement(&env, engagement_id)?;
+            if !(engagement.mentor == mentor) {
+ return Err(MentorshipError::NotMentor);
+ }
+            if !(engagement.status == EngagementStatus::Active) {
+ return Err(MentorshipError::InvalidStatus);
+ }
 
             let mut milestones: Vec<MentoringMilestone> = env
                 .storage()
                 .persistent()
                 .get(&DataKey::Milestones(engagement_id))
-                .expect("milestones not found");
+                .ok_or(MentorshipError::MilestonesNotFound)?;
 
             let ms = milestones
                 .get(milestone_index)
-                .expect("milestone index out of range");
-            assert!(
-                ms.status == MilestoneStatus::Submitted,
-                "milestone must be in Submitted state"
-            );
+                .ok_or(MentorshipError::MilestoneOutOfRange)?;
+            if !(ms.status == MilestoneStatus::Submitted) {
+ return Err(MentorshipError::InvalidMilestoneStatus);
+ }
 
             let new_status = if approve {
                 MilestoneStatus::Approved
@@ -366,7 +407,8 @@ impl MentorshipProgram {
                     );
                 }
             }
-        });
+            Ok(())
+        })
     }
 
     // ── Feedback Collection ───────────────────────────────────────────────
@@ -381,20 +423,19 @@ impl MentorshipProgram {
         engagement_id: u64,
         rating: u32,
         comment: String,
-    ) {
+    ) -> Result<(), MentorshipError> {
         author.require_auth();
-        assert!((1..=5).contains(&rating), "rating must be between 1 and 5");
+        if !((1..=5).contains(&rating)) {
+ return Err(MentorshipError::InvalidRating);
+ }
 
-        let engagement = Self::load_engagement(&env, engagement_id);
-        assert!(
-            author == engagement.mentor || author == engagement.mentee,
-            "only mentor or mentee may submit feedback"
-        );
-        assert!(
-            engagement.status == EngagementStatus::Completed
-                || engagement.status == EngagementStatus::Cancelled,
-            "feedback can only be submitted after the engagement ends"
-        );
+        let engagement = Self::load_engagement(&env, engagement_id)?;
+        if !(author == engagement.mentor || author == engagement.mentee) {
+ return Err(MentorshipError::Unauthorized);
+ }
+        if !(engagement.status == EngagementStatus::Completed || engagement.status == EngagementStatus::Cancelled) {
+ return Err(MentorshipError::InvalidStatus);
+ }
 
         let count: u64 = env
             .storage()
@@ -421,6 +462,7 @@ impl MentorshipProgram {
             (symbol_short!("feedback"), engagement_id),
             (author, rating, comment),
         );
+        Ok(())
     }
 
     // ── Certification ─────────────────────────────────────────────────────
@@ -430,30 +472,25 @@ impl MentorshipProgram {
     /// Any party (admin, mentor, or mentee) may trigger issuance once the
     /// engagement is complete.  Emits a `certified` event that off-chain
     /// services can use to mint an NFT or record the credential.
-    pub fn issue_certificate(env: Env, caller: Address, engagement_id: u64) {
+    pub fn issue_certificate(env: Env, caller: Address, engagement_id: u64) -> Result<(), MentorshipError> {
         caller.require_auth();
-        let mut engagement = Self::load_engagement(&env, engagement_id);
+        let mut engagement = Self::load_engagement(&env, engagement_id)?;
 
         let admin: Address = env
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .expect("contract not initialized");
+            .ok_or(MentorshipError::NotInitialized)?;
 
-        assert!(
-            caller == admin
-                || caller == engagement.mentor
-                || caller == engagement.mentee,
-            "unauthorized"
-        );
-        assert!(
-            engagement.status == EngagementStatus::Completed,
-            "engagement must be completed to issue a certificate"
-        );
-        assert!(
-            !engagement.certificate_issued,
-            "certificate already issued"
-        );
+        if !(caller == admin || caller == engagement.mentor || caller == engagement.mentee) {
+ return Err(MentorshipError::Unauthorized);
+ }
+        if !(engagement.status == EngagementStatus::Completed) {
+ return Err(MentorshipError::InvalidStatus);
+ }
+        if !(!engagement.certificate_issued) {
+ return Err(MentorshipError::CertificateAlreadyIssued);
+ }
 
         engagement.certificate_issued = true;
         env.storage()
@@ -464,12 +501,13 @@ impl MentorshipProgram {
             (symbol_short!("certified"),),
             (engagement_id, engagement.mentee, engagement.mentor),
         );
+        Ok(())
     }
 
     // ── Queries ───────────────────────────────────────────────────────────
 
     /// Retrieve a full engagement record.
-    pub fn get_engagement(env: Env, engagement_id: u64) -> MentoringEngagement {
+    pub fn get_engagement(env: Env, engagement_id: u64) -> Result<MentoringEngagement, MentorshipError> {
         Self::load_engagement(&env, engagement_id)
     }
 
@@ -480,11 +518,11 @@ impl MentorshipProgram {
     /// [`get_milestones_page`](Self::get_milestones_page), which bounds the
     /// response with `shared::pagination`. Kept for callers that already rely
     /// on the unbounded shape.
-    pub fn get_milestones(env: Env, engagement_id: u64) -> Vec<MentoringMilestone> {
+    pub fn get_milestones(env: Env, engagement_id: u64) -> Result<Vec<MentoringMilestone>, MentorshipError> {
         env.storage()
             .persistent()
             .get(&DataKey::Milestones(engagement_id))
-            .expect("milestones not found")
+            .ok_or(MentorshipError::MilestonesNotFound)
     }
 
     /// Retrieve a bounded page of an engagement's milestones, plus its
@@ -587,11 +625,11 @@ impl MentorshipProgram {
         next
     }
 
-    fn load_engagement(env: &Env, engagement_id: u64) -> MentoringEngagement {
+    fn load_engagement(env: &Env, engagement_id: u64) -> Result<MentoringEngagement, MentorshipError> {
         env.storage()
             .persistent()
             .get(&DataKey::Engagement(engagement_id))
-            .expect("engagement not found")
+            .ok_or(MentorshipError::EngagementNotFound)
     }
 }
 

@@ -1,12 +1,15 @@
-// contracts/licensing/src/lib.rs
-// Implements Creative Licensing Marketplace — closes #616
-//
-// Acceptance Criteria:
-// - Support sub-licensing rights
-// - Implement usage rights marketplace
-// - Add usage tracking and auditing
-// - Support license derivatives
-// - Implement dispute resolution for usage
+//! Licensing Marketplace Smart Contract
+//!
+//! Implements a creative licensing marketplace: issuing primary and
+//! sub-licenses for digital assets, tracking usage for audit, and resolving
+//! disputes over alleged misuse.
+//!
+//! Closes #616. Acceptance criteria:
+//! - Support sub-licensing rights
+//! - Implement usage rights marketplace
+//! - Add usage tracking and auditing
+//! - Support license derivatives
+//! - Implement dispute resolution for usage
 
 #![no_std]
 
@@ -130,6 +133,15 @@ impl LicensingMarketplace {
     // ── Admin ─────────────────────────────────────────────────────────────
 
     /// Initialize the contract with an admin address.
+    ///
+    /// The admin is the only account allowed to resolve disputes. Also seeds
+    /// the license and dispute id counters to zero.
+    ///
+    /// # Arguments
+    /// * `admin` — address granted admin rights (must sign)
+    ///
+    /// # Panics
+    /// Panics if `admin` does not sign the call.
     pub fn initialize(env: Env, admin: Address) {
         admin.require_auth();
         env.storage()
@@ -208,7 +220,18 @@ impl LicensingMarketplace {
     /// Requires the parent license to be active and sub-licensable.
     /// The sub-licensor must be the current licensee of the parent.
     ///
-    /// Returns the new sub-license id.
+    /// # Arguments
+    /// * `parent_id`    — id of the parent license
+    /// * `sub_licensee` — party receiving the sub-license
+    /// * `price`        — agreed price in base units
+    /// * `expires_at`   — expiry ledger; pass 0 for no expiry
+    ///
+    /// # Returns
+    /// The new sub-license id.
+    ///
+    /// # Panics
+    /// Panics if the parent license is missing, not active, not sub-licensable,
+    /// or if the caller is not the parent's licensee.
     pub fn create_sub_license(
         env: Env,
         parent_id: u64,
@@ -264,6 +287,15 @@ impl LicensingMarketplace {
     // ── License Management ────────────────────────────────────────────────
 
     /// Revoke a license.  Only the original owner may revoke.
+    ///
+    /// Sets the license status to `Revoked`.
+    ///
+    /// # Arguments
+    /// * `caller`     — address revoking the license (must sign)
+    /// * `license_id` — id of the license to revoke
+    ///
+    /// # Panics
+    /// Panics if the license is missing or if `caller` is not the owner.
     pub fn revoke_license(env: Env, caller: Address, license_id: u64) {
         caller.require_auth();
         let mut record: LicenseRecord = env
@@ -287,6 +319,16 @@ impl LicensingMarketplace {
     }
 
     /// Mark a license as expired (admin or owner action).
+    ///
+    /// Sets the license status to `Expired`.
+    ///
+    /// # Arguments
+    /// * `caller`     — admin or license owner expiring the license (must sign)
+    /// * `license_id` — id of the license to expire
+    ///
+    /// # Panics
+    /// Panics if the contract is not initialized, the license is missing, or
+    /// `caller` is neither the admin nor the owner.
     pub fn expire_license(env: Env, caller: Address, license_id: u64) {
         caller.require_auth();
         let admin: Address = env
@@ -319,6 +361,18 @@ impl LicensingMarketplace {
 
     /// Record a usage event for audit purposes.
     /// The licensee (or sub-licensee) must sign.
+    ///
+    /// Appends a `UsageEntry` to the license's usage log and emits a `usage`
+    /// event.
+    ///
+    /// # Arguments
+    /// * `user`       — the licensee recording the usage (must sign)
+    /// * `license_id` — id of the license being used
+    /// * `context`    — free-form description of the usage
+    ///
+    /// # Panics
+    /// Panics if the license is missing or not active, if `user` is not the
+    /// licensee, or if the license has already expired.
     pub fn record_usage(env: Env, user: Address, license_id: u64, context: String) {
         user.require_auth();
 
@@ -365,6 +419,12 @@ impl LicensingMarketplace {
     }
 
     /// Return the number of recorded usage events for a license.
+    ///
+    /// # Arguments
+    /// * `license_id` — id of the license
+    ///
+    /// # Returns
+    /// The number of usage entries recorded for the license (0 if none).
     pub fn get_usage_count(env: Env, license_id: u64) -> u64 {
         env.storage()
             .persistent()
@@ -376,7 +436,19 @@ impl LicensingMarketplace {
 
     /// Raise a dispute for alleged misuse of a licensed asset.
     ///
-    /// Returns the dispute id.
+    /// Flags the license as `Disputed` while the dispute is under review and
+    /// emits a `dispute` event.
+    ///
+    /// # Arguments
+    /// * `complainant`  — party raising the dispute (must sign)
+    /// * `license_id`   — id of the license in question
+    /// * `description`  — free-form description of the alleged misuse
+    ///
+    /// # Returns
+    /// The dispute id.
+    ///
+    /// # Panics
+    /// Panics if the license is missing.
     pub fn raise_dispute(
         env: Env,
         complainant: Address,
@@ -420,6 +492,18 @@ impl LicensingMarketplace {
     }
 
     /// Resolve an open dispute.  Only the admin may call this.
+    ///
+    /// Records the outcome and restores the license to `Active`, or revokes it
+    /// when the dispute is upheld for the licensor.
+    ///
+    /// # Arguments
+    /// * `admin`      — the stored admin address (must sign)
+    /// * `dispute_id` — id of the dispute to resolve
+    /// * `outcome`    — the resolution to record
+    ///
+    /// # Panics
+    /// Panics if the contract is not initialized, the caller is not the admin,
+    /// the dispute is missing, or the dispute was already resolved.
     pub fn resolve_dispute(
         env: Env,
         admin: Address,
@@ -473,6 +557,15 @@ impl LicensingMarketplace {
     // ── Queries ───────────────────────────────────────────────────────────
 
     /// Retrieve a license record.
+    ///
+    /// # Arguments
+    /// * `license_id` — id of the license
+    ///
+    /// # Returns
+    /// The stored `LicenseRecord`.
+    ///
+    /// # Panics
+    /// Panics if the license is not found.
     pub fn get_license(env: Env, license_id: u64) -> LicenseRecord {
         env.storage()
             .persistent()
@@ -481,6 +574,15 @@ impl LicensingMarketplace {
     }
 
     /// Retrieve a dispute record.
+    ///
+    /// # Arguments
+    /// * `dispute_id` — id of the dispute
+    ///
+    /// # Returns
+    /// The stored `LicenseDispute`.
+    ///
+    /// # Panics
+    /// Panics if the dispute is not found.
     pub fn get_dispute(env: Env, dispute_id: u64) -> LicenseDispute {
         env.storage()
             .persistent()

@@ -1,7 +1,8 @@
-# Benchmark Results — competitions, subscription, reputation
+# Benchmark Results — competitions, subscription, reputation, revenue_sharing
 
 Measured costs for the new `harness = false` stable-toolchain benchmarks added by
-`LGTM-ButItsBroken` (#870 competitions, #871 subscription, #872 reputation).
+`LGTM-ButItsBroken` (#870 competitions, #871 subscription, #872 reputation) and
+by #989 (revenue_sharing).
 Companion to [`PERFORMANCE_TARGETS.md`](./PERFORMANCE_TARGETS.md), where the
 budget ceilings these numbers are held against are defined.
 
@@ -104,7 +105,51 @@ Notes:
   already 6x `submit_review`, which is why capping the review-count scan matters.
 - `get_review`/`submit_review` are flat writes/reads; no surprises.
 
-## 5. commission_agreement — blocked
+## 5. revenue_sharing (`contracts/revenue_sharing/benches/revenue_sharing_benchmark.rs`)
+
+`record_revenue` is a looped transfer — its cost scales with the number of
+recipients — so a single measurement tells you nothing. The #989 bench measures
+three batch sizes plus the abort path:
+
+```text
+operation                     recipients
+record_revenue                       2, 5, 20
+record_revenue/insufficient          2, 5, 20
+```
+
+The deterministic figure the bench reports and enforces is the **event count**,
+not wall-clock time:
+
+| Operation | Events per call | Why |
+|---|---|---|
+| `record_revenue` @ N recipients | N + 1 | one `revenue` event plus one SAC `transfer` event per positive payout |
+| `record_revenue/insufficient` @ N recipients | ≤ N | the transfers that completed before the failing one; the host's rollback may discard them entirely |
+
+So cost per recipient in the success path is a flat **1 event**, and the only thing
+that can make a batch "not fit" is the recipient count. The contract already caps
+that at `MAX_PARTICIPANTS = 20`, and 20 recipients is ~21 events — far below the
+`contract_events_size_bytes` ceiling (16,384). **No new batch limit is
+required**, and the bench prints `max viable batch: 20`.
+
+The failure path is the case nobody had measured: the source is funded for only
+part of its batch, so the transfer loop fails partway through. `try_record_revenue`
+is used so the abort is observed as an error rather than terminating the process,
+and the call is asserted to have failed. The #989 test
+`insufficient_balance_mid_batch_is_atomic` additionally asserts that no committed
+state survives the abort and the source balance is intact.
+
+**Honest status.** The bench was **written, not executed** in this environment
+(the task forbade running `cargo`), so no `median_ns` figures are checked in, and
+the instruction-count comparison against §1's 600M ceiling is not available on
+`soroban-sdk` 21 (no `cost_estimate()`). The event budgets above are deterministic
+and are additionally asserted by `event_budget_scales_with_participants` in
+`src/test.rs`, so a plain `cargo test` catches an event-volume regression without
+running the binary. To run it: `cargo bench -p revenue_sharing`; set
+`REVENUE_SHARING_BENCH_CHECK=1` to gate on the event budgets, and optionally
+`REVENUE_SHARING_BENCH_ENFORCE_NS=1` to gate on wall-clock too (not portable
+across CI hardware).
+
+## 6. commission_agreement — blocked
 
 `contracts/commission_agreement/benches/commission_agreement_benchmark.rs`
 (create_agreement, propose_milestone, approve_milestone, distribute_batch) is
@@ -118,7 +163,7 @@ highest single-call transfer loop (`MAX_BATCH = 25`) — still has no measuremen
 The bench is written against the current API and is expected to become runnable
 unchanged once the crate compiles.
 
-## 6. Comparison with the escrow ceilings
+## 7. Comparison with the escrow ceilings
 
 `PERFORMANCE_TARGETS.md` §3 budgets escrow's state-changing operations at
 2–4M instructions. The operations measured here all land at or below
@@ -129,12 +174,13 @@ real constraints for these contracts are the `write_bytes` / `disk_read_entries`
 list-length ceilings, which are shape analyses (see `PERFORMANCE_TARGETS.md` §2),
 not instruction counts, and are unchanged by these runs.
 
-## 7. Re-running
+## 8. Re-running
 
 ```sh
 cargo bench -p competitions --bench competitions_benchmark
 cargo bench -p subscription --bench subscription_benchmark
 cargo bench -p reputation --bench reputation_benchmark
+cargo bench -p revenue_sharing --bench revenue_sharing_benchmark
 ```
 
 Each prints a per-op table with wall ns, cpu and mem columns. Do not compare wall

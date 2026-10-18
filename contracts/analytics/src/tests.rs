@@ -1,4 +1,5 @@
 extern crate std;
+use std::format;
 
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
@@ -7,11 +8,18 @@ use soroban_sdk::{
 
 use crate::{AnalyticsContract, AnalyticsContractClient, errors::AnalyticsError};
 
-fn setup(env: &Env) -> (AnalyticsContractClient, Address) {
+fn setup(env: &Env) -> (AnalyticsContractClient<'_>, Address) {
     let contract_id = env.register_contract(None, AnalyticsContract);
+    let ttl = crate::ANALYTICS_TTL_LEDGERS * 3;
+    env.as_contract(&contract_id, || {
+        env.storage().instance().extend_ttl(ttl, ttl);
+    });
     let client = AnalyticsContractClient::new(env, &contract_id);
     let admin = Address::generate(env);
     client.initialize(&admin);
+    env.as_contract(&contract_id, || {
+        env.storage().instance().extend_ttl(ttl, ttl);
+    });
     (client, admin)
 }
 
@@ -358,11 +366,21 @@ fn seed_earnings(env: &Env, client: &AnalyticsContractClient, artist: &Address, 
     }
 }
 
+fn set_ledger_seq(env: &Env, client: &AnalyticsContractClient, seq: u32) {
+    let ttl = crate::ANALYTICS_TTL_LEDGERS * 3;
+    env.as_contract(&client.address, || {
+        env.storage().instance().extend_ttl(ttl, ttl);
+    });
+    env.ledger().set_sequence_number(seq);
+    env.as_contract(&client.address, || {
+        env.storage().instance().extend_ttl(ttl, ttl);
+    });
+}
+
 /// Move the ledger forward far enough that every entry recorded at
 /// `recorded_at` has aged out of the retention window.
-fn age_out(env: &Env, recorded_at: u32) {
-    env.ledger()
-        .set_sequence_number(recorded_at.saturating_add(crate::ANALYTICS_TTL_LEDGERS));
+fn age_out(env: &Env, client: &AnalyticsContractClient, recorded_at: u32) {
+    set_ledger_seq(env, client, recorded_at.saturating_add(crate::ANALYTICS_TTL_LEDGERS));
 }
 
 /// A ledger sequence at which an entry recorded *now* is still comfortably
@@ -387,18 +405,18 @@ fn test_prune_earnings_respects_retention_window() {
     assert_eq!(batch, crate::PRUNE_MAX_BATCH);
 
     let artist = Address::generate(&env);
-    env.ledger().set_sequence_number(ledger_inside_window());
+    set_ledger_seq(&env, &client, ledger_inside_window());
     seed_earnings(&env, &client, &artist, 3);
 
     // Every record is inside the window, so nothing may be removed — not even
     // with the widest window and the largest batch the implementation allows.
-    assert_eq!(client.prune_earnings(&artist, &10, &batch), Ok(0));
+    assert_eq!(client.prune_earnings(&artist, &10, &batch), 0);
     assert_eq!(client.get_earning_count(&artist), 3);
     assert!(client.try_get_earning(&artist, &0).is_ok());
 
     // Age the records out, then the same call succeeds.
-    age_out(&env, ledger_inside_window());
-    assert_eq!(client.prune_earnings(&artist, &10, &batch), Ok(3));
+    age_out(&env, &client, ledger_inside_window());
+    assert_eq!(client.prune_earnings(&artist, &10, &batch), 3);
 
     // Records are gone, but the monotonic count is intentionally not lowered —
     // decrementing it would let a later record_earning reuse a live index.
@@ -416,16 +434,16 @@ fn test_prune_earnings_is_bounded_by_limit() {
     let (client, _admin) = setup(&env);
 
     let artist = Address::generate(&env);
-    env.ledger().set_sequence_number(ledger_inside_window());
+    set_ledger_seq(&env, &client, ledger_inside_window());
     seed_earnings(&env, &client, &artist, 6);
-    age_out(&env, ledger_inside_window());
+    age_out(&env, &client, ledger_inside_window());
 
     // One call removes at most `limit` records; progress is made by repetition.
-    assert_eq!(client.prune_earnings(&artist, &6, &2), Ok(2));
-    assert_eq!(client.prune_earnings(&artist, &6, &2), Ok(2));
-    assert_eq!(client.prune_earnings(&artist, &6, &2), Ok(2));
+    assert_eq!(client.prune_earnings(&artist, &6, &2), 2);
+    assert_eq!(client.prune_earnings(&artist, &6, &2), 2);
+    assert_eq!(client.prune_earnings(&artist, &6, &2), 2);
     // Nothing left to remove.
-    assert_eq!(client.prune_earnings(&artist, &6, &2), Ok(0));
+    assert_eq!(client.prune_earnings(&artist, &6, &2), 0);
 
     // The lifetime aggregate is never pruned.
     let metrics = client.get_metrics(&artist);
@@ -440,9 +458,9 @@ fn test_prune_earnings_rejects_out_of_range_arguments() {
     let (client, _admin) = setup(&env);
 
     let artist = Address::generate(&env);
-    env.ledger().set_sequence_number(ledger_inside_window());
+    set_ledger_seq(&env, &client, ledger_inside_window());
     seed_earnings(&env, &client, &artist, 2);
-    age_out(&env, ledger_inside_window());
+    age_out(&env, &client, ledger_inside_window());
 
     let (_retention, batch) = client.get_retention_policy();
 
@@ -474,9 +492,9 @@ fn test_prune_earnings_stops_at_a_protected_record() {
     let (client, _admin) = setup(&env);
 
     let artist = Address::generate(&env);
-    env.ledger().set_sequence_number(ledger_inside_window());
+    set_ledger_seq(&env, &client, ledger_inside_window());
     seed_earnings(&env, &client, &artist, 2);
-    age_out(&env, ledger_inside_window());
+    age_out(&env, &client, ledger_inside_window());
 
     // One record written *after* ageing — so it is inside the retention window.
     let client_addr = Address::generate(&env);
@@ -493,7 +511,7 @@ fn test_prune_earnings_stops_at_a_protected_record() {
     // rather than reaching past it.
     assert_eq!(
         client.prune_earnings(&artist, &100, &100),
-        Ok(2),
+        2,
         "prune must stop at the retention boundary",
     );
 

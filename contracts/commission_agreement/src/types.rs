@@ -107,4 +107,12 @@ pub enum DataKey {
     // Revisions (#600)
     RevisionPolicy(Bytes),
     RevisionsForAgreement(Bytes),
+    // Rate Limiter
+    RateLimiter,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RateLimitKey {
+    CommissionsPerArtist = 0,
 }

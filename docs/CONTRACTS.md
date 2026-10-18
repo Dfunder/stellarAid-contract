@@ -1,5 +1,7 @@
 # Contract Specification
 
+> **Summary.** This document provides reference specifications—purpose, authorization, public interfaces, emitted events, and error codes—for 24 crates under `contracts/` (23 contracts plus the `shared` library). It does *not* cover all 29 member directories in the workspace (notably omitting `campaign_factory`, `campaign_instance`, and `factory`, as well as the unbuilt `donation` and `withdrawal` crates). In accordance with the honest status model established in `PERFORMANCE_TARGETS.md` §6, these specifications reflect transcribed source code rather than live-verified invocations; several contracts (such as `escrow` and `commission_agreement`) currently have delimiter or compilation errors on `main` and have not been compiled to WASM. This guide is intended for smart contract engineers, protocol auditors, and backend integrators. New readers should start with [Conventions used below](#conventions-used-below) and [Shared machinery](#shared-machinery) before consulting specific contract sections.
+
 Reference documentation for every crate in the stellarAid workspace: what it is
 for, who may call it, what it emits, and how it fails.
 

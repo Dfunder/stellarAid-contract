@@ -54,22 +54,55 @@ pub fn save_escrow(env: &Env, r: &EscrowRecord) {
 
 // ── Atomic commit markers (#656) ────────────────────────────────────────────
 
+/// TTL applied to `DataKey::AtomicCommit` on every access (#988).
+///
+/// Matches `ESCROW_TTL_LEDGERS` (~30 days at 6s/ledger). The commit marker is
+/// renewed on every read *and* write, so it cannot silently expire in the middle
+/// of a multi-transaction begin/confirm/finalize sequence. See
+/// `cross_contract::ATOMIC_COMMIT_MAX_LIFETIME_LEDGERS` for the separate,
+/// absolute lifetime bound that turns an abandoned commit into a terminal state.
+pub const ATOMIC_COMMIT_TTL_LEDGERS: u32 = 432_000;
+
 /// `true` when a commit marker exists for `id`.
 pub fn atomic_marker_exists(env: &Env, id: &Bytes) -> bool {
     env.storage().persistent().has(&DataKey::AtomicCommit(id.clone()))
 }
 
 /// Load the commit marker for `id`.
+///
+/// Does **not** extend the TTL; callers that want the read to keep the sequence
+/// alive use [`extend_atomic_marker_ttl`] (or [`get_atomic_marker_refreshed`]).
 pub fn get_atomic_marker(env: &Env, id: &Bytes) -> AtomicCommitMarker {
     env.storage().persistent().get(&DataKey::AtomicCommit(id.clone())).unwrap()
 }
 
-/// Persist a commit marker.
+/// Load a commit marker and renew its TTL in the same access (#988).
+pub fn get_atomic_marker_refreshed(env: &Env, id: &Bytes) -> AtomicCommitMarker {
+    let marker = get_atomic_marker(env, id);
+    extend_atomic_marker_ttl(env, id);
+    marker
+}
+
+/// Renew the commit marker's TTL (#988).
+///
+/// Guarded by `has()`: the host's `extend_ttl` traps on a missing key, so an
+/// unconditional call would turn a benign "no marker" read into a panic.
+pub fn extend_atomic_marker_ttl(env: &Env, id: &Bytes) {
+    let key = DataKey::AtomicCommit(id.clone());
+    if env.storage().persistent().has(&key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, ATOMIC_COMMIT_TTL_LEDGERS, ATOMIC_COMMIT_TTL_LEDGERS);
+    }
+}
+
+/// Persist a commit marker and renew its TTL (#988).
 pub fn save_atomic_marker(env: &Env, marker: &AtomicCommitMarker) {
-    env.storage().persistent().set(
-        &DataKey::AtomicCommit(marker.commission_id.clone()),
-        marker,
-    );
+    let key = DataKey::AtomicCommit(marker.commission_id.clone());
+    env.storage().persistent().set(&key, marker);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, ATOMIC_COMMIT_TTL_LEDGERS, ATOMIC_COMMIT_TTL_LEDGERS);
 }
 
 // ── Re-entrancy lock helpers (#484) ────────────────────────────────────────

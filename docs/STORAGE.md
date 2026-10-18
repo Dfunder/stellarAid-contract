@@ -1,6 +1,21 @@
 # Storage and TTL Management in stellarAid Contracts
 
+> **Summary.** This hand-maintained reference documents the storage layout, storage classes (`instance`, `persistent`, `temporary`), ledger constants, and TTL extension policies for 23 contracts and the `shared` library. It does not cover omitted workspace crates (`campaign_factory`, `campaign_instance`, `factory`) or automate state pruning. Unlike the single integer `storage-schema` version defined in each crate's `[package.metadata.stellar-aid]` manifest for semver upgrade checks, this document details the concrete `DataKey` enums and storage functions transcribed directly from source code. Following the honest framing of `PERFORMANCE_TARGETS.md` §6, the documented keys and constants are verified code facts, but dynamic storage costs and TTL survival guarantees remain aspirational because unbuilt contracts have not executed on chain. It is written for contract developers and auditors managing persistence budgets and expiration risks, who should start with [How to read this](#how-to-read-this) and [Summary across the workspace](#summary-across-the-workspace).
+
 Per-contract storage layout and TTL policy for every crate in the workspace.
+
+> **Schema change — storage-schema bump to 2 (closes #993).**
+> `shared::rollout` no longer stores a `Vec<Symbol>` under `RolloutKey::FlagIndex`.
+> It has been replaced by three O(1) entries per flag:
+> - `RolloutKey::Flag(flag)` — `bool` payload (unchanged).
+> - `RolloutKey::FlagPresent(flag)` — `bool` sentinel, written once on first use.
+> - `RolloutKey::FlagCount` — `u32` count of distinct flags ever registered.
+> - `RolloutKey::FlagList` — `Vec<Symbol>` bounded at 64 entries, used only by
+>   the rollback path (`disable_all_flags`).
+> `RolloutKey::FlagIndex` is **retired** (kept as a dead variant to avoid
+> unknown-key panics on deployed contracts that still carry the old entry).
+> Any table entry below that references `FlagIndex` documents the *old* schema.
+> The new keys are described in `contracts/shared/src/rollout.rs`.
 
 > - **Retention and pruning policy:** [RETENTION_AND_PRUNING.md](./RETENTION_AND_PRUNING.md)
 >   — what may be pruned, what must never be, the retention windows, and the
@@ -48,8 +63,10 @@ management occurs.
 | [`creator_fund`](#creator-fund) | persistent, instance | — none — |
 | [`dao`](#dao) | persistent | `DEFAULT_TIMELOCK_LEDGERS` 17,280 |
 | [`dispute_arbiter`](#dispute-arbiter) | persistent, instance | `shared::dispute::DEFAULT_DISPUTE_TTL_LEDGERS` 864,000, `MAX_DISPUTE_TTL_LEDGERS` 2,592,000 |
+| [`dispute_arbiter`](#dispute-arbiter) | persistent, instance | — none — |
+| [`donation`](#donation) | persistent, instance | `MAX_DONATION_HISTORY` 500 (records), `DEFAULT_DONATION_HISTORY` 100 (records), `PRUNE_MAX_BATCH` 100 (records), `MIN_RETENTION_SECONDS` 7,776,000 (seconds) |
 | [`ecosystem_funding`](#ecosystem-funding) | persistent | — none — |
-| [`escrow`](#escrow) | — | — none — |
+| [`escrow`](#escrow) | persistent, instance | `ESCROW_TTL_LEDGERS` 432,000, `DEFAULT_DISPUTE_TTL_LEDGERS` 864,000, `ATOMIC_COMMIT_TTL_LEDGERS` 432,000, `ATOMIC_COMMIT_MAX_LIFETIME_LEDGERS` 120,960 |
 | [`licensing`](#licensing) | persistent | — none — |
 | [`mentorship`](#mentorship) | persistent | — none — |
 | [`messaging`](#messaging) | persistent, instance | `RATE_LIMIT_LEDGERS` 12, `TYPING_EXPIRY_LEDGERS` 30 |
@@ -64,6 +81,8 @@ management occurs.
 | [`subscription`](#subscription) | persistent, instance | — none — |
 | [`verification`](#verification) | persistent, instance | — none — |
 | [`shared`](#shared) | instance | `DEFAULT_RECOVERY_DELAY_LEDGERS` 17,280, `MAX_RECOVERY_DELAY_LEDGERS` 120,960, `DEFAULT_STALL_LEDGERS` 17,280, `DEFAULT_ALERT_COOLDOWN_LEDGERS` 60, `SLA_HEALTH_CHECK_MAX_LEDGERS` 60, `shared::dispute::DEFAULT_DISPUTE_TTL_LEDGERS` 864,000, `MAX_DISPUTE_TTL_LEDGERS` 2,592,000 |
+| [`withdrawal`](#withdrawal) | persistent, instance | `MAX_WITHDRAWALS_PER_CAMPAIGN` 500 (ids), `DEFAULT_WITHDRAWALS_PER_CAMPAIGN` 100 (ids), `PRUNE_MAX_BATCH` 100 (ids) |
+| [`shared`](#shared) | instance | `DEFAULT_RECOVERY_DELAY_LEDGERS` 17,280, `MAX_RECOVERY_DELAY_LEDGERS` 120,960, `DEFAULT_STALL_LEDGERS` 17,280, `DEFAULT_ALERT_COOLDOWN_LEDGERS` 60, `SLA_HEALTH_CHECK_MAX_LEDGERS` 60 |
 
 **Reading the ledger-constant column.** It lists every crate-level ledger
 constant, which is not the same set as the TTLs. Several contracts have ledger
@@ -80,6 +99,35 @@ distinction survives even though the column heading is shared.
 that is correct and intentional. For one that does store persistent data, it
 means the data sits at the network's minimum TTL and will expire unless
 something else restores it — those cases are called out inline.
+
+## Storage-schema changes: #983 and #985
+
+Two issues in this change add keys rather than re-interpret existing ones, so
+existing deployments keep every stored value's meaning:
+
+- **#983 (admin rotation).** `shared::admin` adds one shared key,
+  `AdminKey::PendingAdmin`, holding the proposed successor between
+  `transfer_admin` and `accept_admin`. The **active** admin is untouched and
+  still lives under each contract's own `DataKey::Admin` (escrow keeps its own
+  `PauseKey::Admin` / `PauseKey::PendingAdmin` and is unchanged). Only the
+  contracts that gain the four handover entry points — `campaign`,
+  `creator_fund`, `dispute_arbiter`, `multi_sig`, `revenue_sharing`,
+  `subscription` — ever write this key.
+- **#985 (feature-flag cap).** `shared::rollout` adds `RolloutKey::MaxFlags`,
+  an optional admin-lowered cap; absent means the code ceiling
+  `MAX_FEATURE_FLAGS = 32`. No existing `Flag`/`FlagIndex` value changes
+  meaning. Enforcement lives in `save_flag_index`, so it applies to every
+  contract that carries the rollout block.
+
+**Schema version.** `[package.metadata.stellar-aid] storage-schema` and
+`CURRENT_STORAGE_SCHEMA` should be bumped for each affected crate as part of the
+upgrade that ships these keys. The bump is **not** applied in this change: the
+`Cargo.toml` files that carry the metadata are outside the file set for these
+issues. Treat this paragraph as the migration note the bump would otherwise
+carry, and bump before deploying. No deployed contract is left *above* the new
+feature-flag cap without a note: a contract already holding more than 32 flags
+keeps them readable and toggleable, but cannot add a 33rd until it is upgraded
+and, if necessary, re-capped.
 
 ## Per-contract storage layout
 
@@ -422,6 +470,59 @@ This crate declares **no TTL constants of its own** and never calls `extend_ttl`
 **Compile status.** `compiles` — `cargo build -p dispute_arbiter` is expected to finish cleanly. `storage-schema` is **2** (was 1): #977 renames `DataKey::AutoResolveLedgers` → `DisputeTtlLedgers`, renames `DisputeRecord.auto_resolve_ledger` → `deadline_ledger`, and adds `DataKey::Evidence` / `DataKey::EvidenceCount` plus the `DisputeError::EvidenceWindowClosed` (11), `EvidenceTooLong` (12), and `InvalidTtl` (13) variants.
 
 
+### donation
+
+> unknown — `contracts/donation/src/lib.rs` opens with `#![no_std]` and has no crate-level `//!` module doc; the layout below is reconstructed from the source. Closes #986 (bounded donation lists). **Not a workspace member** — see the `NOTE` in the root `Cargo.toml`.
+
+Source: `contracts/donation/`
+
+**Storage layout.**
+
+Instance storage holds the configuration and admin keys; persistent storage holds
+the per-donor and per-campaign records. As of #986 every donation **list** is
+ring-trimmed to the retention cap on the same write that appends to it, so a
+list can never exceed `MAX_DONATION_HISTORY`.
+
+| Key | Value type | Storage class | TTL | Purpose |
+|---|---|---|---|---|
+| `DataKey::Admin` | `Address` | instance | none — no `extend_ttl` in the crate | Platform admin. Gates `pause`/`unpause`, `set_donation_retention_cap`, `prune_campaign_donations` and `upgrade`; compared against the caller in `ensure_admin`. Written once by `initialize`; not rotatable. |
+| `DataKey::CampaignContract` | `Address` | instance | none | The campaign contract this contract delegates to (`get_campaign`, `update_raised`, `record_donor`, `record_donation`). Set by `initialize`. |
+| `DataKey::Initialized` | `bool` | instance | none | One-shot `initialize` guard, checked with `has`. |
+| `DataKey::RetentionCap` | `u32` | instance | none | Admin-set retention cap, accepted only in `1..=MAX_DONATION_HISTORY`. Read with `unwrap_or(DEFAULT_DONATION_HISTORY)` and then `.min(MAX_DONATION_HISTORY)`, so the code ceiling holds even for a corrupt value (#986). Written by `set_donation_retention_cap`. |
+| `DataKey::Nonce(Address, u64)` | `bool` (always `true`) | instance | none | Duplicate-donation guard for `donate_with_nonce`, keyed `(donor, nonce)`. Presence rejects the call. |
+| `DataKey::DonationHistory(Address)` | `Vec<Donation>` | persistent | none — no `extend_ttl` in the crate | Every non-anonymous donation by one donor, oldest-first. Appended by `donate`, then ring-trimmed to the cap on the same write (#986); read page-wise by `get_donor_history`. |
+| `DataKey::CampaignDonations(u64)` | `Vec<Donation>` | persistent | none | Every donation to one campaign, oldest-first, **shared by all donors**. Appended and ring-trimmed to the cap in `donate` (#986); read page-wise by `get_donations_for_campaign`; the sole target of `prune_campaign_donations`. |
+| `DataKey::CampaignRaised(u64)` | `i128` | persistent | none | Running total raised per campaign, updated with a checked add in `donate` and a checked subtract in `refund`. **Never trimmed or pruned** — the reconciliation figure (#986). |
+| `shared::pause::PauseDataKey::Paused` | `bool` | instance | none | Shared pause flag, checked by `pause::require_not_paused` at the top of `donate` and `refund`. |
+| `shared::guard` re-entrancy lock | — | instance | none | `guard::acquire`/`guard::release` around `donate` and `refund` (#762). |
+
+Events published: `donation_made`, `anonymous_donation`, `donation_refunded`,
+`retcap` (on `set_donation_retention_cap`), and `prune` (on a write-time trim or
+a `prune_campaign_donations` call).
+
+**TTL constants.**
+
+The crate declares **no TTL constant and never calls `extend_ttl`/`bump`**, so
+every persistent entry lives on the network's default persistent-entry lifetime.
+The constants below are the retention bounds — a record count and a seconds
+window — not storage TTLs.
+
+| Constant | Value | Applies to |
+|---|---|---|
+| `MAX_DONATION_HISTORY` | 500 records | Code ceiling on every donation list; the upper bound `set_donation_retention_cap` accepts. |
+| `DEFAULT_DONATION_HISTORY` | 100 records | Effective cap until an admin overrides it (`get_donation_retention_cap`). |
+| `PRUNE_MAX_BATCH` | 100 records | Hard cap on how many records one `prune_campaign_donations` call may remove (and examine). Mirrors `analytics::PRUNE_MAX_BATCH`. |
+| `MIN_RETENTION_SECONDS` | 7,776,000 seconds (~90 days) | Minimum age (against `Donation::timestamp`) before a record is prunable. Mirrors the analytics ~90-day window. |
+
+`get_donation_retention_policy()` returns `(code_ceiling, effective_cap,
+prune_batch)` so the three bounds are readable on-chain.
+
+**Compile status.** **Not compiled.** `donation` is not a workspace member, so it
+is never built and no test in it has run. The #986 code and its unit tests were
+written to the same conventions as the member crates but must be added to the
+workspace and compiled before being trusted.
+
+
 ### ecosystem_funding
 
 > unknown — `contracts/ecosystem_funding/src/lib.rs` has no crate-level `//!` module doc; it opens with plain `//` header comments ("Implements Ecosystem Funding Programs — closes #617", followed by the five acceptance criteria). The summary below is reconstructed from that header plus the source.
@@ -470,7 +571,7 @@ No `temporary` storage is used anywhere in the crate. USDC balances are **not** 
 | `DataKey::Escrow(commission_id: Bytes)` | `EscrowRecord` | `persistent` (storage.rs:46/49/52) | `extend_ttl(key, 432_000, 432_000)` on create (lib.rs:298) and on every partial release (lib.rs:538); `extend_ttl(key, get_dispute_ttl_ledgers(env), …)` on `open_dispute` (lib.rs:425) | The custody record: `commission_id`, `client`, `artist`, `amount`, `fee_bps`, `status`, `created_ledger`, `released_amount`. Read/written on every state transition. |
 | `DataKey::ReentrancyLock` | `bool` (presence-flag) | `instance` (storage.rs:79/84/89) | host-managed instance TTL; no `extend_ttl` in source | Re-entrancy guard. Set before and removed after every `with_reentrancy_guard` body, including on the `Err` path. |
 | `DataKey::DisputeTtlLedgers` | `u32` | `instance` (storage.rs:121/127) | host-managed instance TTL; no `extend_ttl` in source | Configurable dispute-period TTL, read by `open_dispute` to extend a disputed record. Falls back to `DEFAULT_DISPUTE_TTL_LEDGERS` when unset. |
-| `DataKey::AtomicCommit(commission_id: Bytes)` | `AtomicCommitMarker` | `persistent` (storage.rs:59/64/69) | **unknown** — no `extend_ttl` call exists for this key anywhere in the crate; it relies on the network's minimum persistent-entry TTL, which the source never states | Cross-transaction commit marker: `state` (`InProgress`/`Settled`/`RolledBack`/`Failed`), `participants`, `confirmed`, `created_ledger`, `settled_ledger`. |
+| `DataKey::AtomicCommit(commission_id: Bytes)` | `AtomicCommitMarker` | `persistent` (storage.rs:59/64/69) | `extend_ttl(key, ATOMIC_COMMIT_TTL_LEDGERS, ATOMIC_COMMIT_TTL_LEDGERS)` on every write (`storage::save_atomic_marker`) and on every read (`storage::extend_atomic_marker_ttl`, guarded by `has`) — added by #988 | Cross-transaction commit marker: `state` (`InProgress`/`Settled`/`RolledBack`/`Failed`), `participants`, `confirmed`, `created_ledger`, `settled_ledger`. An `InProgress` marker older than `ATOMIC_COMMIT_MAX_LIFETIME_LEDGERS` resolves to the terminal `RolledBack` state on the next `load_marker` (#988). |
 | `RolloutKey::*` — `Phase`, `CanaryBps`, `Canary`, `Stable`, `RollbackErrorBps`, `Flag(Symbol)`, `FlagIndex` | `RolloutPhase` / `u32` / `Address` / `Symbol` / `Vec<Symbol>` | `instance` (written by `shared::rollout`, not by this crate) | host-managed instance TTL | Canary/flag/rollback state, reached only through the pass-through `pub fn`s `set_canary_deployment`, `set_feature_flag`, `set_rollback_trigger`, `trigger_rollback`. |
 | `HealthKey::Metrics` | `HealthMetrics` | `instance` (written by `shared::health`) | host-managed instance TTL | ok/error counters and last-activity ledgers, fed by `report_ok` / `report_error` and read by `health_check` / `get_health_metrics`. |
 | `HealthKey::AlertConfig` | `AlertConfig` | `instance` (`shared::health`) | host-managed instance TTL | Alert thresholds, set by `set_alert_config`. |
@@ -486,10 +587,15 @@ No `temporary` storage is used anywhere in the crate. USDC balances are **not** 
 | `DEFAULT_DISPUTE_TTL_LEDGERS` (storage.rs:115) | `864_000` | ≈60 days (source comment: "~60 days at 6s/ledger. Roughly twice the base escrow TTL") | Fallback value of `DataKey::DisputeTtlLedgers`; used by `open_dispute` to extend a disputed `DataKey::Escrow` (lib.rs:425) |
 | Lower bound enforced by `set_dispute_ttl_ledgers` (lib.rs:451) | `432_000` (= `ESCROW_TTL_LEDGERS`) | ≈30 days | Minimum configurable dispute TTL; `0` or anything below `ESCROW_TTL_LEDGERS` returns `InvalidAmount` |
 | `ATOMIC_COMMIT_PARTICIPANTS` (cross_contract.rs:154) | `2` | n/a (not a TTL) | Sides that must confirm before funds may move in the atomic escrow→commission flow |
+| `ATOMIC_COMMIT_TTL_LEDGERS` (storage.rs:64) | `432_000` | ≈30 days (same window as `ESCROW_TTL_LEDGERS`) | `DataKey::AtomicCommit` — passed as both threshold and extend-to in `save_atomic_marker` (write) and `extend_atomic_marker_ttl` (read); added by #988 |
+| `ATOMIC_COMMIT_MAX_LIFETIME_LEDGERS` (cross_contract.rs:162) | `120_960` | ≈7 days at 5 s/ledger (source comment: "matches `multi_sig::MAX_EXPIRY_LEDGERS`") | **Not a TTL.** Bounded lifetime of an `InProgress` `AtomicCommitMarker`: `load_marker` resolves a marker whose `created_ledger + ATOMIC_COMMIT_MAX_LIFETIME_LEDGERS` has passed to the terminal `RolledBack` state (#988) |
 
-No `DataKey::AtomicCommit` entry is ever TTL-extended, and no instance key is extended.
+As of #988 the `DataKey::AtomicCommit` entry **is** TTL-extended on every read
+and write (see the two constants above). No instance key is extended. The
+`ATOMIC_COMMIT_MAX_LIFETIME_LEDGERS` bound is a logical deadline enforced in
+`load_marker`, not a storage TTL.
 
-**Compile status.** Does not compile. `cargo build -p escrow` reports exactly two errors, both parse-level, both in `contracts/escrow/src/lib.rs`:  1. `error: mismatched closing delimiter: }` at `lib.rs:650:33` — the `env.events().publish(` at `lib.rs:650:9` is unclosed; the `}` at `lib.rs:669` is flagged mismatched, with rustc pointing at the `storage::with_reentrancy_guard(&env, || {` opened at `lib.rs:637` as the delimiter it was "possibly meant for". 2. `error: this file contains an unclosed delimiter` at `lib.rs:845:24` (`mod correlation_tests;`) — the unclosed delimiters are `impl EscrowContract {` (lib.rs:99), the `pub fn auto_release_on_deadline(...) -> Result<(), EscrowError> {` signature (ending lib.rs:567), and the closure `storage::with_reentrancy_guard(&env, || {` (lib.rs:593); the `}` at `lib.rs:825` absorbs all three with mismatched indentation.  Root cause: the file is spliced at `lib.rs:598–599`. `auto_release_on_deadline`'s body stops after `r.status = CommissionStatus::Released;` with no `save_escrow`, no TTL extension, no transfers, no closing `})` or `}`, and the doc comment + `pub fn cancel_escrow(...)` header of the following function (lib.rs:599–613) begin inside that unclosed closure. The region `lib.rs:637–669` mixes the two functions: it opens a second `with_reentrancy_guard` closure, uses `auto_release_ledger` and `remaining` (locals of `auto_release_on_deadline`) inside the `autorls` event, and also references `client_refund`/`client` (from `cancel_escrow`), which cannot be in scope at that nesting.  Consequently unreachable / uncompilable as written: `auto_release_on_deadline` (truncated — its `save_escrow`, TTL call, artist and platform-wallet transfers, completed `autorls` event and closers are absent from the file and were not reconstructed), `cancel_escrow` (header nested in a closure body, body spliced), the 24 `pub fn`s from `get_escrow` (lib.rs:672) to `trigger_rollback` (lib.rs:821), and all 8 `#[cfg(test)]` module declarations (lib.rs:828–845). The 19 `pub fn`s from `initialize` (lib.rs:104) through `partial_release` (lib.rs:484) are the only lexically valid part of the contract block. The failure is parse-level, so no name resolution, macro expansion of `#[contractimpl]`, or type checking runs — `errors.rs`, `storage.rs` and `cross_contract.rs` are individually well-formed and are documented from source as written, but the crate as a whole produces no WASM. No fix was attempted.
+**Compile status.** `compiles`. The parse breakage described in an earlier revision of this document — an unclosed `auto_release_on_deadline` / `cancel_escrow` around `lib.rs:598`, a missing `}` in the `autorls` event, and a swallowed `mod` tail — is **not present** in the current source: `auto_release_on_deadline` runs to a complete body and closers at `lib.rs:604-671`, `cancel_escrow` begins at `lib.rs:682`, and the `#[cfg(test)]` module list at `lib.rs:1016-1035` is intact. `escrow` is a workspace member and carries `crate-type = ["cdylib", "rlib"]`. The #988 change added the `get_atomic_commit` routing, the TTL helpers and four `atomic_flow_tests` cases; it was **not** compiled as part of this change (no `cargo` command was run), so this status rests on the source no longer matching the earlier breakage description, not on a fresh build.
 
 
 ### licensing
@@ -882,27 +988,30 @@ Source: `contracts/search/`
 
 **Storage layout.**
 
-Four `DataKey` variants across two storage classes. Like `messaging`, this crate contains **no `extend_ttl` call at all** (verified: zero matches), so `DataKey::Listing` — the only persistent entry, and the one that would need restoring if a listing expired — is never renewed and relies entirely on the network's default persistent-entry TTL. It exposes no `shared` health/rollout surface, so no `shared` key is reachable from it.
+Six `DataKey` variants across two storage classes. As of #987 the artist set is no longer held in the uncapped instance `AllArtists` vector: it is a denormalised persistent index that `search` scans in bounded steps and reads only the returned page's full listings. Like `messaging`, this crate contains **no `extend_ttl` call at all** (verified: zero matches), so every persistent entry relies entirely on the network's default persistent-entry TTL. It exposes no `shared` health/rollout surface, so no `shared` key is reachable from it.
 
 | Key | Value type | Storage class | TTL | Purpose |
 |---|---|---|---|---|
 | `DataKey::Admin` | `Address` | instance | none | Written once by `initialize`; its presence is both the `initialize` guard (`has_admin`) and the "is the contract initialized" test used by `index_artist` and `search`. Not rotatable. Unlike every other admin-gated entry point, `set_rating` and the two listing toggles compare the caller against **this stored value** |
-| `DataKey::Listing(Address)` | `ArtistListing` | persistent | none — **no `extend_ttl` in crate**, so the listing is never explicitly retained | `{artist, skills, price, rating, keywords, indexed_ledger, active}`. `rating` is written only by `set_rating` and preserved across re-indexing; `indexed_ledger` and `active` are overwritten by `index_artist` and the toggles. `ListingNotFound` when absent |
-| `DataKey::AllArtists` | `Vec<Address>` | instance | none | Every artist ever indexed, in indexing order. Appended once per new artist (guarded by an `is_new` check) and **never pruned**, so a deactivated artist is still scanned on every query. `search` iterates this whole list |
+| `DataKey::Listing(Address)` | `ArtistListing` | persistent | none — **no `extend_ttl` in crate**, so the listing is never explicitly retained | `{artist, skills, price, rating, keywords, indexed_ledger, active}`. `rating` is written only by `set_rating` and preserved across re-indexing; `indexed_ledger` and `active` are overwritten by `index_artist` and the toggles. `ListingNotFound` when absent. Read **only for the artists that appear on the returned page** (#987) |
+| `DataKey::Index(u32)` | `ArtistIndexEntry` | persistent | none | The denormalised, filterable copy of one listing, keyed by 0-based scan position: `{artist, skills, price, rating, keywords, indexed_ledger, active}`. `search` scans **these** — bounded by `MAX_SCAN` — instead of loading every `Listing`, and fetches the full listing only for the page it returns. Written by `index_artist`; refreshed in place by `set_rating`, `deactivate_listing` and `reactivate_listing` through `ArtistIndex(Address)` (#987) |
+| `DataKey::IndexCount` | `u32` | persistent | none | Number of index positions ever assigned. Monotonic — never decremented — so positions are stable across writes, and it is the bound on the scan (#987) |
+| `DataKey::ArtistIndex(Address)` | `u32` | persistent | none | Reverse map artist → index position, so a re-index or a rating/active toggle can update `Index(position)` without a full scan (#987) |
 | `DataKey::Analytics` | `SearchAnalytics` | instance | none | `{total_searches: u64, total_indexed: u32}`. Read through `unwrap_or_default()`; `total_indexed` is incremented only for a first-time index (re-indexing does not double-count), `total_searches` on every `search` |
 | `shared::*` | — | — | — | None — this contract has no health/rollout entry points, so no `shared` key is reachable through its public interface |
 
 **TTL constants.**
 
-No TTL constant and no `extend_ttl` call exist in this crate. The bounds below are input-size caps enforced by the entry points named in the last column.
+No TTL constant and no `extend_ttl` call exist in this crate. The bounds below are input-size caps and a scan bound enforced by the entry points named in the last column.
 
 | Constant | Ledgers | Approx. duration | Applies to |
 |---|---|---|---|
-| `MAX_PAGE_SIZE` | n/a — a result count | n/a | 50. Hard cap on a single page. **Enforced by `search` only**: `page_size == 0 \|\| page_size > MAX_PAGE_SIZE` ⇒ `InvalidPageSize`. Note what it does *not* bound: `search` still walks all of `DataKey::AllArtists`, loading and filtering every listing before paginating, so per-call cost scales with the total number of ever-indexed artists. The tests confirm the bound is real in both directions (`0` and `1000` are both rejected) |
+| `MAX_SCAN` | n/a — an entry count | n/a | 200. Maximum number of `Index(u32)` entries one `search` call examines. When more artists are indexed, `SearchResultPage::scanned` reports how far the scan reached and `truncated` is `true`, so a partial result is explicit rather than silently incomplete (#987). `MAX_SCAN` is a private `const` in `lib.rs` |
+| `MAX_PAGE_SIZE` | n/a — a result count | n/a | 50. Hard cap on a single page. **Enforced by `search` only**: `page_size == 0 \|\| page_size > MAX_PAGE_SIZE` ⇒ `InvalidPageSize`. As of #987 `search` scans at most `MAX_SCAN` `Index(u32)` entries and reads only the returned page's `Listing` records, so per-call read cost no longer scales with the number of ever-indexed artists. The tests confirm the bound is real in both directions (`0` and `1000` are both rejected) |
 | `MAX_SKILLS` | n/a — a tag count | n/a | 20. **Enforced by `index_artist` only**: `skills.len() > MAX_SKILLS` ⇒ `TooManySkills` |
 | `MAX_KEYWORDS` | n/a — a tag count | n/a | 30. **Enforced by `index_artist` only**: `keywords.len() > MAX_KEYWORDS` ⇒ `TooManyKeywords` |
 
-**Compile status.** `compiles` — `cargo check -p search --lib` succeeds with no warnings. The 12 unit tests in `src/test.rs` compile against the `rlib` target.
+**Compile status.** `compiles` — `cargo check -p search --lib` succeeds with no warnings. The 17 unit tests in `src/test.rs` (including `full_scan_below_max_scan_is_not_truncated` and `scan_beyond_max_scan_is_reported_as_truncated`) compile against the `rlib` target; as with the rest of this document, that is the pre-#987 status and the four #987 additions were not compiled here.
 
 
 ### subscription
@@ -980,6 +1089,58 @@ So the pairing the storage docs need: the expiry windows are **logical ledger co
 **Compile status.** `compiles`  > Verified with `cargo check -p subscription -p verification --offline` → `Finished \`dev\` profile [unoptimized + debuginfo] target(s)`, with no errors and no warnings for this crate. `crate-type = ["cdylib", "rlib"]`, so `Verification` and all 40 entry points are reachable. Behaviours that compile cleanly but deserve flagging in the storage docs: `initialize` is unauthenticated (first caller becomes admin); no entry point extends any TTL, so `Portfolio`, `History`, `Badge`, `BadgeHistory`, and `BadgeTypes` all live on the network's default entry lifetimes while the refresh and expiry windows are pure ledger comparisons; `submit_portfolio` writes no `History` record; `issue_badge` can grant `PortfolioVerified` with no portfolio at all; and `is_reviewer` disagrees with the real gate in `require_reviewer` for the admin address.
 
 
+### withdrawal
+
+> unknown — `contracts/withdrawal/src/lib.rs` opens with `#![no_std]` and has no crate-level `//!` module doc; the layout below is reconstructed from the source. Closes #986 (bounded per-campaign index). **Not a workspace member** — see the `NOTE` in the root `Cargo.toml`.
+
+Source: `contracts/withdrawal/`
+
+**Storage layout.**
+
+Instance storage holds configuration and counters; persistent storage holds the
+withdrawal records and the per-campaign index. As of #986
+`DataKey::WithdrawalsByCampaign` stores only `Vec<u64>` **ids**, not full records:
+the canonical `Withdrawal(id)` is written once, so storage is no longer doubled.
+The index is ring-trimmed to the retention cap on every write.
+
+| Key | Value type | Storage class | TTL | Purpose |
+|---|---|---|---|---|
+| `DataKey::Withdrawal(u64)` | `shared::types::Withdrawal` | persistent | none — no `extend_ttl` in the crate | The canonical withdrawal record: `{ campaign_id, recipient, amount, approved }`. Written by `request_withdrawal` and re-written by `approve_withdrawal`. **Never pruned** (a settled payment is a record; a pending withdrawal is a claim). |
+| `DataKey::WithdrawalsByCampaign(u64)` | `Vec<u64>` (ids, oldest-first) | persistent | none | The derived per-campaign id index. Appended by `request_withdrawal`, then ring-trimmed to `MAX_WITHDRAWALS_PER_CAMPAIGN` (#986); read page-wise by `get_withdrawals_by_campaign`; the sole target of `prune_withdrawals_by_campaign`. |
+| `DataKey::Admin` | `Address` | instance | none | Platform admin. Gates `pause`/`unpause`, `approve_withdrawal`, `reject_withdrawal`, `set_withdrawal_retention_cap`, `prune_withdrawals_by_campaign` and the health/rollout setters via `ensure_admin`. Set by `initialize`; not rotatable. |
+| `DataKey::Initialized` | `bool` | instance | none | One-shot `initialize` guard. |
+| `DataKey::DonationContract` | `Address` | instance | none | The donation contract read for `get_total_raised` when checking a withdrawal's available balance. Set by `initialize`. |
+| `DataKey::WithdrawnAmount(u64)` | `i128` | persistent | none | Running total withdrawn per campaign — the reconciliation figure. Updated by `approve_withdrawal`. **Never pruned** (#986). |
+| `DataKey::RetentionCap` | `u32` | instance | none | Admin-set per-campaign index cap, accepted only in `1..=MAX_WITHDRAWALS_PER_CAMPAIGN`. Read with `unwrap_or(DEFAULT_WITHDRAWALS_PER_CAMPAIGN)` then `.min(MAX_WITHDRAWALS_PER_CAMPAIGN)` (#986). Written by `set_withdrawal_retention_cap`. |
+| `Symbol::new(env, "next_withdrawal_id")` (ad-hoc instance key, not a `DataKey` variant) | `u64` | instance | none | Monotonic withdrawal-id counter, defaulting to `1` in `next_withdrawal_id`. |
+| `shared::pause::PauseDataKey::Paused` | `bool` | instance | none | Shared pause flag, checked by `pause::require_not_paused` in `request_withdrawal`, `approve_withdrawal` and `reject_withdrawal`. |
+| `shared::health` / `shared::rollout` keys | `HealthMetrics` / `AlertConfig` / `u32` / `RolloutPhase` / … | instance | none | The delegated health/rollout surface (`health_check`, `get_health_metrics`, `set_alert_config`, `report_ok`, `report_error`, `set_feature_flag`, `set_canary_deployment`, `set_rollback_trigger`, `trigger_rollback`, …), all gated on the stored admin via `ensure_admin` (#763). |
+
+Events published: `withdrawal_requested`, `withdrawal_approved`,
+`withdrawal_rejected`, `retcap` (on `set_withdrawal_retention_cap`), and `prune`
+(on a write-time trim or a `prune_withdrawals_by_campaign` call).
+
+**TTL constants.**
+
+The crate declares **no TTL constant and never calls `extend_ttl`/`bump`**, so
+every persistent entry lives on the network's default persistent-entry lifetime.
+The constants below are retention bounds on the derived index, not storage TTLs.
+
+| Constant | Value | Applies to |
+|---|---|---|
+| `MAX_WITHDRAWALS_PER_CAMPAIGN` | 500 ids | Code ceiling on the per-campaign id index; the upper bound `set_withdrawal_retention_cap` accepts. |
+| `DEFAULT_WITHDRAWALS_PER_CAMPAIGN` | 100 ids | Effective index cap until an admin overrides it (`get_withdrawal_retention_cap`). |
+| `PRUNE_MAX_BATCH` | 100 ids | Hard cap on how many index entries one `prune_withdrawals_by_campaign` call may remove. Mirrors `analytics::PRUNE_MAX_BATCH`. |
+
+`get_withdrawal_retention_policy()` returns `(code_ceiling, effective_cap,
+prune_batch)`.
+
+**Compile status.** **Not compiled.** `withdrawal` is not a workspace member, so
+it is never built and no test in it has run. The #986 code and its unit tests were
+written to the same conventions as the member crates but must be added to the
+workspace and compiled before being trusted.
+
+
 ### shared
 
 > State migration and upgrade safety helpers (closes #595). — module doc of `upgrade.rs`; the crate is an 11-module library (`config`, `errors`, `pause`, `types`, `upgrade`, `health`, `rollout`, `correlation`, `validation`, `version`, `dispute`) with no crate-level `//!` doc.
@@ -1007,9 +1168,13 @@ Every site in the crate uses `env.storage().instance()` — there is not one `pe
 | `RolloutKey::Stable` | `Address` | instance | none | Stable contract id |
 | `RolloutKey::RollbackErrorBps` | `u32` | instance | none | Error rate at which automatic rollback arms |
 | `RolloutKey::Flag(Symbol)` | `bool` | instance | none | Named feature flag, one entry per flag |
-| `RolloutKey::FlagIndex` | `Vec<Symbol>` | instance | none | Enumerates flags so `disable_all_flags` can zero them on rollback |
+| `RolloutKey::FlagIndex` | `Vec<Symbol>` | instance | none | Enumerates flags so `disable_all_flags` can zero them on rollback. Capped at `rollout::flag_cap` (#985) |
+| `RolloutKey::MaxFlags` | `u32` | instance | none | Optional admin-lowered feature-flag cap (#985); absent means `MAX_FEATURE_FLAGS = 32`. Read by `rollout::flag_cap`, written by `rollout::set_flag_cap` |
+| `AdminKey::PendingAdmin` | `Address` | instance | none | Successor proposed by `admin::propose`, consumed by `admin::accept` and removed by `admin::cancel` (#983). Distinct from escrow's own `PauseKey::PendingAdmin` |
 
 `config.rs`, `correlation.rs` and `validation.rs` write no storage at all; `config.rs` performs read-only cross-contract invocations, `correlation.rs` is pure hashing plus one event publish, and `validation.rs` is length checking.
+
+The `admin` module (#983) is a fifth key enum: `AdminKey` holds only the *pending* successor, while each contract keeps its **active** admin under its own `DataKey::Admin`. Adding this key is a layout addition, not a re-interpretation of any existing key — see the storage-schema note above the per-contract tables.
 
 **TTL constants.**
 

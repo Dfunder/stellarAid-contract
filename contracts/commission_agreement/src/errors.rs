@@ -22,13 +22,13 @@ pub enum AgreementError {
     /// Too many members (enforced at 10).
     TeamSizeLimit = 13,
     /// Input string exceeds the allowed maximum length (closes #591).
-    InputTooLong = 10,
+    InputTooLong = 27,
     /// Deadline exceeds the maximum permitted future ledger (closes #592).
-    DeadlineTooFar = 11,
+    DeadlineTooFar = 28,
     /// Milestone state transition is locked — a concurrent update is in
     /// progress; retry the operation. Closes #589.
-    MilestoneLocked = 12,
-    NotCancellable = 13,
+    MilestoneLocked = 29,
+    NotCancellable = 30,
     AlreadyCancelled = 14,
     InvalidPolicy = 15,
     AgencyExists = 16,

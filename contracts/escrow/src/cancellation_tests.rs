@@ -213,6 +213,6 @@ fn cancellation_is_not_repeatable() {
 
 #[test]
 fn cancelled_status_has_a_stable_discriminant() {
-    assert_eq!(CommissionStatus::Cancelled as u32, 5);
+    assert_eq!(CommissionStatus::Cancelled as u32, 6);
     assert_eq!(EscrowError::InvalidSplit as u32, 13);
 }

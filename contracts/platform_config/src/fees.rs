@@ -58,6 +58,7 @@ fn tier_fee(tiers: &Vec<FeeTier>, volume: i128) -> Option<u32> {
 }
 
 /// Full fee computation, mirrored by the `compute_fees` contract entry point.
+#[allow(clippy::too_many_arguments)]
 pub fn compute(
     base_fee_bps: u32,
     tiers: &Vec<FeeTier>,

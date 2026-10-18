@@ -141,6 +141,8 @@ impl Competitions {
         if history_limit == 0 {
             return Err(CompetitionError::InvalidRules);
         }
+        // Clamp the retained history to the shared page ceiling (#984).
+        let history_limit = shared::pagination::clamp_limit(history_limit);
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage()
             .instance()
@@ -494,6 +496,64 @@ impl Competitions {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    // ── Bounded reads (closes #984) ──────────────────────────────────────
+    //
+    // The competition history is retained at `clamp_limit(history_limit)`
+    // (see `initialize`), so the list readers are already bounded at
+    // `shared::pagination::MAX_LIMIT`. The `_page` variants add an offset
+    // cursor and `PageInfo` so a client can page a long roster and tell a
+    // truncated page from a complete one; caller `limit` is clamped by
+    // `collect_window`.
+
+    /// One page of the finalised-competition history, plus its [`PageInfo`].
+    ///
+    /// [`PageInfo`]: shared::pagination::PageInfo
+    pub fn get_history_page(
+        env: Env,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<CompetitionSummary>, shared::pagination::PageInfo) {
+        let all: Vec<CompetitionSummary> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::History)
+            .unwrap_or_else(|| Vec::new(&env));
+        let total = all.len();
+        shared::pagination::collect_window(&env, total, start, limit, |i| all.get(i))
+    }
+
+    /// One page of a competition's entrant roster, plus its [`PageInfo`].
+    ///
+    /// [`PageInfo`]: shared::pagination::PageInfo
+    pub fn get_entrants_page(
+        env: Env,
+        competition_id: Bytes,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<Address>, shared::pagination::PageInfo) {
+        let all = entrants_of(&env, &competition_id);
+        let total = all.len();
+        shared::pagination::collect_window(&env, total, start, limit, |i| all.get(i))
+    }
+
+    /// One page of a competition's ranked winners, plus its [`PageInfo`].
+    ///
+    /// [`PageInfo`]: shared::pagination::PageInfo
+    pub fn get_winners_page(
+        env: Env,
+        competition_id: Bytes,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<Winner>, shared::pagination::PageInfo) {
+        let all: Vec<Winner> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Winners(competition_id))
+            .unwrap_or_else(|| Vec::new(&env));
+        let total = all.len();
+        shared::pagination::collect_window(&env, total, start, limit, |i| all.get(i))
+    }
+
     // ── Health monitoring (#678) and gradual rollout (#684) ──────────────
     pub fn health_check(env: Env) -> shared::health::HealthReport {
         let report = shared::health::health_check(&env);
@@ -533,6 +593,24 @@ impl Competitions {
     }
     pub fn is_feature_enabled(env: Env, flag: soroban_sdk::Symbol) -> bool {
         shared::rollout::is_feature_enabled(&env, &flag)
+    }
+    /// Lower this contract's feature-flag cap within the shared ceiling (#985).
+    ///
+    /// `shared::rollout::MAX_FEATURE_FLAGS` is the hard ceiling; this only ever
+    /// lowers the effective cap, so future tuning needs no new code. The current
+    /// value is returned by [`get_flag_cap`] and in
+    /// `get_rollout_state().flag_cap`.
+    pub fn set_flag_cap(
+        env: Env,
+        admin: Address,
+        cap: u32,
+    ) -> Result<(), shared::rollout::RolloutError> {
+        admin.require_auth();
+        shared::rollout::set_flag_cap(&env, cap)
+    }
+    /// The effective feature-flag cap for this contract (#985).
+    pub fn get_flag_cap(env: Env) -> u32 {
+        shared::rollout::flag_cap(&env)
     }
     pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
         admin.require_auth();

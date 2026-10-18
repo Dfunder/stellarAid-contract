@@ -118,6 +118,18 @@ fn check_distribution_rule(fund: &Fund, amount: i128) -> Result<(), FundError> {
     Ok(())
 }
 
+/// Collapse the shared handover error onto `FundError` (#983).
+///
+/// `FundError` cannot grow new variants here, so a missing contract maps to
+/// `NotInitialized` and every other refusal (wrong caller, no pending transfer,
+/// proposing the current admin) is `Unauthorized`.
+fn map_admin_error(err: shared::admin::AdminError) -> FundError {
+    match err {
+        shared::admin::AdminError::NotInitialized => FundError::NotInitialized,
+        _ => FundError::Unauthorized,
+    }
+}
+
 #[contractimpl]
 impl CreatorFund {
     pub fn initialize(env: Env, admin: Address, history_limit: u32) -> Result<(), FundError> {
@@ -127,6 +139,10 @@ impl CreatorFund {
         if history_limit == 0 {
             return Err(FundError::InvalidAmount);
         }
+        // Clamp the retained history to the shared page ceiling (#984). The
+        // stored value is what an off-chain caller pages against, so the event
+        // reports the clamped value rather than the raw request.
+        let history_limit = shared::pagination::clamp_limit(history_limit);
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage()
             .instance()
@@ -430,6 +446,103 @@ impl CreatorFund {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    // ── Bounded reads (closes #984) ──────────────────────────────────────
+    //
+    // The retained history is already capped at `clamp_limit(history_limit)`
+    // by `initialize`, so these readers cannot return more than
+    // `shared::pagination::MAX_LIMIT` records. The `_page` variants add an
+    // offset cursor and `PageInfo`, so a client can page to the end and tell a
+    // truncated page from a complete one. Caller-supplied `limit` is clamped by
+    // `collect_window`, exactly as the workspace's other paged getters do.
+
+    /// One page of `fund_id`'s allocation history, plus its [`PageInfo`].
+    ///
+    /// [`PageInfo`]: shared::pagination::PageInfo
+    pub fn get_allocations_page(
+        env: Env,
+        fund_id: Bytes,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<Allocation>, shared::pagination::PageInfo) {
+        let all: Vec<Allocation> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Allocations(fund_id))
+            .unwrap_or_else(|| Vec::new(&env));
+        let total = all.len();
+        shared::pagination::collect_window(&env, total, start, limit, |i| all.get(i))
+    }
+
+    /// One page of `fund_id`'s growth history, plus its [`PageInfo`].
+    ///
+    /// [`PageInfo`]: shared::pagination::PageInfo
+    pub fn get_growth_page(
+        env: Env,
+        fund_id: Bytes,
+        start: u32,
+        limit: u32,
+    ) -> (Vec<GrowthPoint>, shared::pagination::PageInfo) {
+        let all: Vec<GrowthPoint> = env
+    ) -> (Vec<GrowthPoint>, shared::PageInfo) {
+        let growth: Vec<GrowthPoint> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Growth(fund_id))
+            .unwrap_or_else(|| Vec::new(&env));
+        let total = all.len();
+        shared::pagination::collect_window(&env, total, start, limit, |i| all.get(i))
+    }
+
+    // ── Admin key rotation (closes #983) ─────────────────────────────────
+    //
+    // Two-step handover delegated to `shared::admin`; the active admin stays
+    // under `DataKey::Admin`, only the pending successor is stored in the
+    // shared key space.
+
+    /// Step 1 — the current admin proposes `new_admin` as its successor.
+    pub fn transfer_admin(env: Env, admin: Address, new_admin: Address) -> Result<(), FundError> {
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(FundError::NotInitialized)?;
+        if stored != admin {
+            return Err(FundError::Unauthorized);
+        }
+        shared::admin::propose(&env, &admin, &new_admin).map_err(map_admin_error)
+    }
+
+    /// Step 2 — the proposed successor accepts and becomes the active admin.
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), FundError> {
+        let previous: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(FundError::NotInitialized)?;
+        shared::admin::accept(&env, &previous, &new_admin).map_err(map_admin_error)?;
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        Ok(())
+    }
+
+    /// The current admin withdraws an in-flight proposal.
+    pub fn cancel_admin_transfer(env: Env, admin: Address) -> Result<(), FundError> {
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(FundError::NotInitialized)?;
+        if stored != admin {
+            return Err(FundError::Unauthorized);
+        }
+        shared::admin::cancel(&env, &admin).map_err(map_admin_error)
+    }
+
+    /// The proposed successor awaiting acceptance, if any.
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        shared::admin::pending_admin(&env)
+        shared::pagination::paginated(&env, &growth, start, limit)
+    }
+
     // ── Health monitoring (#678) and gradual rollout (#684) ──────────────
     pub fn health_check(env: Env) -> shared::health::HealthReport {
         let report = shared::health::health_check(&env);
@@ -469,6 +582,24 @@ impl CreatorFund {
     }
     pub fn is_feature_enabled(env: Env, flag: soroban_sdk::Symbol) -> bool {
         shared::rollout::is_feature_enabled(&env, &flag)
+    }
+    /// Lower this contract's feature-flag cap within the shared ceiling (#985).
+    ///
+    /// `shared::rollout::MAX_FEATURE_FLAGS` is the hard ceiling; this only ever
+    /// lowers the effective cap, so future tuning needs no new code. The current
+    /// value is returned by [`get_flag_cap`] and in
+    /// `get_rollout_state().flag_cap`.
+    pub fn set_flag_cap(
+        env: Env,
+        admin: Address,
+        cap: u32,
+    ) -> Result<(), shared::rollout::RolloutError> {
+        admin.require_auth();
+        shared::rollout::set_flag_cap(&env, cap)
+    }
+    /// The effective feature-flag cap for this contract (#985).
+    pub fn get_flag_cap(env: Env) -> u32 {
+        shared::rollout::flag_cap(&env)
     }
     pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
         admin.require_auth();

@@ -7,13 +7,13 @@ use crate::events::*;
 use crate::{CampaignContract, CampaignContractClient, DataKey};
 use shared::types::CampaignStatus;
 use soroban_sdk::{
-    testutils::Address as _, testutils::Ledger as _, Address, BytesN, Env, FromVal, String, Symbol,
+    testutils::Address as _, testutils::Events as _, testutils::Ledger as _, Address, BytesN, Env, FromVal, String, Symbol,
 };
 
 /// Finds the most recent event whose topic 0 equals `name` and returns its
 /// decoded data. Returns `None` when the event was never published, which is
 /// what makes "this event must not fire" assertions possible.
-fn last_event<T: FromVal<Env, soroban_sdk::Val, T>>(
+fn last_event<T: FromVal<Env, soroban_sdk::Val>>(
     env: &Env,
     contract_id: &Address,
     name: &str,
@@ -26,7 +26,7 @@ fn last_event<T: FromVal<Env, soroban_sdk::Val, T>>(
             // documented two-segment topic layout.
             let emitter = Address::from_val(env, &topics.get(1).unwrap());
             assert_eq!(&emitter, contract_id);
-            return Some(T::from_val(env, data));
+            return Some(T::from_val(env, &data));
         }
     }
     None
@@ -137,7 +137,7 @@ fn withdrawal_requested_and_finalized_are_separate_events() {
             .expect("withdrawal_requested not emitted");
     assert_eq!(requested.campaign_id, f.campaign_id);
     assert_eq!(requested.amount, 2_500);
-    assert_eq!(requested.requested_at, f.env.ledger().sequence());
+    assert_eq!(requested.requested_at, f.env.ledger().sequence() as u64);
     assert!(requested.available_at > requested.requested_at);
     // No funds have moved yet.
     assert!(
@@ -146,7 +146,13 @@ fn withdrawal_requested_and_finalized_are_separate_events() {
     );
 
     // Make the notice window elapse.
-    f.env.ledger().set_sequence_number(requested.available_at + 1);
+    let next_seq = u32::try_from(requested.available_at + 1).unwrap();
+    f.env.as_contract(&f.contract_id, || {
+        f.env.storage().instance().extend_ttl(next_seq + 10_000, next_seq + 10_000);
+        f.env.storage().persistent().extend_ttl(&DataKey::Campaign(f.campaign_id), next_seq + 10_000, next_seq + 10_000);
+        f.env.storage().persistent().extend_ttl(&DataKey::PendingWithdrawal(f.campaign_id), next_seq + 10_000, next_seq + 10_000);
+    });
+    f.env.ledger().set_sequence_number(next_seq);
     f.client.finalize_withdrawal(&f.campaign_id, &2_500_i128);
 
     let finalized: WithdrawalFinalizedEvent =
@@ -196,7 +202,7 @@ fn withdrawal_cancelled_event_emitted_and_request_cleared() {
             .expect("withdrawal_cancelled not emitted");
     assert_eq!(cancelled.campaign_id, f.campaign_id);
     assert_eq!(cancelled.amount, 900);
-    assert_eq!(cancelled.cancelled_at, f.env.ledger().sequence());
+    assert_eq!(cancelled.cancelled_at, f.env.ledger().sequence() as u64);
     assert!(f.client.get_pending_withdrawal(&f.campaign_id).is_none());
 }
 
@@ -215,7 +221,7 @@ fn dispute_raised_and_resolved_events_carry_reason_and_outcome() {
     assert_eq!(raised.raised_by, f.donor);
     assert_eq!(raised.reason_hash, reason);
     assert_eq!(raised.raised_at, f.env.ledger().timestamp());
-    assert_eq!(f.client.get_dispute_reason(&f.campaign_id), Some(reason));
+    assert_eq!(f.client.get_dispute_reason(&f.campaign_id), Some(reason.clone()));
     assert!(f.client.has_active_dispute(&f.campaign_id));
 
     // A second dispute is refused and must not emit a second event.
@@ -370,36 +376,43 @@ fn lifecycle_storage_keys_do_not_collide() {
     f.fund(500);
     f.client.request_withdrawal(&f.campaign_id, &100_i128);
 
-    assert!(f
-        .env
-        .storage()
-        .persistent()
-        .has(&DataKey::PendingWithdrawal(f.campaign_id)));
-    assert!(f
-        .env
-        .storage()
-        .persistent()
-        .has(&DataKey::Campaign(f.campaign_id)));
-    assert!(f
-        .env
-        .storage()
-        .persistent()
-        .has(&DataKey::TotalWithdrawn(0))
-        == false);
+    f.env.as_contract(&f.contract_id, || {
+        assert!(f
+            .env
+            .storage()
+            .persistent()
+            .has(&DataKey::PendingWithdrawal(f.campaign_id)));
+        assert!(f
+            .env
+            .storage()
+            .persistent()
+            .has(&DataKey::Campaign(f.campaign_id)));
+        assert!(
+            f.env
+                .storage()
+                .persistent()
+                .has(&DataKey::TotalWithdrawn(0))
+                == false
+        );
+    });
 }
 
 #[test]
 fn campaign_donor_marker_only_set_by_recorded_donations() {
     let f = setup();
-    assert!(!CampaignContract::has_donated(
-        &f.env,
-        f.campaign_id,
-        &f.donor
-    ));
+    f.env.as_contract(&f.contract_id, || {
+        assert!(!CampaignContract::has_donated(
+            &f.env,
+            f.campaign_id,
+            &f.donor
+        ));
+    });
     f.fund(1);
-    assert!(CampaignContract::has_donated(
-        &f.env,
-        f.campaign_id,
-        &f.donor
-    ));
+    f.env.as_contract(&f.contract_id, || {
+        assert!(CampaignContract::has_donated(
+            &f.env,
+            f.campaign_id,
+            &f.donor
+        ));
+    });
 }

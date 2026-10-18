@@ -40,7 +40,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: security-${{ github.ref }}
+  group: security-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -52,15 +52,15 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show
       - name: Install cargo-audit
-        uses: rustsec/audit-check@v2
+        # Install the tool only; the audit itself is run in the next step so
+        # the outcome is explicit and --deny is applied unconditionally.
+        uses: taiki-e/install-action@v2
         with:
-          # `deny` is the outcome we want. Without it the action's default is to
-          # annotate and continue, which would make a red advisory look green.
-          token: ${{ secrets.GITHUB_TOKEN }}
+          tool: cargo-audit
       - name: Audit the dependency graph
         # --ignore is intentionally absent: see the header. Every RUSTSEC
         # advisory fails the job until an explicit, reviewed ignore is added.
-        run: cargo audit
+        run: cargo audit --deny warnings
 
   cargo-deny:
     name: cargo deny (licences, sources, duplicates)
@@ -69,9 +69,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: rustup show
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - name: Install cargo-deny
+        # Install the tool only; the check is run explicitly below so
+        # --all-features and the deny assertion are applied unconditionally.
+        uses: taiki-e/install-action@v2
         with:
-          manifest-path: Cargo.toml
+          tool: cargo-deny
       - name: cargo deny check
         # --all-features so a vulnerability hidden behind a feature flag is
         # still counted. The `deny` advisory is re-asserted explicitly because

@@ -63,6 +63,38 @@ fn note(env: &Env) -> String {
     String::from_str(env, "reviewed manually")
 }
 
+// ── Bounded reads (#984) ─────────────────────────────────────────────────────
+
+#[test]
+fn history_page_clamps_the_limit_and_pages_past_the_end() {
+    let f = setup();
+
+    // A fresh artist has no history: every clamp path yields an empty page.
+    let (page, info) = f.client.get_history_page(&f.artist, &0, &0);
+    assert!(page.is_empty());
+    assert_eq!(info.total, 0);
+    assert!(!info.has_more);
+    assert_eq!(info.next_start, None);
+
+    // A limit above `MAX_LIMIT` is capped, not rejected.
+    let (page, _) = f.client.get_history_page(&f.artist, &0, &u32::MAX);
+    assert!(page.is_empty());
+
+    // A cursor past the end is an empty final page.
+    let (page, info) = f.client.get_history_page(&f.artist, &99, &10);
+    assert!(page.is_empty());
+    assert!(!info.has_more);
+    assert_eq!(info.next_start, None);
+
+    // The badge readers share the same shape.
+    let (page, info) = f.client.get_badge_history_page(&f.artist, &0, &10);
+    assert!(page.is_empty());
+    assert_eq!(info.total, 0);
+
+    let (page, _) = f.client.get_artist_badge_types_page(&f.artist, &0, &10);
+    assert!(page.is_empty());
+}
+
 #[test]
 fn initialize_twice_fails() {
     let f = setup();

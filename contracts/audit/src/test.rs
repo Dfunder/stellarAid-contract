@@ -25,20 +25,25 @@ struct Fixture<'a> {
 fn setup<'a>() -> Fixture<'a> {
     let env = Env::default();
     env.mock_all_auths();
+    env.budget().reset_unlimited();
     let admin = Address::generate(&env);
 
     let contract_id = env.register_contract(None, AuditLog);
     let client = AuditLogClient::new(&env, &contract_id);
     client.initialize(&admin);
 
+    let artist = Address::generate(&env);
+    let client_account = Address::generate(&env);
+    let token = Address::generate(&env);
+
     Fixture {
         reference: Bytes::from_slice(&env, b"commission-001"),
         env,
         client,
         admin,
-        artist: Address::generate(&env),
-        client_account: Address::generate(&env),
-        token: Address::generate(&env),
+        artist,
+        client_account,
+        token,
     }
 }
 
@@ -264,7 +269,7 @@ fn an_account_query_pages_in_order() {
             &AuditAction::MilestoneApproved,
             &f.client_account,
             &f.artist,
-            &100 * (i as i128 + 1),
+            &(100 * (i as i128 + 1)),
             &f.token,
             &TxStatus::Completed,
         );
@@ -275,11 +280,11 @@ fn an_account_query_pages_in_order() {
     assert!(first.has_more);
     assert_eq!(first.next_sequence, Some(2));
 
-    let middle = f.client.get_by_account(&f.artist, &2, &2);
+    let middle = f.client.get_by_account(&f.artist, &1, &2);
     assert_eq!(middle.entries.len(), 2);
     assert!(middle.has_more);
 
-    let tail = f.client.get_by_account(&f.artist, &4, &2);
+    let tail = f.client.get_by_account(&f.artist, &2, &2);
     assert_eq!(tail.entries.len(), 1);
     assert!(!tail.has_more);
     assert_eq!(tail.next_sequence, None);

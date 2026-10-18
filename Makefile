@@ -4,6 +4,14 @@ build:
 test:
 	cargo test
 
+# Run the full benchmark suite (closes #996).
+# Uses --no-fail-fast so one broken benchmark does not hide the others.
+# Results are printed to stdout; CI captures them into the job summary.
+# Wall-clock numbers are informational only — not portable across hardware.
+# Deterministic event-budget enforcement runs under `make test`.
+bench:
+	cargo bench --workspace --no-fail-fast
+
 fmt:
 	cargo fmt --all
 
@@ -88,5 +96,5 @@ validate-cross-contract:
 clean:
 	cargo clean
 
-.PHONY: build test fmt lint deploy-testnet clean validate validate-testnet validate-config validate-contracts validate-operations validate-cross-contract docker-build docker-test preflight preflight-env deploy-dry-run deploy-verify deploy-mainnet
-.PHONY: build test fmt lint deny audit deploy-testnet clean validate validate-testnet validate-config validate-contracts validate-operations validate-cross-contract docker-build docker-test preflight deploy-dry-run deploy-verify deploy-mainnet
+.PHONY: build test bench fmt lint deploy-testnet clean validate validate-testnet validate-config validate-contracts validate-operations validate-cross-contract docker-build docker-test preflight preflight-env deploy-dry-run deploy-verify deploy-mainnet
+.PHONY: build test bench fmt lint deny audit deploy-testnet clean validate validate-testnet validate-config validate-contracts validate-operations validate-cross-contract docker-build docker-test preflight deploy-dry-run deploy-verify deploy-mainnet

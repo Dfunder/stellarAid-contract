@@ -20,6 +20,13 @@ Every contract crate inherits this via `soroban-sdk.workspace = true`, so there 
 | 20.x | Untested | Predates several APIs this workspace relies on (e.g. `env.deployer().update_current_contract_wasm`, the `#[contracterror]` discriminant conventions used across every contract's error enum). Not verified; likely requires code changes, not just a version bump. |
 | 22.x+ | Untested | Not yet evaluated. Before upgrading, check the SDK's own changelog for storage-layout or auth-model changes, since this workspace stores non-trivial `contracttype` enums directly as persistent-storage keys (see e.g. `contracts/withdrawal/src/lib.rs`'s `DataKey`) — any change to how the SDK encodes those would be a breaking migration, not just a recompile. |
 
+## Related dependency pins
+
+| Crate | Pinned | Why |
+|---|---|---|
+| `stellar-strkey` | `0.0.8` | The `sdk` crate is written against the 0.0.8 API — `stellar_strkey::ed25519::{PublicKey, PrivateKey}` and the `stellar_strkey::Contract` newtype. The previous `0.0.2` pin only exposed `Strkey::{PublicKeyEd25519, PrivateKeyEd25519}` and had no `ed25519` module, so `sdk` could not compile against it. `stellar-xdr` 21 already pulls in 0.0.8, so pinning to it also collapses a duplicate. |
+| `ed25519-dalek` | `=2.2.0` | Used by `sdk::utils::keypair` and `sdk::setup::token_setup` to derive a public key from a secret key. |
+
 ## Why this isn't (yet) a CI version matrix
 
 The acceptance criteria for #645 also call for adding a version matrix to CI and fuzzing/compatibility test automation. That requires actually building and testing against each candidate SDK version in a CI job — a workflow-level change, not a documentation one. This file exists so that follow-up work (or a maintainer deciding to attempt a 20.x/22.x build) starts from a written record of what's known instead of from scratch.

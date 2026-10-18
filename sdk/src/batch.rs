@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
@@ -18,6 +19,9 @@ pub enum BatchError {
     EmptyBatch,
     #[error("batch size exceeds maximum ({0})")]
     TooLarge(usize),
+    /// A checkpoint store failed to persist or load batch state (#979).
+    #[error("batch checkpoint error: {0}")]
+    Checkpoint(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -25,7 +29,7 @@ pub enum BatchError {
 // ---------------------------------------------------------------------------
 
 /// A single contract call to be batched.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContractCall {
     /// Contract address (C... strkey).
     pub contract_id: String,
@@ -142,6 +146,15 @@ pub enum BatchResult {
 ///
 /// If the batch submission fails, each call is retried individually.
 /// This ensures that partial progress is still possible.
+///
+/// # Durability
+///
+/// `Submit` handles an in-process failure. A *process* that dies between two
+/// submissions is handled by [`crate::batch_checkpoint`], which persists the
+/// pending calls and per-call outcomes to a caller-supplied store. The two are
+/// complementary: [`crate::retry`] handles transient errors within a run, the
+/// checkpoint handles a run that ended. `take_calls()` remains the raw drain;
+/// `checkpoint()` is the resumable equivalent.
 pub struct BatchBuilder {
     calls: Vec<ContractCall>,
     max_batch_size: usize,
@@ -198,6 +211,36 @@ impl BatchBuilder {
     /// Take the accumulated calls out of the builder (resets the builder).
     pub fn take_calls(&mut self) -> Vec<ContractCall> {
         std::mem::take(&mut self.calls)
+    }
+
+    /// Snapshot the accumulated calls into a resumable [`BatchCheckpoint`].
+    ///
+    /// Additive (#979): the checkpoint can be handed to a
+    /// [`BatchCheckpointStore`] so a crash no longer loses the batch. See
+    /// [`crate::batch_checkpoint`] for the at-least-once guarantee.
+    ///
+    /// [`BatchCheckpoint`]: crate::batch_checkpoint::BatchCheckpoint
+    /// [`BatchCheckpointStore`]: crate::batch_checkpoint::BatchCheckpointStore
+    pub fn checkpoint(&self) -> crate::batch_checkpoint::BatchCheckpoint {
+        crate::batch_checkpoint::BatchCheckpoint::new(self.calls.clone())
+    }
+
+    /// Rebuild a builder from a checkpoint's pending calls.
+    ///
+    /// Additive (#979). Only calls that have not already succeeded are
+    /// re-queued, so resuming does not re-submit completed work.
+    pub fn from_checkpoint(checkpoint: &crate::batch_checkpoint::BatchCheckpoint) -> Self {
+        let pending: Vec<ContractCall> = checkpoint
+            .retryable_indices()
+            .into_iter()
+            .map(|i| checkpoint.calls[i].clone())
+            .collect();
+        let max_batch_size = pending.len().max(1);
+        Self {
+            calls: pending,
+            max_batch_size,
+            metrics: Arc::new(Mutex::new(BatchMetrics::default())),
+        }
     }
 
     /// Group calls by contract address for transaction optimization.

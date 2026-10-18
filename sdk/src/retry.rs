@@ -1,3 +1,4 @@
+use crate::errors::StellarAidError;
 use rand::Rng;
 use tokio::time::{sleep, Duration};
 use tracing::{warn, info};
@@ -90,6 +91,80 @@ where
             }
         }
     }
+}
+
+/// Like [`retry_async`], but consults a classifier and stops immediately on a
+/// non-retryable error (#980, and the mechanism issue #805 needs).
+///
+/// `retry_async` retries *every* error, so a malformed request or a rejected
+/// transaction is retried the full `max_attempts` before the caller sees it.
+/// Pass [`StellarAidError::is_retryable`] here — or use
+/// [`retry_stellar_async`] — to retry only transport failures.
+///
+/// This is complementary to [`crate::batch_checkpoint`]: the classifier bounds
+/// retries *within* a run, the checkpoint survives a run that ended.
+pub async fn retry_async_classified<F, Fut, T, E>(
+    config: &RetryConfig,
+    is_retryable: impl Fn(&E) -> bool,
+    f: F,
+) -> Result<T, E>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        match f().await {
+            Ok(val) => {
+                if attempt > 1 {
+                    info!(attempt = attempt, "operation succeeded after retry");
+                }
+                return Ok(val);
+            }
+            Err(e) => {
+                if !is_retryable(&e) {
+                    warn!(
+                        attempt = attempt,
+                        error = %e,
+                        "non-retryable error; returning without another attempt"
+                    );
+                    return Err(e);
+                }
+                if attempt >= config.max_attempts {
+                    warn!(
+                        attempt = attempt,
+                        max_attempts = config.max_attempts,
+                        error = %e,
+                        "all retry attempts exhausted"
+                    );
+                    return Err(e);
+                }
+                let delay = calculate_delay(config, attempt);
+                warn!(
+                    attempt = attempt,
+                    max_attempts = config.max_attempts,
+                    delay_ms = delay,
+                    error = %e,
+                    "retryable operation failed, retrying"
+                );
+                sleep(Duration::from_millis(delay)).await;
+            }
+        }
+    }
+}
+
+/// [`retry_async_classified`] specialized to the SDK's own [`StellarAidError`].
+pub async fn retry_stellar_async<F, Fut, T>(
+    config: &RetryConfig,
+    f: F,
+) -> Result<T, StellarAidError>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<T, StellarAidError>>,
+{
+    retry_async_classified(config, StellarAidError::is_retryable, f).await
 }
 
 fn calculate_delay(config: &RetryConfig, attempt: u32) -> u64 {
@@ -203,5 +278,88 @@ mod tests {
         // At least some values should differ due to jitter
         let unique = delays.iter().collect::<std::collections::HashSet<_>>().len();
         assert!(unique > 1, "jitter should produce varying delays");
+    }
+
+    // -- classified retry (#980) --
+
+    #[tokio::test]
+    async fn classified_stops_immediately_on_non_retryable() {
+        let config = RetryConfig {
+            max_attempts: 5,
+            base_delay_ms: 1,
+            jitter_ms: 0,
+            ..Default::default()
+        };
+        let counter = AtomicU32::new(0);
+        let result = retry_async_classified(&config, |_e: &&str| false, || async {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Err::<&str, &str>("permanent")
+        })
+        .await;
+
+        assert_eq!(result.unwrap_err(), "permanent");
+        // One attempt only — the classifier said do not retry.
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn classified_retries_retryable_errors() {
+        let config = RetryConfig {
+            max_attempts: 3,
+            base_delay_ms: 1,
+            jitter_ms: 0,
+            ..Default::default()
+        };
+        let counter = AtomicU32::new(0);
+        let result = retry_async_classified(&config, |_e: &&str| true, || async {
+            let count = counter.fetch_add(1, Ordering::SeqCst);
+            if count < 2 {
+                Err::<&str, &str>("transient")
+            } else {
+                Ok("ok")
+            }
+        })
+        .await;
+
+        assert_eq!(result.unwrap(), "ok");
+        assert_eq!(counter.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn stellar_retry_does_not_retry_validation_errors() {
+        let config = RetryConfig {
+            max_attempts: 5,
+            base_delay_ms: 1,
+            jitter_ms: 0,
+            ..Default::default()
+        };
+        let counter = AtomicU32::new(0);
+        let result = retry_stellar_async(&config, || async {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Err::<(), StellarAidError>(StellarAidError::validation("amount must be positive"))
+        })
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn stellar_retry_retries_unreachable_endpoint() {
+        let config = RetryConfig {
+            max_attempts: 4,
+            base_delay_ms: 1,
+            jitter_ms: 0,
+            ..Default::default()
+        };
+        let counter = AtomicU32::new(0);
+        let result = retry_stellar_async(&config, || async {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Err::<(), StellarAidError>(StellarAidError::endpoint_unreachable("refused"))
+        })
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(counter.load(Ordering::SeqCst), 4);
     }
 }

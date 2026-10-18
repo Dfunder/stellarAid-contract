@@ -22,7 +22,7 @@ use axum::{
 use sdk::{
     errors::StellarAidError,
     retry::{retry_async, RetryConfig},
-    soroban::rpc_client::SorobanRpcClient,
+    soroban::rpc_client::{SimulationResult, SorobanRpcClient},
     transaction_builder::{build_donate_transaction_full, DonationParams, NetworkConfig},
 };
 use serde::{Deserialize, Serialize};
@@ -134,6 +134,12 @@ fn build_route_limits() -> HashMap<String, RateLimit> {
     limits.insert(
         "/api/donations/submit".to_string(),
         RateLimit::new(env_u64("SUBMIT_RATE_LIMIT_MAX", 10) as u32, window),
+    );
+    // The dry-run validates by simulating, which is an RPC call that amplifies
+    // load, so it gets its own (tighter) budget (#981).
+    limits.insert(
+        "/api/donations/validate".to_string(),
+        RateLimit::new(env_u64("VALIDATE_RATE_LIMIT_MAX", 5) as u32, window),
     );
     for route in ["/health", "/ready", "/metrics"] {
         limits.insert(
@@ -249,6 +255,176 @@ async fn submit_donation(
         donation_contract_id: state.donation_contract_id.clone(),
         network_passphrase: state.network_config.network_passphrase.clone(),
     }))
+}
+
+/// Maximum memo length, mirroring `shared::validation::MAX_MEMO_LEN`.
+const MAX_MEMO_LEN: usize = 256;
+
+/// Returned with every dry-run result: a simulation is a snapshot, not a
+/// guarantee.
+const SIMULATION_STALE_NOTE: &str =
+    "the simulation reflects the ledger at probe time; campaign state can change before submission";
+
+/// Result of a dry-run validation (#981).
+#[derive(Debug, Serialize)]
+pub struct ValidateDonationResponse {
+    pub valid: bool,
+    pub gas_consumed: Option<u64>,
+    pub contract_error: Option<String>,
+    /// Contract error code, when one can be extracted, so a client can branch
+    /// on the number rather than parsing prose.
+    pub error_code: Option<u32>,
+    pub reason: Option<String>,
+    pub note: &'static str,
+}
+
+impl ValidateDonationResponse {
+    fn rejected(reason: impl Into<String>) -> Self {
+        Self {
+            valid: false,
+            gas_consumed: None,
+            contract_error: None,
+            error_code: None,
+            reason: Some(reason.into()),
+            note: SIMULATION_STALE_NOTE,
+        }
+    }
+}
+
+/// Cheap local validation, run before spending a simulation round trip (#981).
+///
+/// Returns the reason for the first violation. Chain-side checks — does the
+/// campaign exist, is it past its deadline, is it already funded — are the
+/// simulation's job, not this function's.
+fn validate_donation_request(req: &SubmitDonationRequest) -> Result<(), String> {
+    if req.donor.trim().is_empty() {
+        return Err("donor must not be empty".to_string());
+    }
+    if !req.donor.starts_with('G') {
+        return Err("donor must be a G... stellar address".to_string());
+    }
+    if req.amount <= 0 {
+        return Err("amount must be positive".to_string());
+    }
+    if req.campaign_id == 0 {
+        return Err("campaign_id must be non-zero".to_string());
+    }
+    if let Some(memo) = &req.memo {
+        if memo.len() > MAX_MEMO_LEN {
+            return Err(format!("memo must be at most {} bytes", MAX_MEMO_LEN));
+        }
+    }
+    Ok(())
+}
+
+/// Best-effort extraction of a Soroban contract error code from a simulation
+/// error string. Soroban renders contract errors as e.g.
+/// `HostError: Error(Contract, #4)`; the first `#<digits>` is the code.
+fn extract_error_code(message: &str) -> Option<u32> {
+    let hash = message.find('#')?;
+    let digits: String = message[hash + 1..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    digits.parse().ok()
+}
+
+/// `minResourceFee` arrives as a decimal string from some nodes and as a number
+/// from others; accept both.
+fn min_resource_fee(cost: &serde_json::Value) -> Option<u64> {
+    let v = cost.get("minResourceFee")?;
+    v.as_u64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+}
+
+/// Turn a simulation outcome into a dry-run response.
+///
+/// Pure — no I/O — so the success, contract-error and RPC-failure paths are
+/// testable without a network round trip, and so the handler has exactly one
+/// place that decides `valid` (#981).
+fn interpret_simulation(outcome: Result<SimulationResult, String>) -> ValidateDonationResponse {
+    match outcome {
+        Ok(sim) => {
+            let gas_consumed = sim.cost.as_ref().and_then(min_resource_fee);
+            match sim.error {
+                Some(err) => ValidateDonationResponse {
+                    valid: false,
+                    gas_consumed,
+                    error_code: extract_error_code(&err),
+                    contract_error: Some(err),
+                    reason: Some("simulation reported a contract error".to_string()),
+                    note: SIMULATION_STALE_NOTE,
+                },
+                None => ValidateDonationResponse {
+                    valid: true,
+                    gas_consumed,
+                    contract_error: None,
+                    error_code: None,
+                    reason: None,
+                    note: SIMULATION_STALE_NOTE,
+                },
+            }
+        }
+        Err(message) => ValidateDonationResponse {
+            valid: false,
+            gas_consumed: None,
+            error_code: extract_error_code(&message),
+            contract_error: Some(message),
+            reason: Some("could not simulate; the RPC endpoint may be unavailable".to_string()),
+            note: SIMULATION_STALE_NOTE,
+        },
+    }
+}
+
+/// Dry-run a donation: validate and simulate, without submitting (#981).
+///
+/// This is additive; `/api/donations/submit` is unchanged. Submit returns a
+/// signed XDR for the client to broadcast; validate reports whether the call
+/// *would* succeed and, if not, the contract's own error, so the failure is
+/// free instead of a wasted on-chain transaction.
+///
+/// Simulation is a real RPC call, so this route has its own rate-limit budget
+/// and is never on the submit path. It builds the same XDR the submit path
+/// would, then calls the genuine `simulateTransaction` RPC — deliberately not
+/// the placeholder `TransactionSimulator`, which returns success unconditionally
+/// (see issue #795).
+async fn validate_donation(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SubmitDonationRequest>,
+) -> Result<Json<ValidateDonationResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // 1. Cheap rejections first — no round trip.
+    if let Err(reason) = validate_donation_request(&req) {
+        return Ok(Json(ValidateDonationResponse::rejected(reason)));
+    }
+
+    let params = DonationParams {
+        donor: req.donor,
+        campaign_id: req.campaign_id,
+        amount: req.amount,
+        token_address: req.token_address,
+        anonymous: req.anonymous.unwrap_or(false),
+        memo: req.memo,
+        donation_contract_id: state.donation_contract_id.clone(),
+    };
+    let network = state.network_config.clone();
+
+    // 2. Build the XDR the submit path would build, without returning it.
+    let xdr = match build_donate_transaction_full(&params, &network).await {
+        Ok(xdr) => xdr,
+        Err(e) => {
+            return Ok(Json(ValidateDonationResponse::rejected(format!(
+                "could not build the transaction: {e}"
+            ))));
+        }
+    };
+
+    // 3. Simulate against the real RPC path to learn the contract's error.
+    let rpc = SorobanRpcClient::new(&state.network_config.rpc_url);
+    let outcome = rpc
+        .simulate_transaction(&xdr)
+        .await
+        .map_err(|e| e.to_string());
+    Ok(Json(interpret_simulation(outcome)))
 }
 
 async fn get_donation(
@@ -415,6 +591,7 @@ async fn main() {
         .route("/ready", get(readiness))
         .route("/metrics", get(metrics_endpoint))
         .route("/api/donations/submit", post(submit_donation))
+        .route("/api/donations/validate", post(validate_donation))
         .route("/api/donations/{tx_hash}", get(get_donation))
         .layer(TimeoutLayer::new(request_timeout))
         .layer(middleware::from_fn_with_state(state.clone(), rate_limit))
@@ -439,4 +616,100 @@ async fn main() {
 
     shutdown_complete.store(true, Ordering::SeqCst);
     info!("StellarAid worker stopped");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req(
+        donor: &str,
+        campaign_id: u64,
+        amount: i128,
+        memo: Option<&str>,
+    ) -> SubmitDonationRequest {
+        SubmitDonationRequest {
+            donor: donor.to_string(),
+            campaign_id,
+            amount,
+            token_address: None,
+            anonymous: None,
+            memo: memo.map(|m| m.to_string()),
+        }
+    }
+
+    #[test]
+    fn local_validation_accepts_a_valid_request() {
+        assert!(validate_donation_request(&req("GABC123", 1, 100, Some("thanks"))).is_ok());
+    }
+
+    #[test]
+    fn local_validation_rejects_an_invalid_campaign_id() {
+        let err = validate_donation_request(&req("GABC123", 0, 100, None)).unwrap_err();
+        assert!(err.contains("campaign_id"));
+    }
+
+    #[test]
+    fn local_validation_rejects_a_zero_amount() {
+        let err = validate_donation_request(&req("GABC123", 1, 0, None)).unwrap_err();
+        assert!(err.contains("amount"));
+    }
+
+    #[test]
+    fn local_validation_rejects_an_empty_donor() {
+        assert!(validate_donation_request(&req("", 1, 100, None)).is_err());
+        assert!(validate_donation_request(&req("SABC123", 1, 100, None)).is_err());
+    }
+
+    #[test]
+    fn local_validation_rejects_an_over_long_memo() {
+        let long = "x".repeat(MAX_MEMO_LEN + 1);
+        assert!(validate_donation_request(&req("GABC123", 1, 100, Some(long.as_str()))).is_err());
+    }
+
+    #[test]
+    fn contract_error_codes_are_extractable() {
+        assert_eq!(extract_error_code("HostError: Error(Contract, #4)"), Some(4));
+        assert_eq!(extract_error_code("Error(Contract, #1042)"), Some(1042));
+        assert_eq!(extract_error_code("no numeric code"), None);
+    }
+
+    #[test]
+    fn simulation_success_reports_gas() {
+        let sim = SimulationResult {
+            cost: Some(serde_json::json!({ "minResourceFee": "12345" })),
+            results: None,
+            error: None,
+        };
+        let resp = interpret_simulation(Ok(sim));
+        assert!(resp.valid);
+        assert_eq!(resp.gas_consumed, Some(12345));
+        assert!(resp.contract_error.is_none());
+        assert!(resp.note.contains("stale") || resp.note.contains("probe time"));
+    }
+
+    #[test]
+    fn simulation_contract_error_reports_message_and_code() {
+        let sim = SimulationResult {
+            cost: Some(serde_json::json!({ "minResourceFee": 100 })),
+            results: None,
+            error: Some("HostError: Error(Contract, #7)".to_string()),
+        };
+        let resp = interpret_simulation(Ok(sim));
+        assert!(!resp.valid);
+        assert_eq!(resp.error_code, Some(7));
+        assert_eq!(
+            resp.contract_error.as_deref(),
+            Some("HostError: Error(Contract, #7)")
+        );
+        assert_eq!(resp.gas_consumed, Some(100));
+    }
+
+    #[test]
+    fn simulation_rpc_failure_is_reported_without_network() {
+        let resp = interpret_simulation(Err("connection refused".to_string()));
+        assert!(!resp.valid);
+        assert!(resp.error_code.is_none());
+        assert_eq!(resp.contract_error.as_deref(), Some("connection refused"));
+    }
 }

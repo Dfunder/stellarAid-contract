@@ -1,5 +1,8 @@
+use crate::errors::StellarAidError;
+use crate::health::{EndpointHealth, HEALTH_PROBE_TIMEOUT};
 use reqwest::Client;
 use serde::Deserialize;
+use std::time::Instant;
 use thiserror::Error;
 
 #[derive(Debug, Default)]
@@ -137,5 +140,57 @@ impl HorizonClient {
             return Err(HorizonError::Api(resp.text().await.unwrap_or_default()));
         }
         Ok(resp.json().await?)
+    }
+
+    /// Typed liveness probe (#980): hits Horizon's root endpoint.
+    ///
+    /// Returns `Ok(EndpointHealth)` when Horizon answers (with `healthy`
+    /// reflecting the status), `Err(BadRequest)` on a 4xx — almost always a
+    /// wrong URL — and `Err(EndpointUnreachable | RequestTimeout)` when it does
+    /// not answer within [`HEALTH_PROBE_TIMEOUT`]. Bounded by that short timeout
+    /// so a probe can never hang.
+    pub async fn health(&self) -> Result<EndpointHealth, StellarAidError> {
+        let url = format!("{}/", self.base_url.trim_end_matches('/'));
+        let started = Instant::now();
+        let probe = tokio::time::timeout(HEALTH_PROBE_TIMEOUT, self.client.get(&url).send()).await;
+        let elapsed = started.elapsed().as_millis();
+
+        match probe {
+            Err(_) => Err(StellarAidError::request_timeout(format!(
+                "Horizon health probe to {url} exceeded {HEALTH_PROBE_TIMEOUT:?}"
+            ))),
+            Ok(Err(e)) => Err(StellarAidError::from_reqwest(e)),
+            Ok(Ok(resp)) => {
+                let status = resp.status();
+                if status.is_success() {
+                    Ok(EndpointHealth::up(url, elapsed))
+                } else if status.is_client_error() {
+                    Err(StellarAidError::from_http_status(
+                        status.as_u16(),
+                        status.canonical_reason().unwrap_or("client error"),
+                    ))
+                } else {
+                    Ok(EndpointHealth::down(url, format!("HTTP {status}"), elapsed))
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn health_rejects_a_malformed_url_without_retrying() {
+        // A relative URL fails at request build; this must be a clear,
+        // non-retryable error rather than a hang.
+        let client = HorizonClient::new("not-a-valid-url");
+        let err = client.health().await.unwrap_err();
+        assert!(matches!(
+            err,
+            StellarAidError::BadRequest(_) | StellarAidError::EndpointUnreachable(_)
+        ));
+        assert!(!matches!(err, StellarAidError::RequestTimeout(_)));
     }
 }

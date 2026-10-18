@@ -52,7 +52,7 @@ min-compatible = "0.1.0"
 
 [workspace.dependencies]
 soroban-sdk = { version = "21.0.0" }
-stellar-strkey = "0.0.2"
+stellar-strkey = "0.0.8"
 stellar-xdr = "21.0.0"
 reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1", features = ["derive"] }

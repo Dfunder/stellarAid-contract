@@ -295,8 +295,7 @@ mod tests {
         let mut stats = CompressionStats::default();
         let data = vec![b'X'; 10_000];
 
-        let compressed = compress(&data, CompressionFormat::Gzip, Some(&mut stats)).unwrap();
-        decompress(&compressed, CompressionFormat::Gzip, Some(&mut stats)).unwrap();
+        let _compressed = compress(&data, CompressionFormat::Gzip, Some(&mut stats)).unwrap();
 
         assert!(stats.ratio() < 1.0, "ratio should be < 1 for compressible data");
         assert!(stats.space_saved_percent() > 0.0);

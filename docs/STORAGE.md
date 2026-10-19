@@ -11,7 +11,7 @@ Per-contract storage layout and TTL policy for every crate in the workspace.
 >   storage-layout observations behind it.
 > - **Interfaces, events and errors:** [CONTRACTS.md](./CONTRACTS.md).
 > - **Dependency supply chain:** §9 of this document.
-> - **Design rationale:** [ADR-0007](./ADRs/0007-storage-data-model-and-ttl-management.md).
+> - **Design rationale:** [ADR-0007 (0007-storage-data-model-and-ttl-management.md)](./ADRs/0007-storage-data-model-and-ttl-management.md).
 
 ## How to read this
 
@@ -375,7 +375,7 @@ No other ledger-denominated constants exist. `voting_period` and `timelock_ledge
 
 ### dispute_arbiter
 
-> "Dispute Arbiter Smart Contract — Autonomous arbitration and dispute settlement for StellarAid escrows. Architecture Decision: [ADR-0004](../../docs/ADRs/0004-dispute-resolution-and-arbitration.md)"
+> "Dispute Arbiter Smart Contract — Autonomous arbitration and dispute settlement for StellarAid escrows. Architecture Decision: [ADR-0004 (0004-dispute-resolution-and-arbitration.md)](../../docs/ADRs/0004-dispute-resolution-and-arbitration.md)"
 
 Source: `contracts/dispute_arbiter/`
 
@@ -666,7 +666,7 @@ The crate declares no ledger-denominated constant at all. The `3000` (30% max ro
 
 ### platform_config
 
-> "Platform Configuration Contract — Protocol-wide parameters, fee governance, and admin authority delegation. Architecture Decision: [ADR-0005](../../docs/ADRs/0005-platform-fee-and-revenue-distribution.md)" (`//!` doc comment, contracts/platform_config/src/lib.rs:1-4)
+> "Platform Configuration Contract — Protocol-wide parameters, fee governance, and admin authority delegation. Architecture Decision: [ADR-0005 (0005-platform-fee-and-revenue-distribution.md)](../../docs/ADRs/0005-platform-fee-and-revenue-distribution.md)" (`//!` doc comment, contracts/platform_config/src/lib.rs:1-4)
 
 Source: `contracts/platform_config/`
 

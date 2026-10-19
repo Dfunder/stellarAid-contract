@@ -108,8 +108,8 @@ enum yet or not:
 
 Both are raised **before** the state change they protect, so a rejected call
 leaves nothing behind. See
-[the balance module](../contracts/campaign/src/balance.rs) and
-[the sanitization module](../contracts/campaign/src/sanitize.rs).
+[the balance module (`balance.rs`)](../contracts/campaign/src/balance.rs) and
+[the sanitization module (`sanitize.rs`)](../contracts/campaign/src/sanitize.rs).
 
 ## New codes
 

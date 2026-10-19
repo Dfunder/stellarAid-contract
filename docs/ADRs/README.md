@@ -30,14 +30,14 @@ graph LR
 
 | ADR ID | Title | Status | Date | Component |
 |--------|-------|--------|------|-----------|
-| [ADR-0000](0000-template.md) | Standard Architecture Decision Record Template | Accepted | 2026-01-15 | All |
-| [ADR-0001](0001-soroban-smart-contract-platform.md) | Adoption of Stellar Soroban Rust Smart Contract Platform | Accepted | 2026-01-20 | Core / Platform |
-| [ADR-0002](0002-escrow-architecture-and-state-machine.md) | Escrow Contract State Machine and CEI Pattern | Accepted | 2026-02-01 | Escrow |
-| [ADR-0003](0003-commission-agreement-milestone-flow.md) | Multi-Milestone Commission Agreements and Concurrency Locks | Accepted | 2026-02-15 | Commission Agreement |
-| [ADR-0004](0004-dispute-resolution-and-arbitration.md) | Autonomous Dispute Arbiter & Cross-Contract Resolution | Accepted | 2026-03-01 | Dispute Arbiter |
-| [ADR-0005](0005-platform-fee-and-revenue-distribution.md) | Dynamic Platform Fee Governance and Multi-Party Splits | Accepted | 2026-03-10 | Platform Config / Revenue |
-| [ADR-0006](0006-event-driven-architecture.md) | Structured Event Emission for Off-Chain Indexing | Accepted | 2026-03-25 | All Contracts |
-| [ADR-0007](0007-storage-data-model-and-ttl-management.md) | Soroban Storage Tiering and TTL Extension Strategy | Accepted | 2026-04-05 | Storage / Lifecycle |
+| [ADR-0000 (`0000-template.md`)](0000-template.md) | Standard Architecture Decision Record Template | Accepted | 2026-01-15 | All |
+| [ADR-0001 (`0001-soroban-smart-contract-platform.md`)](0001-soroban-smart-contract-platform.md) | Adoption of Stellar Soroban Rust Smart Contract Platform | Accepted | 2026-01-20 | Core / Platform |
+| [ADR-0002 (`0002-escrow-architecture-and-state-machine.md`)](0002-escrow-architecture-and-state-machine.md) | Escrow Contract State Machine and CEI Pattern | Accepted | 2026-02-01 | Escrow |
+| [ADR-0003 (`0003-commission-agreement-milestone-flow.md`)](0003-commission-agreement-milestone-flow.md) | Multi-Milestone Commission Agreements and Concurrency Locks | Accepted | 2026-02-15 | Commission Agreement |
+| [ADR-0004 (`0004-dispute-resolution-and-arbitration.md`)](0004-dispute-resolution-and-arbitration.md) | Autonomous Dispute Arbiter & Cross-Contract Resolution | Accepted | 2026-03-01 | Dispute Arbiter |
+| [ADR-0005 (`0005-platform-fee-and-revenue-distribution.md`)](0005-platform-fee-and-revenue-distribution.md) | Dynamic Platform Fee Governance and Multi-Party Splits | Accepted | 2026-03-10 | Platform Config / Revenue |
+| [ADR-0006 (`0006-event-driven-architecture.md`)](0006-event-driven-architecture.md) | Structured Event Emission for Off-Chain Indexing | Accepted | 2026-03-25 | All Contracts |
+| [ADR-0007 (`0007-storage-data-model-and-ttl-management.md`)](0007-storage-data-model-and-ttl-management.md) | Soroban Storage Tiering and TTL Extension Strategy | Accepted | 2026-04-05 | Storage / Lifecycle |
 
 ---
 

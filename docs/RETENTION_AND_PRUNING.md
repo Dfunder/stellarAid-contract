@@ -3,7 +3,7 @@
 > Closes **#651** — add contract state pruning strategy.
 >
 > Related: [STORAGE.md](./STORAGE.md),
-> [ADR-0007](./ADRs/0007-storage-data-model-and-ttl-management.md),
+> [ADR-0007 (0007-storage-data-model-and-ttl-management.md)](./ADRs/0007-storage-data-model-and-ttl-management.md),
 > [QUERY_OPTIMIZATION.md](./QUERY_OPTIMIZATION.md),
 > [OPERATIONAL_RUNBOOK.md](./OPERATIONAL_RUNBOOK.md),
 > [EMERGENCY_PROCEDURES.md](./EMERGENCY_PROCEDURES.md).

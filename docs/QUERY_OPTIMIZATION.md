@@ -2,7 +2,7 @@
 
 > Closes **#650** — implement query optimization.
 >
-> Related: [STORAGE.md](./STORAGE.md), [ADR-0007](./ADRs/0007-storage-data-model-and-ttl-management.md), [RETENTION_AND_PRUNING.md](./RETENTION_AND_PRUNING.md).
+> Related: [STORAGE.md](./STORAGE.md), [ADR-0007 (0007-storage-data-model-and-ttl-management.md)](./ADRs/0007-storage-data-model-and-ttl-management.md), [RETENTION_AND_PRUNING.md](./RETENTION_AND_PRUNING.md).
 
 ---
 
@@ -146,7 +146,7 @@ benchmark.
   `temporary()` one. It is cleared on both the success and error paths, and a
   panic reverts the whole transaction, so it is correct — but `temporary()`
   storage would be the cheaper primitive for a mutex (see
-  [ADR-0007](./ADRs/0007-storage-data-model-and-ttl-management.md), which
+  [ADR-0007 (0007-storage-data-model-and-ttl-management.md)](./ADRs/0007-storage-data-model-and-ttl-management.md), which
   classes mutex locks as temporary). Worth revisiting; not changed here.
 - `extend_escrow_ttl` is called on write and on dispute, with the dispute TTL
   configurable. The retention behaviour is deliberate and is documented in
@@ -183,7 +183,7 @@ benchmark.
   contract entry point and cannot be added cheaply: it would need a second
   storage key per record, written and pruned in lockstep, doubling the write
   cost of the hottest money-moving path in the workspace. **If such a query is
-  needed, build it off-chain from events** ([ADR-0006](./ADRs/0006-event-driven-architecture.md)),
+  needed, build it off-chain from events** ([ADR-0006 (0006-event-driven-architecture.md)](./ADRs/0006-event-driven-architecture.md)),
   which is what the correlation events in
   [CONTRACTS.md](./CONTRACTS.md) are for.
 - Nothing in the workspace scans a persistent keyspace on-chain. That is a

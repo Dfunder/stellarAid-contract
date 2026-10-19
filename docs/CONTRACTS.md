@@ -819,7 +819,7 @@ Topics are listed as `[contract address, …]`, since the contract address is al
 
 ### dispute_arbiter
 
-> "Dispute Arbiter Smart Contract — Autonomous arbitration and dispute settlement for StellarAid escrows. Architecture Decision: [ADR-0004](../../docs/ADRs/0004-dispute-resolution-and-arbitration.md)"
+> "Dispute Arbiter Smart Contract — Autonomous arbitration and dispute settlement for StellarAid escrows. Architecture Decision: [ADR-0004 (0004-dispute-resolution-and-arbitration.md)](../../docs/ADRs/0004-dispute-resolution-and-arbitration.md)"
 
 Source: `contracts/dispute_arbiter/`
 
@@ -1487,7 +1487,7 @@ Each shape is emitted from exactly one site; there are no repeats. This crate pu
 
 ### platform_config
 
-> "Platform Configuration Contract — Protocol-wide parameters, fee governance, and admin authority delegation. Architecture Decision: [ADR-0005](../../docs/ADRs/0005-platform-fee-and-revenue-distribution.md)" (`//!` doc comment, contracts/platform_config/src/lib.rs:1-4)
+> "Platform Configuration Contract — Protocol-wide parameters, fee governance, and admin authority delegation. Architecture Decision: [ADR-0005 (0005-platform-fee-and-revenue-distribution.md)](../../docs/ADRs/0005-platform-fee-and-revenue-distribution.md)" (`//!` doc comment, contracts/platform_config/src/lib.rs:1-4)
 
 Source: `contracts/platform_config/`
 

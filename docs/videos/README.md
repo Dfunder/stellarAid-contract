@@ -10,9 +10,9 @@ These walkthroughs provide in-depth code reviews, architecture diagrams, runtime
 
 | Episode | Title | Target Contract | Duration | Focus Area | Companion Guide |
 |---------|-------|-----------------|----------|------------|-----------------|
-| **01** | **Escrow Contract & CEI Pattern** | `contracts/escrow` | 18:45 | Locking, Payouts, Refunds, Mutex Guards | [View Guide](escrow-contract-walkthrough.md) |
-| **02** | **Commission Lifecycle & Milestones** | `contracts/commission_agreement` | 21:30 | Multi-Milestone State Machine, Agency Roster, Pro-rata Payouts | [View Guide](commission-flow-walkthrough.md) |
-| **03** | **Dispute Resolution & Auto-Arbitration** | `contracts/dispute_arbiter` | 16:15 | Cross-Contract Calls, Timelock Fallback, Split Calculations | [View Guide](dispute-resolution-walkthrough.md) |
+| **01** | **Escrow Contract & CEI Pattern** | `contracts/escrow` | 18:45 | Locking, Payouts, Refunds, Mutex Guards | [`escrow-contract-walkthrough.md`](escrow-contract-walkthrough.md) |
+| **02** | **Commission Lifecycle & Milestones** | `contracts/commission_agreement` | 21:30 | Multi-Milestone State Machine, Agency Roster, Pro-rata Payouts | [`commission-flow-walkthrough.md`](commission-flow-walkthrough.md) |
+| **03** | **Dispute Resolution & Auto-Arbitration** | `contracts/dispute_arbiter` | 16:15 | Cross-Contract Calls, Timelock Fallback, Split Calculations | [`dispute-resolution-walkthrough.md`](dispute-resolution-walkthrough.md) |
 
 ---
 

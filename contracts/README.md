@@ -10,7 +10,7 @@
 
 ## Versioning
 
-All crates follow semantic versioning. Query a live contract with `get_version` / `get_version_metadata`. See [../docs/VERSIONING.md](../docs/VERSIONING.md).
+All crates follow semantic versioning. Query a live contract with `get_version` / `get_version_metadata`. See [the contract versioning guide (VERSIONING.md)](../docs/VERSIONING.md).
 
 ## Architecture
 
@@ -46,7 +46,7 @@ cargo test
 
 ## Deploy
 
-See [../scripts/deploy_testnet.sh](../scripts/deploy_testnet.sh)
+See [the testnet deployment script (deploy_testnet.sh)](../scripts/deploy_testnet.sh)
 
 ## Contract Addresses (Testnet)
 

@@ -96,7 +96,7 @@ Key metrics to monitor:
 ### Maintenance windows
 
 Planned pauses and upgrades run inside the windows defined in
-[docs/MAINTENANCE_WINDOWS.md](../docs/MAINTENANCE_WINDOWS.md) (Tuesday /
+[the maintenance windows guide (MAINTENANCE_WINDOWS.md)](../docs/MAINTENANCE_WINDOWS.md) (Tuesday /
 Thursday 02:00–04:00 UTC, plus emergency). Follow that document for pause
 order, state backup, upgrade timeline, and communication templates.
 

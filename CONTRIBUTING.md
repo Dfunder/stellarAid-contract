@@ -2,7 +2,7 @@
 
 ## Dev Environment Setup
 
-1. Install Rust: https://rustup.rs
+1. Install Rust: [rustup, the Rust toolchain installer](https://rustup.rs)
 2. Add Wasm target:
    ```bash
    rustup target add wasm32-unknown-unknown
@@ -156,5 +156,5 @@ the output.
 
 ## Resources
 
-- [Soroban Documentation](https://developers.stellar.org/docs/smart-contracts)
-- [Soroban SDK](https://docs.rs/soroban-sdk)
+- [Stellar smart contracts documentation (Soroban)](https://developers.stellar.org/docs/smart-contracts)
+- [soroban-sdk Rust crate API reference (docs.rs)](https://docs.rs/soroban-sdk)

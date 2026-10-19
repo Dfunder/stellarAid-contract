@@ -9,7 +9,7 @@
 
 ## Video Chapter Timestamps
 
-```
+```text
 00:00 - Dispute Resolution Architecture Overview
 02:30 - Opening Disputes from Client or Artist
 05:15 - Full Client Win vs Full Artist Win Settlements

@@ -28,7 +28,7 @@ any caller (escrow, subscriptions, etc.) can derive the exact same numbers.
 
 ### Resolution order
 
-```
+```text
 tier_rate   = tier_fee(volume)                      // highest tier with min_volume <= volume
 promo_rate  = promotion active ? promotion.fee_bps  : None
 candidate   = promo_rate.unwrap_or(tier_rate)
@@ -61,7 +61,7 @@ effective   = clamp(candidate, min_fee_bps, max_fee_bps)
 (`bps`, capped at 10_000). When no referral config exists, the whole fee is
 platform fee:
 
-```
+```text
 referral_fee = referral_config ? fee * referral_config.bps / 10_000 : 0
 platform_fee = fee - referral_fee
 ```

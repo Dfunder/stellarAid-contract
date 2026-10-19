@@ -53,7 +53,7 @@ address.
 
 Set `LOG_LEVEL` to control verbosity:
 
-```
+```bash
 LOG_LEVEL=debug   # Detailed operational logs
 LOG_LEVEL=info    # Normal operations (default)
 LOG_LEVEL=warn    # Warnings and errors only

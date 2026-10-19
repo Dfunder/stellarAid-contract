@@ -9,7 +9,7 @@
 
 ## Video Chapter Timestamps
 
-```
+```text
 00:00 - Introduction & Contract Overview
 02:15 - Storage Layout & DataKey Hierarchy
 05:30 - create_escrow & Initial State Validation

@@ -147,6 +147,21 @@ the output.
 - Use conventional commit messages: `feat:`, `fix:`, `chore:`, `docs:`, `test:`
 - One issue per PR — never combine multiple issues
 
+## Documentation Standards
+
+To maintain consistent navigation and screen reader accessibility across the repository:
+
+- **Heading Hierarchy:**
+  - Exactly one `h1` (`#`) per markdown document (the document title).
+  - `h2` (`##`) for top-level sections.
+  - `h3` (`###`) for subsections.
+  - `h4` (`####`) only where genuinely needed.
+  - Never skip heading levels (e.g., do not jump from `h1` to `h3` without an intermediate `h2`).
+- **Code Block Annotations:**
+  - Every fenced code block must declare its language tag for syntax highlighting and screen reader accessibility (e.g., `rust`, `bash`, `json`, `toml`, `ts`, `sql`).
+  - Terminal transcripts, command output, ASCII diagrams, file trees, and plain text blocks must be tagged `text`.
+  - Illustrative Rust blocks in doc comments that are not intended to run as doctests must be annotated with `ignore` or `no_run`.
+
 ## Security Checklist
 
 - Never commit private keys or secret values

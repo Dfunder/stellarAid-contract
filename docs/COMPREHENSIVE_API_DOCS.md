@@ -61,8 +61,8 @@ contracts/
 └── mentorship/           # Mentorship program contract  (NEW — #613)
 ```
 
-See [docs/architecture.md](./architecture.md) and the individual ADRs under
-[docs/ADRs/](./ADRs/) for design rationale.
+See [the architecture guide (architecture.md)](./architecture.md) and the individual ADRs under
+[the Architecture Decision Records index (docs/ADRs/)](./ADRs/) for design rationale.
 
 ---
 
@@ -93,7 +93,7 @@ cargo test --workspace
 ./scripts/deploy_testnet.sh
 ```
 
-See [docs/DEPLOY.md](./DEPLOY.md) for full deployment instructions.
+See [the deployment runbook (DEPLOY.md)](./DEPLOY.md) for full deployment instructions.
 
 ---
 
@@ -522,7 +522,7 @@ pub struct FeeBreakdown {
 | 10 | `AlreadyReviewed` | reputation | Reviewer already submitted | One review per commission |
 | 11 | `InvalidRating` | reputation | Rating outside 1–5 | Pass a value between 1 and 5 |
 
-Full error code documentation: [docs/error_codes.md](./error_codes.md).
+Full error code documentation: [the error codes reference (error_codes.md)](./error_codes.md).
 
 ---
 
@@ -631,7 +631,7 @@ The `rating` parameter must be an integer between 1 and 5 inclusive.
 ### Contract paused
 
 If a contract is in the paused state, all mutating transactions will fail.
-Only the admin may call `unpause`.  See [docs/PAUSE_AND_EMERGENCY.md](./PAUSE_AND_EMERGENCY.md).
+Only the admin may call `unpause`.  See [the pause and emergency runbook (PAUSE_AND_EMERGENCY.md)](./PAUSE_AND_EMERGENCY.md).
 
 ---
 
@@ -643,4 +643,4 @@ Only the admin may call `unpause`.  See [docs/PAUSE_AND_EMERGENCY.md](./PAUSE_AN
 - Usage and certification events are immutable once emitted; build audit
   pipelines on top of event streams.
 - For the full threat model and audit checklist see
-  [docs/SECURITY_REVIEW_CHECKLIST.md](./SECURITY_REVIEW_CHECKLIST.md).
+  [the security review checklist (SECURITY_REVIEW_CHECKLIST.md)](./SECURITY_REVIEW_CHECKLIST.md).

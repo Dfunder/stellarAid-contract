@@ -9,12 +9,12 @@ Before you begin, ensure you have the following software installed on your syste
 ### Required Software
 | Software | Version | Description | Installation Link |
 |----------|---------|-------------|-------------------|
-| Rust | 1.75+ | Primary language for smart contract development | https://www.rust-lang.org/tools/install |
-| Soroban CLI | Latest | Stellar's smart contract development toolkit | https://developers.stellar.org/docs/build/sdks-and-tools/soroban-cli |
-| Node.js | 18.x+ | For TypeScript SDK and frontend development | https://nodejs.org/ |
-| Git | 2.40+ | Version control | https://git-scm.com/downloads |
-| Docker | 24.x+ | For local testing and containerized services | https://www.docker.com/get-started/ |
-| VS Code | Latest | Recommended IDE with Rust/Soroban extensions | https://code.visualstudio.com/ |
+| Rust | 1.75+ | Primary language for smart contract development | [Rust installation guide](https://www.rust-lang.org/tools/install) |
+| Soroban CLI | Latest | Stellar's smart contract development toolkit | [Soroban CLI setup guide](https://developers.stellar.org/docs/build/sdks-and-tools/soroban-cli) |
+| Node.js | 18.x+ | For TypeScript SDK and frontend development | [Node.js download page](https://nodejs.org/) |
+| Git | 2.40+ | Version control | [Git download page](https://git-scm.com/downloads) |
+| Docker | 24.x+ | For local testing and containerized services | [Docker get started guide](https://www.docker.com/get-started/) |
+| VS Code | Latest | Recommended IDE with Rust/Soroban extensions | [Visual Studio Code download](https://code.visualstudio.com/) |
 
 ### System Requirements
 - **Operating System**: Windows 10+, macOS 13+, or Linux (Ubuntu 20.04+)
@@ -255,6 +255,6 @@ If you encounter issues not listed here:
 ## Additional Resources
 
 - [Stellar Developer Documentation](https://developers.stellar.org/)
-- [Soroban Documentation](https://developers.stellar.org/docs/build/smart-contracts/overview)
-- [StellarAid Architecture Guide](architecture.md)
-- [Deployment Configuration Guide](DEPLOYMENT_CONFIGURATION.md)
+- [Soroban smart contracts overview](https://developers.stellar.org/docs/build/smart-contracts/overview)
+- [StellarAid Architecture Guide (architecture.md)](architecture.md)
+- [Deployment Configuration Guide (DEPLOYMENT_CONFIGURATION.md)](DEPLOYMENT_CONFIGURATION.md)

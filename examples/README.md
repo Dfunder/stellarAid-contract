@@ -17,12 +17,12 @@ cargo run --bin read_health
 
 | Binary | Demonstrates |
 |---|---|
-| [`deploy_contract`](src/bin/deploy_contract.rs) | Deploying a contract — building a `CreateContract` host function, simulating the deployment, and validating the WASM is accepted. |
-| [`invoke_function`](src/bin/invoke_function.rs) | Invoking any function — generic `InvokeHostFunction` construction with typed `ScVal` arguments (`address:`, `u64:`, `i128:`, `symbol:`, `string:`). |
-| [`campaign_donation`](src/bin/campaign_donation.rs) | Using the SDK's own donation builder (`sdk::transaction_builder`) — the exact code path the worker uses. |
-| [`token_transfer`](src/bin/token_transfer.rs) | Building Stellar Asset Contract calls (`transfer`/`balanceOf`) with correct `i128` amount and `Address` encoding. |
-| [`listen_for_events`](src/bin/listen_for_events.rs) | Listening for events — polling `getTransactionStatus` to terminal state, the pattern the worker uses instead of long-lived subscriptions. |
-| [`read_health`](src/bin/read_health.rs) | Read-only access — RPC health and Horizon account sequencing with no signing. |
+| [`deploy_contract.rs`](src/bin/deploy_contract.rs) | Deploying a contract — building a `CreateContract` host function, simulating the deployment, and validating the WASM is accepted. |
+| [`invoke_function.rs`](src/bin/invoke_function.rs) | Invoking any function — generic `InvokeHostFunction` construction with typed `ScVal` arguments (`address:`, `u64:`, `i128:`, `symbol:`, `string:`). |
+| [`campaign_donation.rs`](src/bin/campaign_donation.rs) | Using the SDK's own donation builder (`sdk::transaction_builder`) — the exact code path the worker uses. |
+| [`token_transfer.rs`](src/bin/token_transfer.rs) | Building Stellar Asset Contract calls (`transfer`/`balanceOf`) with correct `i128` amount and `Address` encoding. |
+| [`listen_for_events.rs`](src/bin/listen_for_events.rs) | Listening for events — polling `getTransactionStatus` to terminal state, the pattern the worker uses instead of long-lived subscriptions. |
+| [`read_health.rs`](src/bin/read_health.rs) | Read-only access — RPC health and Horizon account sequencing with no signing. |
 
 ## Requirements
 

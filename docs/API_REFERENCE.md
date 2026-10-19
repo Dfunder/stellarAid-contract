@@ -2,7 +2,7 @@
 
 Reference for the public Soroban entry points in the workspace contracts, plus
 the shared helper modules. Error codes and canonical suggestions for every
-value are in [docs/error_codes.md](./error_codes.md).
+value are in [the error codes reference (error_codes.md)](./error_codes.md).
 
 Conventions:
 
@@ -43,7 +43,7 @@ Conventions:
 | `get_idempotency_record(admin, caller, key)` | `Option<IdempotencyRecord>` | |
 | `extend_idempotency_ttl(admin, caller, key, ledgers)` | `Result<(), EscrowError>` | |
 
-Semantics in [docs/IDEMPOTENCY.md](./IDEMPOTENCY.md).
+Semantics in [the idempotency specification (IDEMPOTENCY.md)](./IDEMPOTENCY.md).
 
 ### Timeouts (closes #665)
 
@@ -60,7 +60,7 @@ Semantics in [docs/IDEMPOTENCY.md](./IDEMPOTENCY.md).
 
 `TimeoutPolicy { timeout_ledgers, max_attempts }`, `CallAttempt { started_ledger,
 deadline_ledger, attempts, retry_after_ledger }`. Full semantics in
-[docs/TIMEOUT_POLICY.md](./TIMEOUT_POLICY.md).
+[the timeout policy guide (TIMEOUT_POLICY.md)](./TIMEOUT_POLICY.md).
 
 ### Admin / lifecycle / ops
 
@@ -70,8 +70,8 @@ deadline_ledger, attempts, retry_after_ledger }`. Full semantics in
 `route_to_canary`, `set_rollback_trigger`, `trigger_rollback`,
 `should_rollback`, `get_rollout_state`; `health_check`,
 `get_health_metrics`, `get_sla_targets`, `detect_anomaly`, `report_ok`,
-`report_error`. See [docs/PAUSE_AND_EMERGENCY.md](./PAUSE_AND_EMERGENCY.md),
-[docs/UPGRADE.md](./UPGRADE.md), [docs/SLA.md](./SLA.md).
+`report_error`. See [the pause and emergency runbook (PAUSE_AND_EMERGENCY.md)](./PAUSE_AND_EMERGENCY.md),
+[the upgrade procedures (UPGRADE.md)](./UPGRADE.md), [the SLA definitions (SLA.md)](./SLA.md).
 
 ## contracts/platform_config
 
@@ -93,7 +93,7 @@ deadline_ledger, attempts, retry_after_ledger }`. Full semantics in
 | `is_promotion_active()` | `bool` |
 
 `Error` codes: `InvalidTier=6`, `InvalidPromotion=7`, `InvalidReferralBps=8`,
-`PromotionNotActive=9`. Fee math details in [docs/FEES.md](./FEES.md).
+`PromotionNotActive=9`. Fee math details in [the fee calculation documentation (FEES.md)](./FEES.md).
 
 ### Token metadata / admin
 
@@ -204,6 +204,6 @@ Run the crate doc-tests for interactive copies: `cargo test --doc -p shared`.
 ## Error codes
 
 Numeric code → cause → suggestion handle mapping is defined once in
-`contracts/*/src/errors.rs` and documented in [docs/error_codes.md](./error_codes.md).
+`contracts/*/src/errors.rs` and documented in [the error codes reference (error_codes.md)](./error_codes.md).
 Every contract exposes `get_suggestion(code)` and a unit test asserting each
 code's Display + suggestion.

@@ -4,7 +4,7 @@
 
 Do **not** include secret keys, unreleased WASM hashes that embed secrets, or individual user balances. Post to the status page, Discord `#status`, and email `ops@` / `users@` as applicable.
 
-Run these inside a [maintenance window](./MAINTENANCE_WINDOWS.md).
+Run these inside a [maintenance window (MAINTENANCE_WINDOWS.md)](./MAINTENANCE_WINDOWS.md).
 
 ## Scheduled maintenance (T–72h / T–48h / T–24h)
 

@@ -21,4 +21,4 @@ cargo run --bin worker -- setup-token
 
 - Asset Code: `AID`
 - Network: Testnet (default), Mainnet
-- Horizon: https://horizon-testnet.stellar.org
+- Horizon: [Stellar Testnet Horizon API (`https://horizon-testnet.stellar.org`)](https://horizon-testnet.stellar.org)

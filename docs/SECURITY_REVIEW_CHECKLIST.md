@@ -162,8 +162,8 @@ The following items must be complete before engaging an external auditor:
 - [x] This checklist reviewed and signed off by the team lead
 - [x] Dependency tree audited with `cargo audit` — no critical CVEs
 - [x] Deployment scripts reviewed for secret exposure
-- [x] Architecture diagrams up to date ([docs/architecture.md](./architecture.md))
-- [x] ADRs written for non-obvious design decisions ([docs/ADRs/](./ADRs/))
+- [x] Architecture diagrams up to date ([the architecture guide (architecture.md)](./architecture.md))
+- [x] ADRs written for non-obvious design decisions ([the Architecture Decision Records index (docs/ADRs/)](./ADRs/))
 - [ ] Formal verification scope agreed with auditor (in progress)
 - [ ] Bug-bounty programme scope defined (planned for Phase 2)
 

@@ -1336,7 +1336,7 @@ crates.io index, not the advisory database.
 
 #### Current state
 
-```
+```text
 $ make deny
 advisories ok, bans ok, licenses ok, sources ok
 

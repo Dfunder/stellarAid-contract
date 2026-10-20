@@ -45,7 +45,7 @@ of any assumption may invalidate one or more mitigations.
 
 ### 3.1 Attack Surface
 
-```
+```text
 External Users  →  Soroban RPC  →  Contract Entry Points
                                          │
                                     Storage Layer

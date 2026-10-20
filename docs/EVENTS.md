@@ -43,7 +43,7 @@ env.events().publish(topics_tuple, payload_tuple);
 
 StellarAid enforces a **standardized two-topic tuple hierarchy**:
 
-```
+```text
 topics: ( Symbol("<contract_domain>"), Symbol("<action_name>") )
 ```
 
@@ -56,7 +56,7 @@ across contracts (e.g. a `create_escrow` that mirrors a commission agreement)
 carry a third reserved topic `Symbol("corr")` plus the derived 32-byte
 `CorrelationId` in the payload. Consumers place them under the same "corr" group;
 
-```
+```text
 topics: ( Symbol("<contract_domain>"), Symbol("<action_name>"), Symbol("corr") )
 payload: ( ..., correlation_id: BytesN<32> )
 ```

@@ -10,7 +10,7 @@ Run these inside a [maintenance window (MAINTENANCE_WINDOWS.md)](./MAINTENANCE_W
 
 **Subject:** Lumora scheduled maintenance — [DATE] [START]–[END] UTC
 
-```
+```text
 We will perform planned maintenance on Stellar [testnet|mainnet] contracts.
 
 When: [DAY], [DATE] [START]–[END] UTC ([local conversion])
@@ -26,7 +26,7 @@ Contact: [on-call rotation / Discord]
 
 **Subject:** Lumora maintenance started — [DATE]
 
-```
+```text
 Maintenance has started at [HH:MM] UTC.
 Contracts [list] are paused. Do not submit state-changing transactions.
 We will post again when operations resume, or at [HH:MM] UTC if the window is extended.
@@ -36,7 +36,7 @@ We will post again when operations resume, or at [HH:MM] UTC if the window is ex
 
 **Subject:** [EMERGENCY] Lumora contracts paused
 
-```
+```text
 We paused [contract list] at [HH:MM] UTC after detecting [one-line symptom, no exploit details].
 Funds in existing escrows/campaigns remain in contract storage; token accounts are not frozen.
 Do not send further [donations|escrow deposits] until we unpause.
@@ -48,7 +48,7 @@ Incident lead: [name]
 
 **Subject:** Lumora maintenance complete — [contract] [new semver]
 
-```
+```text
 Maintenance finished at [HH:MM] UTC.
 [contract] is live at version [new semver] (storage schema [n]).
 Contract ID: [unchanged | new ID …]
@@ -60,7 +60,7 @@ Hypercare: we will watch success rate for 24 hours. Report issues to [channel].
 
 **Subject:** Lumora rollback — traffic restored to [old semver]
 
-```
+```text
 The [new semver] deployment did not pass smoke checks. Traffic is back on
 [old contract ID] at [old semver]. The new ID is paused and will not receive funds.
 User action: none if you use our hosted API; self-hosted indexers should pin [old ID].
@@ -69,7 +69,7 @@ We will share a follow-up after the post-incident review.
 
 ## Window cancelled / postponed
 
-```
+```text
 The [DATE] UTC maintenance window for [contracts] is cancelled / moved to [new DATE].
 Reason: [weathered incident / failed testnet rehearsal / …].
 No pause will occur on the original date.
@@ -77,7 +77,7 @@ No pause will occur on the original date.
 
 ## Internal war-room checklist
 
-```
+```text
 - [ ] Window type: scheduled / emergency
 - [ ] Backup path: backups/[timestamp]
 - [ ] Pause order completed at:

@@ -50,7 +50,7 @@ network.  All contracts follow a common set of conventions:
 
 ## Architecture
 
-```
+```text
 contracts/
 ├── escrow/               # Core payment escrow
 ├── commission_agreement/ # Milestone-based commission workflow

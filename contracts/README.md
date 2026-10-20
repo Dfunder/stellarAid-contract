@@ -14,7 +14,7 @@ All crates follow semantic versioning. Query a live contract with `get_version` 
 
 ## Architecture
 
-```
+```text
 Client
   |
   v

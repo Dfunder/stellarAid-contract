@@ -79,7 +79,7 @@ Use these settings for Stellar mainnet deployments:
 
 The `scripts/deploy.sh` script supports all networks with these flags:
 
-```
+```text
 --dry-run          Validate configuration without deploying
 --wasm <path>      Path to a specific contract WASM file
 --admin <address>  Override configured admin address

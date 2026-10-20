@@ -87,7 +87,7 @@ It is documented last because 23 of the 24 members depend on it.
 
 ## Architecture
 
-```
+```text
                     ┌──────────────┐
                     │ platform_config │  feature flags, fee bps, token ids
                     └───────┬──────┘

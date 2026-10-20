@@ -9,7 +9,7 @@
 
 ## Video Chapter Timestamps
 
-```
+```text
 00:00 - Introduction to Multi-Milestone Agreements
 03:10 - Agreement Lifecycle: create_agreement, accept, & reject
 07:45 - Milestone Proposal & Budget Invariant Verification

@@ -162,25 +162,25 @@ HEADER
 
 ### Configuration Loading
 
-\`\`\`
+\`\`\`text
 $CONFIG_OUTPUT
 \`\`\`
 
 ### Contract Function Availability
 
-\`\`\`
+\`\`\`text
 $CONTRACT_OUTPUT
 \`\`\`
 
 ### Basic Operations
 
-\`\`\`
+\`\`\`text
 $OPERATIONS_OUTPUT
 \`\`\`
 
 ### Cross-Contract Calls
 
-\`\`\`
+\`\`\`text
 $CROSS_OUTPUT
 \`\`\`
 

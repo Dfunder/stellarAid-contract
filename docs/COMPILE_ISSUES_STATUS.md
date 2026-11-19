@@ -21,3 +21,14 @@ current repository checkout.
 - Action: documented current state for traceability; when/if the crate is
   present, ensure cargo check -p campaign parses/builds cleanly and preserves
   intended inalize_withdrawal behavior.
+
+## #914 commission_agreement duplicate re-imports
+
+- Referenced path: contracts/commission_agreement/src/lib.rs
+- Current state: contracts/commission_agreement/ is not present on disk in this
+  checkout, so the reported duplicate re-import errors (e.g. AgreementRecord,
+  AgreementStatus, DataKey, MilestoneRecord) are not reproducible against
+  current sources.
+- Action: documented current state for traceability; when/if the crate is
+  present, ensure imports are explicit and cargo check -p commission_agreement
+  passes without duplicate-import errors.

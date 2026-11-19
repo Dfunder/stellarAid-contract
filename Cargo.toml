@@ -38,6 +38,16 @@ resolver = "2"
 # are not workspace members (unaudited and not registered), so they are not
 # built by `cargo build --workspace` and are excluded until separately audited
 # and registered.
+#
+# NOTE (#923): `worker/` and `multi_wallet_session/` are not present in this
+# checkout and are not workspace members. They are not compiled by workspace
+# checks/CI here. If added, register them as workspace members (or cover them
+# with a dedicated CI job) and document the decision explicitly.
+#
+# NOTE (#924): `tests/wallet_integration/` is not present in this checkout and
+# is not a workspace member. It is not run by `cargo test --workspace`. If
+# added, register it as a workspace member, keep network-dependent tests
+# `#[ignore]`d by default with opt-in docs, and ensure clippy passes.
 
 [workspace.package]
 version = "0.1.0"

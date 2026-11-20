@@ -30,12 +30,12 @@
 | `scripts/deploy/deploy_mainnet.sh` | Mainnet wrapper, pins `--network mainnet` + approval gate |
 | `scripts/deploy/verify_deploy.sh` | Post-deploy smoke test (read-only, no key needed) |
 
-The pre-existing `scripts/deploy.sh` and `scripts/verify_deployment.sh` at the
-repository root are **unchanged** and still work. The Makefile's `deploy-testnet`
-and `validate*` targets point at them. The new `scripts/deploy/` tree exists so
-that the credential handling, the approval gate and the checklist live in one
-reviewable place; the two trees intentionally overlap and the old one has not
-been migrated.
+There is exactly **one** testnet entry point: `scripts/deploy/deploy_testnet.sh`.
+`make deploy-testnet` calls it, and it delegates to `scripts/deploy/deploy.sh`.
+The old root-level `scripts/deploy_testnet.sh` was removed (closes #1090): it
+generated a new keypair on every run, deployed only two contracts and wrote an
+untracked `.env.contracts`. That filename is now gitignored, and no document or
+Makefile target refers to the removed script.
 
 ---
 

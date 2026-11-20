@@ -68,10 +68,9 @@ mod test;
 
 use errors::MultiSigError;
 use types::{
-    DataKey, MultiSigConfig, Proposal, ProposalStatus, MAX_EXPIRY_LEDGERS, MAX_SIGNERS, MIN_THRESHOLD,
+    DataKey, MultiSigConfig, Proposal, ProposalStatus, MAX_EXPIRY_LEDGERS, MAX_SIGNERS,
+    MIN_THRESHOLD,
 };
-
-include!("../../semver_types.rs");
 
 /// Retention for collected signatures and their proposal markers: ~90 days at
 /// 6 s/ledger, matching `contracts/analytics`. A proposal that is neither
@@ -98,7 +97,11 @@ fn load_config(env: &Env) -> Result<MultiSigConfig, MultiSigError> {
 /// This runs at configuration time so a misconfiguration is a rejected
 /// transaction rather than a contract that is permanently unable to authorise
 /// anything.
-fn validate_config(signers: &Vec<Address>, threshold: u32, expiry_ledgers: u32) -> Result<(), MultiSigError> {
+fn validate_config(
+    signers: &Vec<Address>,
+    threshold: u32,
+    expiry_ledgers: u32,
+) -> Result<(), MultiSigError> {
     if signers.is_empty() || signers.len() > MAX_SIGNERS {
         return Err(MultiSigError::InvalidSigners);
     }
@@ -160,7 +163,6 @@ fn map_admin_error(err: shared::admin::AdminError) -> MultiSigError {
     }
 }
 
-
 fn check_expiry(proposal: &Proposal, now: u32) -> Result<(), MultiSigError> {
     if now >= proposal.expires_ledger {
         Err(MultiSigError::ProposalExpired)
@@ -179,11 +181,28 @@ impl MultiSigContract {
             return Err(MultiSigError::AlreadyInitialized);
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
+        shared::version::seed(&env, env!("CARGO_PKG_VERSION"));
         env.events().publish((symbol_short!("ms_init"),), admin);
         Ok(())
     }
 
-    impl_semver_queries!();
+    pub fn get_version(env: Env) -> shared::upgrade::ContractVersion {
+        shared::version::query(&env, env!("CARGO_PKG_VERSION"))
+    }
+
+    pub fn get_version_metadata(env: Env) -> shared::version::VersionMetadata {
+        shared::version::query_metadata(&env, env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+    }
+
+    pub fn is_version_compatible(env: Env, major: u32, minor: u32, patch: u32) -> bool {
+        shared::version::query(&env, env!("CARGO_PKG_VERSION")).is_compatible_with(
+            &shared::upgrade::ContractVersion {
+                major,
+                minor,
+                patch,
+            },
+        )
+    }
 
     /// Replace the signer set, threshold, and signature lifetime.
     ///
@@ -262,7 +281,9 @@ impl MultiSigContract {
             .instance()
             .get(&DataKey::ProposalCount)
             .unwrap_or(0u32);
-        env.storage().instance().set(&DataKey::ProposalCount, &(count + 1));
+        env.storage()
+            .instance()
+            .set(&DataKey::ProposalCount, &(count + 1));
 
         env.events().publish(
             (symbol_short!("ms_prop"),),
@@ -300,11 +321,9 @@ impl MultiSigContract {
         }
 
         env.storage().persistent().set(&key, &now);
-        env.storage().persistent().extend_ttl(
-            &key,
-            MULTISIG_TTL_LEDGERS,
-            MULTISIG_TTL_LEDGERS,
-        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, MULTISIG_TTL_LEDGERS, MULTISIG_TTL_LEDGERS);
         proposal.signature_count = proposal
             .signature_count
             .checked_add(1)
@@ -313,7 +332,12 @@ impl MultiSigContract {
 
         env.events().publish(
             (symbol_short!("ms_appr"),),
-            (proposal_id, signer, proposal.signature_count, config.threshold),
+            (
+                proposal_id,
+                signer,
+                proposal.signature_count,
+                config.threshold,
+            ),
         );
         Ok(proposal)
     }
@@ -475,7 +499,11 @@ impl MultiSigContract {
     // does not change who may sign proposals.
 
     /// Step 1 — the current admin proposes `new_admin` as its successor.
-    pub fn transfer_admin(env: Env, admin: Address, new_admin: Address) -> Result<(), MultiSigError> {
+    pub fn transfer_admin(
+        env: Env,
+        admin: Address,
+        new_admin: Address,
+    ) -> Result<(), MultiSigError> {
         let stored: Address = env
             .storage()
             .instance()
@@ -575,7 +603,13 @@ impl MultiSigContract {
     pub fn get_flag_cap(env: Env) -> u32 {
         shared::rollout::flag_cap(&env)
     }
-    pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
+    pub fn set_canary_deployment(
+        env: Env,
+        admin: Address,
+        canary: Address,
+        stable: Address,
+        canary_bps: u32,
+    ) {
         admin.require_auth();
         shared::rollout::set_canary_deployment(&env, canary, stable, canary_bps);
     }

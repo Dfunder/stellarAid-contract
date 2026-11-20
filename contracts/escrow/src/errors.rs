@@ -36,6 +36,14 @@ pub enum EscrowError {
     InvalidTtl = 22,
 }
 
+impl From<shared::guard::ReentrancyError> for EscrowError {
+    fn from(error: shared::guard::ReentrancyError) -> Self {
+        match error {
+            shared::guard::ReentrancyError::Reentrant => EscrowError::Reentrant,
+        }
+    }
+}
+
 impl core::fmt::Display for EscrowError {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         match self {
@@ -53,13 +61,30 @@ impl core::fmt::Display for EscrowError {
             Self::ArithmeticOverflow => write!(f, "arithmetic operation would overflow"),
             Self::ContractPaused => write!(f, "contract is paused; operation not permitted"),
             Self::InvalidSplit => write!(f, "cancellation split must equal the escrowed amount"),
-            Self::AtomicCommitNotReady => write!(f, "atomic commit not ready until all participants confirm"),
-            Self::AtomicCommitStateInvalid => write!(f, "atomic commit marker state does not permit this operation"),
-            Self::CrossContractConsistencyFailed => write!(f, "commission agreement total disagrees with the escrowed amount"),
-            Self::BalanceMismatch => write!(f, "balance invariant violated: released + remaining != amount"),
+            Self::AtomicCommitNotReady => {
+                write!(f, "atomic commit not ready until all participants confirm")
+            }
+            Self::AtomicCommitStateInvalid => write!(
+                f,
+                "atomic commit marker state does not permit this operation"
+            ),
+            Self::CrossContractConsistencyFailed => write!(
+                f,
+                "commission agreement total disagrees with the escrowed amount"
+            ),
+            Self::BalanceMismatch => write!(
+                f,
+                "balance invariant violated: released + remaining != amount"
+            ),
             Self::InvalidStateTransition => write!(f, "escrow status transition is not permitted"),
-            Self::TokenBalanceMismatch => write!(f, "contract token balance does not match escrowed accounting"),
-            Self::CircuitBreakerTripped => write!(f, "circuit breaker is tripped; operations are temporarily halted"),
+            Self::TokenBalanceMismatch => write!(
+                f,
+                "contract token balance does not match escrowed accounting"
+            ),
+            Self::CircuitBreakerTripped => write!(
+                f,
+                "circuit breaker is tripped; operations are temporarily halted"
+            ),
             Self::InvalidTtl => write!(f, "dispute TTL must be at least ESCROW_TTL_LEDGERS"),
         }
     }

@@ -120,6 +120,7 @@ assert_repo_has_no_key_material() {
 
     found="$(git -C "$REPO_ROOT" ls-files 2>/dev/null \
         | grep -Ei '(^|/)(\.env(\..*)?|mnemonic\.txt|[^/]*\.(pem|key|keystore|seed))$' \
+        | grep -Ev '(^|/)\.env\.example$' \
         | head -n 5 || true)"
     if [ -n "$found" ]; then
         err "key material appears to be tracked in git:"

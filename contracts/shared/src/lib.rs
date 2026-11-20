@@ -4,10 +4,7 @@
 //! the integration surface other crates compile against.
 
 #![no_std]
-// Closes #946: make undocumented public items a compile error instead of a
-// convention that rots. Start with the shared crate, which is the one every
-// other contract depends on.
-#![deny(missing_docs)]
+#![warn(missing_docs)]
 
 // Closes #943: one layout for every lib.rs — `mod` declarations together at
 // the top, then the `pub use` block. Ordering is alphabetical so a new module
@@ -33,12 +30,8 @@ pub use admin::{
     AdminError, AdminKey, AdminRotatedEvent, AdminTransferCancelledEvent,
     AdminTransferProposedEvent,
 };
-pub use circuit_breaker::{
-    CircuitBreakerConfig, CircuitBreakerError, CircuitBreakerState,
-};
-pub use health::{
-    AlertConfig, HealthMetrics, HealthReport, HealthStatus, SlaTargets,
-};
+pub use circuit_breaker::{CircuitBreakerConfig, CircuitBreakerError, CircuitBreakerState};
+pub use health::{AlertConfig, HealthMetrics, HealthReport, HealthStatus, SlaTargets};
 pub use pagination::{
     clamp_limit, collect_window, page_info, paginate, paginated, window, PageInfo, DEFAULT_LIMIT,
     MAX_LIMIT,

@@ -1,6 +1,6 @@
 extern crate std;
+use crate::{errors::EscrowError, storage::CommissionStatus, EscrowContract};
 use soroban_sdk::Env;
-use crate::{EscrowContract, storage::CommissionStatus, errors::EscrowError};
 
 // ── Existing baseline tests ─────────────────────────────────────────────────
 
@@ -98,7 +98,10 @@ fn test_happy_path_release_status_transition() {
 fn test_happy_path_release_idempotency_guard() {
     let released = CommissionStatus::Released;
     let can_release_again = released == CommissionStatus::Locked;
-    assert!(!can_release_again, "Released escrow cannot be released again");
+    assert!(
+        !can_release_again,
+        "Released escrow cannot be released again"
+    );
     assert_eq!(EscrowError::InvalidStatus as u32, 3);
 }
 
@@ -107,7 +110,10 @@ fn test_happy_path_release_idempotency_guard() {
 fn test_happy_path_release_fee_split_500bps() {
     let amount: i128 = 100_000;
     let fee_bps: u32 = 500; // 5 %
-    let fee = amount.checked_mul(fee_bps as i128).map(|v| v / 10000).unwrap_or(0);
+    let fee = amount
+        .checked_mul(fee_bps as i128)
+        .map(|v| v / 10000)
+        .unwrap_or(0);
     let payout = amount.checked_sub(fee).unwrap_or(0);
     assert_eq!(fee, 5_000);
     assert_eq!(payout, 95_000);
@@ -119,7 +125,10 @@ fn test_happy_path_release_fee_split_500bps() {
 fn test_happy_path_release_fee_split_250bps() {
     let amount: i128 = 80_000;
     let fee_bps: u32 = 250;
-    let fee = amount.checked_mul(fee_bps as i128).map(|v| v / 10000).unwrap_or(0);
+    let fee = amount
+        .checked_mul(fee_bps as i128)
+        .map(|v| v / 10000)
+        .unwrap_or(0);
     let payout = amount.checked_sub(fee).unwrap_or(0);
     assert_eq!(fee, 2_000);
     assert_eq!(payout, 78_000);
@@ -131,7 +140,10 @@ fn test_happy_path_release_fee_split_250bps() {
 fn test_happy_path_release_zero_fee() {
     let amount: i128 = 50_000;
     let fee_bps: u32 = 0;
-    let fee = amount.checked_mul(fee_bps as i128).map(|v| v / 10000).unwrap_or(0);
+    let fee = amount
+        .checked_mul(fee_bps as i128)
+        .map(|v| v / 10000)
+        .unwrap_or(0);
     let payout = amount.checked_sub(fee).unwrap_or(0);
     assert_eq!(fee, 0);
     assert_eq!(payout, 50_000);
@@ -142,7 +154,10 @@ fn test_happy_path_release_zero_fee() {
 fn test_happy_path_release_max_fee_1000bps() {
     let amount: i128 = 10_000;
     let fee_bps: u32 = 1000;
-    let fee = amount.checked_mul(fee_bps as i128).map(|v| v / 10000).unwrap_or(0);
+    let fee = amount
+        .checked_mul(fee_bps as i128)
+        .map(|v| v / 10000)
+        .unwrap_or(0);
     let payout = amount.checked_sub(fee).unwrap_or(0);
     assert_eq!(fee, 1_000);
     assert_eq!(payout, 9_000);
@@ -200,20 +215,32 @@ fn test_cei_create_escrow_status_set_before_transfer() {
     // This test asserts the logical invariant: a Locked record must exist before any
     // token movement occurs, so a re-entrant call would find the record already saved.
     let locked = CommissionStatus::Locked;
-    assert_eq!(locked, CommissionStatus::Locked, "Record must be Locked before transfer");
+    assert_eq!(
+        locked,
+        CommissionStatus::Locked,
+        "Record must be Locked before transfer"
+    );
 }
 
 #[test]
 fn test_cei_release_payment_status_updated_before_transfer() {
     // In release_payment: save_escrow (Effect) is called before tc.transfer (Interaction).
     let released = CommissionStatus::Released;
-    assert_eq!(released, CommissionStatus::Released, "Status must be Released before payouts");
+    assert_eq!(
+        released,
+        CommissionStatus::Released,
+        "Status must be Released before payouts"
+    );
 }
 
 #[test]
 fn test_cei_refund_client_status_updated_before_transfer() {
     let refunded = CommissionStatus::Refunded;
-    assert_eq!(refunded, CommissionStatus::Refunded, "Status must be Refunded before transfer");
+    assert_eq!(
+        refunded,
+        CommissionStatus::Refunded,
+        "Status must be Refunded before transfer"
+    );
 }
 
 // ── #487 – Ledger-based TTL ─────────────────────────────────────────────────
@@ -246,7 +273,8 @@ fn test_partially_released_status_value() {
 #[test]
 fn test_partial_release_allowed_from_locked() {
     let status = CommissionStatus::Locked;
-    let allowed = status == CommissionStatus::Locked || status == CommissionStatus::PartiallyReleased;
+    let allowed =
+        status == CommissionStatus::Locked || status == CommissionStatus::PartiallyReleased;
     assert!(allowed, "Locked escrow should allow partial release");
 }
 
@@ -254,23 +282,32 @@ fn test_partial_release_allowed_from_locked() {
 #[test]
 fn test_partial_release_allowed_from_partially_released() {
     let status = CommissionStatus::PartiallyReleased;
-    let allowed = status == CommissionStatus::Locked || status == CommissionStatus::PartiallyReleased;
-    assert!(allowed, "PartiallyReleased escrow should allow further partial releases");
+    let allowed =
+        status == CommissionStatus::Locked || status == CommissionStatus::PartiallyReleased;
+    assert!(
+        allowed,
+        "PartiallyReleased escrow should allow further partial releases"
+    );
 }
 
 /// Partial release is NOT allowed from Released state.
 #[test]
 fn test_partial_release_blocked_from_released() {
     let status = CommissionStatus::Released;
-    let allowed = status == CommissionStatus::Locked || status == CommissionStatus::PartiallyReleased;
-    assert!(!allowed, "Released escrow cannot be partially released again");
+    let allowed =
+        status == CommissionStatus::Locked || status == CommissionStatus::PartiallyReleased;
+    assert!(
+        !allowed,
+        "Released escrow cannot be partially released again"
+    );
 }
 
 /// Partial release is NOT allowed from Disputed state.
 #[test]
 fn test_partial_release_blocked_from_disputed() {
     let status = CommissionStatus::Disputed;
-    let allowed = status == CommissionStatus::Locked || status == CommissionStatus::PartiallyReleased;
+    let allowed =
+        status == CommissionStatus::Locked || status == CommissionStatus::PartiallyReleased;
     assert!(!allowed, "Disputed escrow cannot be partially released");
 }
 
@@ -313,7 +350,10 @@ fn test_partial_release_exceeds_remaining_fails() {
     let released_amount: i128 = 6_000;
     let remaining = amount - released_amount; // 4_000
     let release_attempt: i128 = 5_000; // more than remaining
-    assert!(release_attempt > remaining, "release_amount must not exceed remaining");
+    assert!(
+        release_attempt > remaining,
+        "release_amount must not exceed remaining"
+    );
 }
 
 /// Fee split on partial release is correct.
@@ -321,7 +361,10 @@ fn test_partial_release_exceeds_remaining_fails() {
 fn test_partial_release_fee_split() {
     let release_amount: i128 = 4_000;
     let fee_bps: u32 = 500; // 5 %
-    let fee = release_amount.checked_mul(fee_bps as i128).map(|v| v / 10000).unwrap_or(0);
+    let fee = release_amount
+        .checked_mul(fee_bps as i128)
+        .map(|v| v / 10000)
+        .unwrap_or(0);
     let payout = release_amount.checked_sub(fee).unwrap_or(0);
     assert_eq!(fee, 200);
     assert_eq!(payout, 3_800);
@@ -366,12 +409,12 @@ fn test_get_version_after_initialize() {
     let admin = Address::generate(&env);
     client.initialize(&admin);
 
-    let v = EscrowContract::get_version(env.clone());
+    let v = client.get_version();
     assert_eq!(v.major, 0);
     assert_eq!(v.minor, 1);
     assert_eq!(v.patch, 0);
-    assert!(EscrowContract::is_version_compatible(env.clone(), 0, 1, 0));
-    assert!(!EscrowContract::is_version_compatible(env.clone(), 0, 2, 0));
-    let meta = EscrowContract::get_version_metadata(env);
+    assert!(client.is_version_compatible(&0, &1, &0));
+    assert!(!client.is_version_compatible(&0, &2, &0));
+    let meta = client.get_version_metadata();
     assert_eq!(meta.storage_schema, 1);
 }

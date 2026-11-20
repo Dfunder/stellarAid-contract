@@ -13,8 +13,6 @@ use types::{
     QualityScore, ReviewOutcome, VerificationRecord,
 };
 
-include!("../../semver_types.rs");
-
 /// Weights applied to each quality criterion; they sum to 100 so the blended
 /// score stays on the same 0..=100 scale as the individual marks.
 const WEIGHT_ORIGINALITY: u32 = 30;
@@ -200,6 +198,7 @@ impl Verification {
         env.storage()
             .instance()
             .set(&DataKey::HistoryLimit, &history_limit);
+        shared::version::seed(&env, env!("CARGO_PKG_VERSION"));
         env.events().publish(
             (symbol_short!("init"),),
             (admin, min_score, min_work_count, update_interval),
@@ -207,7 +206,23 @@ impl Verification {
         Ok(())
     }
 
-    impl_semver_queries!();
+    pub fn get_version(env: Env) -> shared::upgrade::ContractVersion {
+        shared::version::query(&env, env!("CARGO_PKG_VERSION"))
+    }
+
+    pub fn get_version_metadata(env: Env) -> shared::version::VersionMetadata {
+        shared::version::query_metadata(&env, env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+    }
+
+    pub fn is_version_compatible(env: Env, major: u32, minor: u32, patch: u32) -> bool {
+        shared::version::query(&env, env!("CARGO_PKG_VERSION")).is_compatible_with(
+            &shared::upgrade::ContractVersion {
+                major,
+                minor,
+                patch,
+            },
+        )
+    }
 
     pub fn add_reviewer(env: Env, reviewer: Address) -> Result<(), VerificationError> {
         require_admin(&env)?;
@@ -547,8 +562,8 @@ impl Verification {
     ) -> Result<(), VerificationError> {
         require_reviewer(&env, &reviewer)?;
 
-        let mut badge = load_badge(&env, &artist, badge_type)
-            .ok_or(VerificationError::BadgeNotFound)?;
+        let mut badge =
+            load_badge(&env, &artist, badge_type).ok_or(VerificationError::BadgeNotFound)?;
         if badge.status.revoked() {
             return Err(VerificationError::BadgeAlreadyRevoked);
         }
@@ -724,7 +739,13 @@ impl Verification {
     pub fn get_flag_cap(env: Env) -> u32 {
         shared::rollout::flag_cap(&env)
     }
-    pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
+    pub fn set_canary_deployment(
+        env: Env,
+        admin: Address,
+        canary: Address,
+        stable: Address,
+        canary_bps: u32,
+    ) {
         admin.require_auth();
         shared::rollout::set_canary_deployment(&env, canary, stable, canary_bps);
     }
@@ -746,4 +767,3 @@ impl Verification {
         shared::rollout::trigger_rollback(&env, &admin);
     }
 }
-

@@ -8,9 +8,7 @@ extern crate std;
 use soroban_sdk::{testutils::Address as _, Address, Bytes, Env};
 
 use crate::errors::EscrowError;
-use crate::storage::{
-    self, CommissionStatus, DEFAULT_DISPUTE_TTL_LEDGERS, EscrowRecord,
-};
+use crate::storage::{self, CommissionStatus, EscrowRecord, DEFAULT_DISPUTE_TTL_LEDGERS};
 use crate::EscrowContract;
 
 /// SDK 21 requires storage access to run inside a registered contract.
@@ -154,22 +152,22 @@ fn save_escrow_overwrites_existing_key() {
 #[test]
 fn reentrancy_guard_rejects_nested_call_and_releases_lock() {
     with_storage(|env| {
-        assert!(!storage::is_locked(env));
+        assert!(!shared::guard::is_locked(env));
 
-        let outer: Result<(), EscrowError> = storage::with_reentrancy_guard(env, || {
+        let outer: Result<(), EscrowError> = shared::guard::try_with_reentrancy_guard(env, || {
             // Nested call while the lock is held must be rejected.
             let nested: Result<(), EscrowError> =
-                storage::with_reentrancy_guard(env, || Ok(()));
+                shared::guard::try_with_reentrancy_guard(env, || Ok(()));
             assert_eq!(nested.unwrap_err(), EscrowError::Reentrant);
 
             // Lock is visible inside the guarded section…
-            assert!(storage::is_locked(env));
+            assert!(shared::guard::is_locked(env));
             Ok(())
         });
 
         outer.unwrap();
         // …and released afterwards.
-        assert!(!storage::is_locked(env));
+        assert!(!shared::guard::is_locked(env));
     });
 }
 
@@ -177,14 +175,17 @@ fn reentrancy_guard_rejects_nested_call_and_releases_lock() {
 fn reentrancy_guard_releases_on_error_path() {
     with_storage(|env| {
         let result: Result<(), EscrowError> =
-            storage::with_reentrancy_guard(env, || Err(EscrowError::InvalidStatus));
+            shared::guard::try_with_reentrancy_guard(env, || Err(EscrowError::InvalidStatus));
         assert!(result.is_err());
-        assert!(!storage::is_locked(env), "lock must clear on error paths");
+        assert!(
+            !shared::guard::is_locked(env),
+            "lock must clear on error paths"
+        );
 
         // The next call can acquire the lock again.
-        let ok: Result<(), EscrowError> = storage::with_reentrancy_guard(env, || Ok(()));
+        let ok: Result<(), EscrowError> = shared::guard::try_with_reentrancy_guard(env, || Ok(()));
         ok.unwrap();
-        assert!(!storage::is_locked(env));
+        assert!(!shared::guard::is_locked(env));
     });
 }
 

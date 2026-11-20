@@ -1,11 +1,8 @@
-// Add fee-breakdown preview to TypeScript bindings so UI can quote before submitting (#972)
+// Fee-breakdown preview shared with the validated SDK boundary (#972, #1088).
 
-export class ValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ValidationError';
-  }
-}
+import { ValidationError } from './net/validate.js';
+
+export { ValidationError } from './net/validate.js';
 
 export interface FeeBreakdown {
   baseFee: bigint;
@@ -32,8 +29,6 @@ export function previewFeeBreakdown(
 
   const platformCut = (amount * BigInt(platformFeeBps)) / 10_000n;
   const baseFee = amount - platformCut;
-
-  // Invariant: baseFee + platformCut === amount
   const total = baseFee + platformCut + networkFee;
 
   return { baseFee, platformCut, networkFee, total };

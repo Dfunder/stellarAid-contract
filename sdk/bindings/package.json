@@ -1,0 +1,8 @@
+{
+  "name": "@stellaraid/bindings",
+  "private": true,
+  "type": "module",
+  "peerDependencies": {
+    "@stellar/freighter-api": "^3.0.0"
+  }
+}

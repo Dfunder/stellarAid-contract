@@ -33,6 +33,25 @@ pub fn get_platform_wallet(env: &Env, config: &Address) -> Address {
     env.invoke_contract(config, &symbol_short!("get_pw"), soroban_sdk::vec![env])
 }
 
+/// Full name of the per-commission amount view exposed by EscrowContract (#1093).
+pub const GET_ESCROW_AMOUNT_SYMBOL: &str = "get_escrow_amount";
+
+/// Read the escrowed amount for a single commission from an escrow contract.
+///
+/// Dispute resolution must call this rather than reading the token balance of
+/// the whole escrow contract: one contract holds many commissions.
+pub fn get_escrow_amount(
+    env: &Env,
+    escrow_contract: &Address,
+    commission_id: &Bytes,
+) -> i128 {
+    env.invoke_contract(
+        escrow_contract,
+        &Symbol::new(env, GET_ESCROW_AMOUNT_SYMBOL),
+        soroban_sdk::vec![env, commission_id.clone().into_val(env)],
+    )
+}
+
 // ── USDC token helpers ──────────────────────────────────────────────────────
 
 /// Transfer USDC between two addresses via the USDC token contract.

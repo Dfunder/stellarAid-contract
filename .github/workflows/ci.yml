@@ -1,0 +1,61 @@
+# ci.yml — workspace gates (closes #1091, #1092).
+#
+# BENCH INTENT: benchmarks are expensive, so they run only when a PR changes
+# contracts or a workspace manifest; a docs-only PR has no bench job at all.
+# The old condition used
+#   contains(github.event.pull_request.changed_files_url, 'contracts/')
+# but changed_files_url is an API endpoint URL, never a file list, so the
+# filter was dead. `dorny/paths-filter` below compares real changed paths.
+#
+# The examples crate is a standalone workspace with its own lockfile, pinned to
+# the same stellar-strkey major as the workspace (0.0.8). `check-examples` in
+# the Makefile runs the identical command locally.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  changed-paths:
+    name: classify changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      contracts: ${{ steps.filter.outputs.contracts }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            contracts:
+              - 'contracts/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+
+  examples:
+    name: examples check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo check --manifest-path examples/Cargo.toml --locked
+        run: cargo check --manifest-path examples/Cargo.toml --locked
+
+  bench:
+    name: benchmarks
+    needs: changed-paths
+    if: needs.changes.outputs.contracts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run benches for the crates that define them
+        run: cargo bench -p escrow -p verification --no-fail-fast

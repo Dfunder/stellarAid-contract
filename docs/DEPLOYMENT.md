@@ -391,3 +391,64 @@ Be aware of these before trusting it:
 - The old root-level `scripts/deploy.sh` still deploys with
   `--source "$ADMIN_SECRET"`, which puts a secret in an argument vector. It is
   unchanged because it is outside #708's scope. **Prefer `scripts/deploy/`.**
+
+---
+
+## 9. Workspace contract inventory
+
+Closes #937. This table is the deployer's one-page view of the root
+`Cargo.toml` `members` array. "Deployed" means a WASM artifact is produced for
+the crate; "library" means it is compiled only as a dependency or a test
+harness. It is hand-maintained from `Cargo.toml`, so re-check it whenever the
+`members` array changes.
+
+| Crate | Path | Responsibility | Kind |
+|-------|------|----------------|------|
+| shared | `contracts/shared` | Guards, pause, health, rollout and shared types | Library |
+| platform_config | `contracts/platform_config` | Platform-wide settings and admin surface | Deployed |
+| escrow | `contracts/escrow` | Holds funds for the commission lifecycle | Deployed |
+| commission_agreement | `contracts/commission_agreement` | Artist/client agreements | Deployed |
+| dispute_arbiter | `contracts/dispute_arbiter` | Resolves escrow disputes | Deployed |
+| analytics | `contracts/analytics` | Platform analytics | Deployed |
+| reputation | `contracts/reputation` | Reviews and reputation scores | Deployed |
+| messaging | `contracts/messaging` | Off-chain message records | Deployed |
+| subscription | `contracts/subscription` | Subscriptions | Deployed |
+| competitions | `contracts/competitions` | Competitions and ranking | Deployed |
+| verification | `contracts/verification` | Identity verification | Deployed |
+| search | `contracts/search` | Search indexing | Deployed |
+| revenue_sharing | `contracts/revenue_sharing` | Revenue splits | Deployed |
+| recruitment | `contracts/recruitment` | Recruitment flows | Deployed |
+| creator_fund | `contracts/creator_fund` | Creator funding | Deployed |
+| rate_limiter | `contracts/rate_limiter` | Rate limiting | Deployed |
+| multi_sig | `contracts/multi_sig` | Multi-signature approvals | Deployed |
+| audit | `contracts/audit` | Audit trail | Deployed |
+| nft | `contracts/nft` | NFTs and licensing | Deployed |
+| dao | `contracts/dao` | Governance | Deployed |
+| ecosystem_funding | `contracts/ecosystem_funding` | Ecosystem grants | Deployed |
+| licensing | `contracts/licensing` | Creative licensing | Deployed |
+| mentorship | `contracts/mentorship` | Mentorship engagements | Deployed |
+| campaign | `contracts/campaign` | Campaigns and pledges | Deployed |
+| campaign_factory | `contracts/campaign_factory` | Campaign factory | Deployed |
+| campaign_instance | `contracts/campaign_instance` | Campaign instance | Deployed |
+| factory | `contracts/factory` | Generic factory | Deployed |
+| sdk | `sdk` | TypeScript client bindings | Library |
+| tests/framework | `tests/framework` | Cross-contract test fixtures | Library |
+| tests/upgrade_testing | `tests/upgrade_testing` | Upgrade test harness | Library |
+
+On disk but **not** workspace members, therefore not built by
+`cargo build --workspace`: `contracts/donation`, `contracts/withdrawal`,
+`worker/`, `multi_wallet_session/` and `tests/wallet_integration/`.
+
+---
+
+## 10. Troubleshooting Soroban builds and tests
+
+Closes #938. Symptom first, then cause and fix.
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Tests pass alone but fail intermittently in `cargo test` | Soroban's test host is single-threaded by default and several contract tests share one global ledger; a data-parallel runner produces flaky failures that look like real bugs. | Run `RUST_TEST_THREADS=1 cargo test --workspace`, as CI does. |
+| `contractimport!` cannot find `soroban_token_contract.wasm` | `contracts/escrow/src/token.rs` imports a prebuilt WASM from `target/wasm32-unknown-unknown/release/`, which does not exist in a clean checkout. | Build the token contract for `wasm32-unknown-unknown` first; see issue #8. |
+| `no method named push_str` on `soroban_sdk::String` | Soroban `String` has no `push_str`; build strings with `String::from_str` or `soroban_sdk::format!`. `copy_into_slice` also panics unless the destination length matches exactly. | Use `format!` for composed strings and check the destination length before copying. |
+| `cargo build --workspace` fails with parse errors in platform_config/escrow | The workspace has pre-existing compile failures (issues #1-#6), not a broken local toolchain. | Check the linked issues before debugging your environment. |
+| A whitespace-only diff appears after editing a doc on Windows | The repository's `.gitattributes` and local CRLF settings disagree. | Let Git normalize line endings; avoid committing raw CRLF noise. |

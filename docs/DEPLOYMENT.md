@@ -86,15 +86,10 @@ make lint       # cargo clippy --all-targets -- -D warnings
 ```
 
 > **Important and easy to get wrong.** `cargo build --workspace` only builds the
-> crates listed in the root `Cargo.toml` `[workspace] members`. `campaign` and
-> `rate_limiter` are workspace members and are built by the workspace build.
-> `contracts/donation` and `contracts/withdrawal` exist on disk but are not
-> registered as workspace members (unaudited/unregistered), so `make build`
-> does not produce WASM for them. Build any non-member crate explicitly with
-> `cargo build -p <name> --target wasm32-unknown-unknown --release`, and note
-> that `scripts/deploy.sh` will refuse to deploy a crate whose WASM is missing
-> rather than silently skipping it. Running `./scripts/deploy/preflight.sh`
-> prints the member list and non-member list side by side.
+> five crates listed in the root `Cargo.toml` `[workspace] members`. The
+> pre-sweep member list has been reduced to the crates that still exist; every
+> removed or quarantined path is recorded in
+> [CONTRACTS_TOP_LEVEL_DISPOSITION.md](./CONTRACTS_TOP_LEVEL_DISPOSITION.md).
 
 ### Container build
 
@@ -168,6 +163,12 @@ no credential is present at all. The scripts pass a *reference* to
 `soroban contract deploy --source` — either the identity name from
 `STELLAR_DEPLOYER_IDENTITY` or the literal string `STELLAR_DEPLOYER_SECRET` for
 the CLI to resolve — so the secret never appears in an argument vector.
+
+The canonical list of environment variables, their required/optional status,
+and deprecated aliases is [ENV_REFERENCE.md](./ENV_REFERENCE.md).
+`.env.example` is a template, never a committed `.env`;
+`scripts/verify_env_example.sh` fails CI when a new variable is used without
+being added to that reference.
 
 ### Step 3 — dry run
 
@@ -354,10 +355,12 @@ Non-negotiable, and enforced in `lib.sh` rather than by convention:
    test itself runs with `set -x` suppressed so a traced shell cannot leak it.
 5. **A missing credential is a hard failure** before any build or transaction.
    Nothing falls back to a default identity or generates a key automatically.
-6. `assert_repo_has_no_key_material` scans `git ls-files` for `.env*`,
-   `mnemonic.txt`, `*.pem`, `*.key`, `*.keystore`, `*.seed` and fails closed.
-   The container build runs the equivalent check, and `.dockerignore` excludes
-   all of it from the build context.
+ 6. `assert_repo_has_no_key_material` scans `git ls-files` for `.env*`,
+    `mnemonic.txt`, `*.pem`, `*.key`, `*.keystore`, `*.seed` and fails closed.
+    The committed `.env.example` template is the only exception; it contains
+    placeholders and is also listed in [ENV_REFERENCE.md](./ENV_REFERENCE.md).
+    The container build runs the equivalent check, and `.dockerignore` excludes
+    all of it from the build context.
 7. Backups and reports may contain contract ids and view output. They are
    gitignored. **They still must not contain a secret** — dump view functions,
    not the environment.

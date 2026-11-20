@@ -1,15 +1,16 @@
 #![no_std]
 
-use campaign::{CampaignContract, CampaignContractClient};
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec};
-
-include!("../../semver_types.rs");
+use soroban_sdk::{
+    contract, contractclient, contracterror, contractimpl, contracttype, Address, Bytes, BytesN,
+    Env, Symbol, Vec,
+};
 
 #[contracttype]
 pub enum DataKey {
     Admin,
     Initialized,
     Campaigns,
+    CampaignWasmHash,
 }
 
 #[contracttype]
@@ -25,6 +26,13 @@ pub struct CampaignDeployedEvent {
 pub enum CampaignFactoryError {
     AlreadyInitialized = 1,
     NotInitialized = 2,
+    WasmHashNotSet = 3,
+    Unauthorized = 4,
+}
+
+#[contractclient(name = "CampaignContractClient")]
+trait CampaignContractTrait {
+    fn get_admin(env: Env) -> Address;
 }
 
 fn read_campaigns(env: &Env) -> Vec<Address> {
@@ -32,6 +40,19 @@ fn read_campaigns(env: &Env) -> Vec<Address> {
         .instance()
         .get(&DataKey::Campaigns)
         .unwrap_or_else(|| Vec::new(env))
+}
+
+fn require_admin(env: &Env, admin: &Address) -> Result<(), CampaignFactoryError> {
+    let stored: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(CampaignFactoryError::NotInitialized)?;
+    if stored == *admin {
+        Ok(())
+    } else {
+        Err(CampaignFactoryError::Unauthorized)
+    }
 }
 
 #[contract]
@@ -50,29 +71,72 @@ impl CampaignFactory {
         env.storage()
             .instance()
             .set(&DataKey::Campaigns, &Vec::<Address>::new(&env));
+        shared::version::seed(&env, env!("CARGO_PKG_VERSION"));
         Ok(())
     }
 
-    impl_semver_queries!();
+    pub fn update_wasm_hash(
+        env: Env,
+        admin: Address,
+        hash: BytesN<32>,
+    ) -> Result<(), CampaignFactoryError> {
+        require_admin(&env, &admin)?;
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::CampaignWasmHash, &hash);
+        Ok(())
+    }
+
+    pub fn get_wasm_hash(env: Env) -> Option<BytesN<32>> {
+        env.storage().instance().get(&DataKey::CampaignWasmHash)
+    }
+
+    pub fn get_version(env: Env) -> shared::upgrade::ContractVersion {
+        shared::version::query(&env, env!("CARGO_PKG_VERSION"))
+    }
+
+    pub fn get_version_metadata(env: Env) -> shared::version::VersionMetadata {
+        shared::version::query_metadata(&env, env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+    }
+
+    pub fn is_version_compatible(env: Env, major: u32, minor: u32, patch: u32) -> bool {
+        shared::version::query(&env, env!("CARGO_PKG_VERSION")).is_compatible_with(
+            &shared::upgrade::ContractVersion {
+                major,
+                minor,
+                patch,
+            },
+        )
+    }
 
     pub fn deploy_campaign(
         env: Env,
         creator: Address,
-        _params: Bytes,
+        params: Bytes,
     ) -> Result<Address, CampaignFactoryError> {
         if !env.storage().instance().has(&DataKey::Initialized) {
             return Err(CampaignFactoryError::NotInitialized);
         }
+        let hash: BytesN<32> = env
+            .storage()
+            .instance()
+            .get(&DataKey::CampaignWasmHash)
+            .ok_or(CampaignFactoryError::WasmHashNotSet)?;
 
         creator.require_auth();
 
-        let contract_id = env.register_contract(None, CampaignContract);
-        let client = CampaignContractClient::new(&env, &contract_id);
-        client.initialize(&creator);
+        let salt = env.crypto().sha256(&params).to_bytes();
+        let contract_id = env
+            .deployer()
+            .with_address(creator.clone(), salt)
+            .deploy(hash);
 
         let mut campaigns = read_campaigns(&env);
         campaigns.push_back(contract_id.clone());
-        env.storage().instance().set(&DataKey::Campaigns, &campaigns);
+        env.storage()
+            .instance()
+            .set(&DataKey::Campaigns, &campaigns);
 
         env.events().publish(
             (Symbol::new(&env, "campaign_deployed"),),

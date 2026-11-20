@@ -1,0 +1,32 @@
+name: Env reference drift check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".env.example"
+      - "docs/ENV_REFERENCE.md"
+      - "scripts/verify_env_example.sh"
+      - "scripts/**"
+      - "**/*.rs"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".env.example"
+      - "docs/ENV_REFERENCE.md"
+      - "scripts/verify_env_example.sh"
+      - "scripts/**"
+      - "**/*.rs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: env vars are documented
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the canonical environment reference
+        run: bash scripts/verify_env_example.sh

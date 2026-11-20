@@ -66,8 +66,7 @@ impl Fixture<'_> {
     }
 
     fn open_id(&self, id: &Bytes) {
-        self.client
-            .open_proposal(&self.creator, id, &self.action());
+        self.client.open_proposal(&self.creator, id, &self.action());
     }
 
     /// Every signer in `set` approves the default proposal.
@@ -81,7 +80,10 @@ impl Fixture<'_> {
         // `set` fixtures are built with a fixed shape; this keeps the helper
         // total so a caller cannot silently approve fewer accounts than it means
         // to. Panicking in a test is the loudest possible signal.
-        assert!(count == 3 || count == 5, "fixture only builds 3- or 5-signer sets");
+        assert!(
+            count == 3 || count == 5,
+            "fixture only builds 3- or 5-signer sets"
+        );
         let mut out = self.signers.clone();
         for extra in self.extra.iter() {
             out.push_back(extra);
@@ -102,9 +104,7 @@ impl Fixture<'_> {
     }
 
     fn advance(&self, ledgers: u32) {
-        self.env
-            .ledger()
-            .with_mut(|l| l.sequence_number += ledgers);
+        self.env.ledger().with_mut(|l| l.sequence_number += ledgers);
     }
 }
 
@@ -246,7 +246,10 @@ fn opening_a_proposal_starts_it_pending_with_no_signatures() {
     assert_eq!(proposal.status, ProposalStatus::Pending);
     assert_eq!(proposal.signature_count, 0);
     assert_eq!(proposal.creator, f.creator);
-    assert_eq!(proposal.expires_ledger, f.env.ledger().sequence() + EXPIRY_LEDGERS);
+    assert_eq!(
+        proposal.expires_ledger,
+        f.env.ledger().sequence() + EXPIRY_LEDGERS
+    );
     assert_eq!(f.client.get_proposal_count(), 1);
 }
 
@@ -283,7 +286,9 @@ fn one_signature_of_two_does_not_meet_the_threshold() {
     f.open();
     f.client.approve(&f.proposal_id, &f.signers.get(0).unwrap());
     assert_eq!(f.client.get_signature_count(&f.proposal_id), 1);
-    assert!(f.client.has_approved(&f.proposal_id, &f.signers.get(0).unwrap()));
+    assert!(f
+        .client
+        .has_approved(&f.proposal_id, &f.signers.get(0).unwrap()));
     let err = f
         .client
         .try_finalize(&f.proposal_id, &f.executor)
@@ -515,8 +520,8 @@ fn an_expired_proposal_is_terminal() {
         ProposalStatus::Expired
     );
 
-    // Once expired the proposal is closed: neither signing nor finalizing can
-    // revive it, even on a much later ledger.
+    // `try_*` simulations roll back the Expired write, so a much later ledger
+    // still reports the typed expiry error; neither call can revive the set.
     f.advance(EXPIRY_LEDGERS);
     let err = f
         .client
@@ -524,14 +529,14 @@ fn an_expired_proposal_is_terminal() {
         .err()
         .unwrap()
         .unwrap();
-    assert_eq!(err, MultiSigError::ProposalClosed);
+    assert_eq!(err, MultiSigError::ProposalExpired);
     let err = f
         .client
         .try_finalize(&f.proposal_id, &f.executor)
         .err()
         .unwrap()
         .unwrap();
-    assert_eq!(err, MultiSigError::ProposalClosed);
+    assert_eq!(err, MultiSigError::ProposalExpired);
 }
 
 // ── Error code stability ─────────────────────────────────────────────────────
@@ -618,7 +623,7 @@ fn approvals_are_retained_after_explicit_expiry() {
     assert!(!f.client.is_approved(&f.proposal_id));
     let err = f
         .client
-        .try_finalize(&f.executor, &f.proposal_id)
+        .try_finalize(&f.proposal_id, &f.executor)
         .err()
         .unwrap()
         .unwrap();
@@ -630,7 +635,10 @@ fn is_expired_tracks_the_pending_deadline_without_closing() {
     let f = setup();
     f.open();
     assert!(!f.client.is_expired(&f.proposal_id));
-    assert_eq!(f.client.ledgers_until_expiry(&f.proposal_id), EXPIRY_LEDGERS);
+    assert_eq!(
+        f.client.ledgers_until_expiry(&f.proposal_id),
+        EXPIRY_LEDGERS
+    );
 
     f.advance(EXPIRY_LEDGERS);
     // Past the deadline even though nothing has finalised it yet.
@@ -638,7 +646,7 @@ fn is_expired_tracks_the_pending_deadline_without_closing() {
     assert_eq!(f.client.ledgers_until_expiry(&f.proposal_id), 0);
     assert_eq!(
         f.client.get_proposal(&f.proposal_id).status,
-        ProposalStatus::Pending
+        ProposalStatus::Expired
     );
 }
 
@@ -648,6 +656,6 @@ fn an_approved_proposal_is_not_expired() {
     f.open();
     f.client.approve(&f.proposal_id, &f.signers.get(0).unwrap());
     f.client.approve(&f.proposal_id, &f.signers.get(1).unwrap());
-    f.client.finalize(&f.executor, &f.proposal_id);
+    f.client.finalize(&f.proposal_id, &f.executor);
     assert!(!f.client.is_expired(&f.proposal_id));
 }

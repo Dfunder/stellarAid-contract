@@ -71,6 +71,7 @@ fn setup<'a>() -> Fixture<'a> {
 
     let escrow_id = env.register_contract(None, EscrowContract);
     let escrow = EscrowContractClient::new(&env, &escrow_id);
+    let commission_id = Bytes::from_slice(&env, b"comm-001");
 
     Fixture {
         env,
@@ -79,7 +80,7 @@ fn setup<'a>() -> Fixture<'a> {
         usdc,
         client,
         artist,
-        commission_id: Bytes::from_slice(&env, b"comm-001"),
+        commission_id,
     }
 }
 
@@ -106,8 +107,7 @@ fn create_escrow_emits_funding_event_with_expected_values() {
     f.escrow
         .create_escrow(&f.commission_id, &f.client, &f.artist, &AMOUNT, &f.config);
 
-    let data = two_topic_data(&f, "escrow", "funded")
-        .expect("expected an (escrow, funded) event");
+    let data = two_topic_data(&f, "escrow", "funded").expect("expected an (escrow, funded) event");
     let (commission_id, funder, amount, asset, ledger): (Bytes, Address, i128, Address, u32) =
         TryFromVal::try_from_val(&f.env, &data).unwrap();
 

@@ -1,43 +1,16 @@
 [workspace]
 members = [
     "contracts/shared",
-    "contracts/platform_config",
     "contracts/escrow",
-    "contracts/commission_agreement",
-    "contracts/dispute_arbiter",
-    "contracts/analytics",
-    "contracts/reputation",
-    "contracts/messaging",
-    "contracts/subscription",
-    "contracts/competitions",
     "contracts/verification",
-    "contracts/search",
-    "contracts/revenue_sharing",
-    "contracts/recruitment",
-    "contracts/creator_fund",
-    "contracts/rate_limiter",
     "contracts/multi_sig",
-    "contracts/audit",
-    "contracts/nft",
-    "contracts/dao",
-    "contracts/ecosystem_funding",
-    "contracts/licensing",
-    "contracts/mentorship",
-    "contracts/campaign",
     "contracts/campaign_factory",
-    "contracts/campaign_instance",
-    "contracts/factory",
-    "sdk",
-    "tests/framework",
-    "tests/upgrade_testing",
 ]
 resolver = "2"
 
-# NOTE: `contracts/campaign` is a workspace member and is built with the
-# workspace. `contracts/donation` and `contracts/withdrawal` exist on disk but
-# are not workspace members (unaudited and not registered), so they are not
-# built by `cargo build --workspace` and are excluded until separately audited
-# and registered.
+# The post-sweep tree registers only the crates above. Removed, quarantined and
+# top-level source-file dispositions are recorded in
+# docs/CONTRACTS_TOP_LEVEL_DISPOSITION.md.
 
 [workspace.package]
 version = "0.1.0"
@@ -67,5 +40,5 @@ dotenvy = "0.15"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-ethnum = { version = "1.5.3" }
+ethnum = { version = "=1.5.3" }
 ed25519-dalek = { version = "=2.2.0", features = ["rand_core"] }

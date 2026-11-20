@@ -13,7 +13,7 @@ use types::{
     QualityScore, ReviewOutcome, VerificationRecord,
 };
 
-include!("../../semver_types.rs");
+use shared::impl_semver_queries;
 
 /// Weights applied to each quality criterion; they sum to 100 so the blended
 /// score stays on the same 0..=100 scale as the individual marks.

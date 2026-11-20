@@ -85,6 +85,10 @@ pub enum RolloutError {
     /// A requested cap of `0` (every flag write blocked) or one above
     /// [`MAX_FEATURE_FLAGS`].
     InvalidFlagCap = 2,
+    /// `canary_bps` is above 10000 (100%).
+    InvalidCanaryBps = 3,
+    /// Rollback error-rate trigger is zero or above 10000 bps.
+    InvalidRollbackTrigger = 4,
 }
 
 impl core::fmt::Display for RolloutError {
@@ -95,6 +99,8 @@ impl core::fmt::Display for RolloutError {
                 "feature-flag cap reached; see rollout::flag_cap for the current limit"
             ),
             Self::InvalidFlagCap => write!(f, "feature-flag cap must be between 1 and the ceiling"),
+            Self::InvalidCanaryBps => write!(f, "canary_bps exceeds 10000"),
+            Self::InvalidRollbackTrigger => write!(f, "rollback trigger must be between 1 and 10000 bps"),
         }
     }
 }
@@ -103,6 +109,8 @@ pub fn get_suggestion(error: RolloutError) -> Symbol {
     match error {
         RolloutError::FlagLimitReached => symbol_short!("FLAG_CAP"),
         RolloutError::InvalidFlagCap => symbol_short!("BAD_CAP"),
+        RolloutError::InvalidCanaryBps => symbol_short!("BAD_BPS"),
+        RolloutError::InvalidRollbackTrigger => symbol_short!("BAD_TRIG"),
     }
 }
 
@@ -286,7 +294,7 @@ pub fn set_canary_deployment(
     canary_bps: u32,
 ) {
     if canary_bps > BPS_DENOM {
-        panic!("canary_bps exceeds 10000");
+        panic_with_error!(env, RolloutError::InvalidCanaryBps);
     }
     env.storage().instance().set(&RolloutKey::Canary, &canary);
     env.storage().instance().set(&RolloutKey::Stable, &stable);
@@ -301,7 +309,7 @@ pub fn set_canary_deployment(
 
 pub fn set_canary_bps(env: &Env, canary_bps: u32) {
     if canary_bps > BPS_DENOM {
-        panic!("canary_bps exceeds 10000");
+        panic_with_error!(env, RolloutError::InvalidCanaryBps);
     }
     env.storage()
         .instance()
@@ -395,7 +403,7 @@ pub fn is_feature_enabled(env: &Env, flag: &Symbol) -> bool {
 
 pub fn set_rollback_trigger(env: &Env, error_bps: u32) {
     if error_bps == 0 || error_bps > BPS_DENOM {
-        panic!("invalid rollback trigger");
+        panic_with_error!(env, RolloutError::InvalidRollbackTrigger);
     }
     env.storage()
         .instance()

@@ -129,11 +129,7 @@ pub fn pending_admin(env: &Env) -> Option<Address> {
 ///
 /// Does not change the active admin. The caller's wrapper is responsible for
 /// checking `current_admin` against its stored admin before calling this.
-pub fn propose(
-    env: &Env,
-    current_admin: &Address,
-    new_admin: &Address,
-) -> Result<(), AdminError> {
+pub fn propose(env: &Env, current_admin: &Address, new_admin: &Address) -> Result<(), AdminError> {
     if current_admin == new_admin {
         return Err(AdminError::InvalidTarget);
     }
@@ -157,11 +153,7 @@ pub fn propose(
 /// wrapper installs it as the active admin after this returns. `previous_admin`
 /// is what the contract currently has stored, and is carried only so the
 /// rotation event can name both parties.
-pub fn accept(
-    env: &Env,
-    previous_admin: &Address,
-    new_admin: &Address,
-) -> Result<(), AdminError> {
+pub fn accept(env: &Env, previous_admin: &Address, new_admin: &Address) -> Result<(), AdminError> {
     new_admin.require_auth();
     let pending: Address = env
         .storage()
@@ -194,7 +186,9 @@ pub fn cancel(env: &Env, admin: &Address) -> Result<(), AdminError> {
     env.storage().instance().remove(&AdminKey::PendingAdmin);
     env.events().publish(
         (symbol_short!("adm_cncl"),),
-        AdminTransferCancelledEvent { admin: admin.clone() },
+        AdminTransferCancelledEvent {
+            admin: admin.clone(),
+        },
     );
     Ok(())
 }

@@ -8,7 +8,7 @@
 extern crate std;
 
 use soroban_sdk::{
-    testutils::{Address as _, Events as _, Ledger},
+    testutils::{Address as _, Events as _},
     Address, Env, String,
 };
 use verification::{
@@ -79,7 +79,7 @@ fn note(env: &Env) -> String {
 fn events_emitted_by<F: FnOnce()>(env: &Env, call: F) -> u32 {
     let before = env.events().all().len();
     call();
-    (env.events().all().len() - before) as u32
+    env.events().all().len() - before
 }
 
 /// Mirrors the `BUDGETS` table in `benches/verification_benchmark.rs`; keep the

@@ -6,14 +6,20 @@ members = [
     "contracts/multi_sig",
     "multi_wallet_session",
     "wallet_sign_timeout",
+    "contracts/campaign_factory",
 ]
 resolver = "2"
 
-# NOTE: `contracts/campaign` is a workspace member and is built with the
-# workspace. `contracts/donation` and `contracts/withdrawal` exist on disk but
-# are not workspace members (unaudited and not registered), so they are not
-# built by `cargo build --workspace` and are excluded until separately audited
-# and registered.
+# NOTE (#918): Workspace membership reflects crates present in this checkout.
+# Present contract crates (each with Cargo.toml and
+# [package.metadata.stellar-aid]) are registered above: shared, escrow,
+# verification, multi_sig, campaign_factory.
+#
+# contracts/campaign is not present on disk in this checkout and is therefore
+# not a workspace member. contracts/donation and contracts/withdrawal are
+# not present on disk and are not registered workspace members; if/when added
+# they must be audited, given [package.metadata.stellar-aid], and registered as
+# members (or explicitly excluded with rationale) before being built.
 
 [workspace.package]
 version = "0.1.0"

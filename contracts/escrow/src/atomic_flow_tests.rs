@@ -2,8 +2,8 @@
 
 extern crate std;
 use soroban_sdk::{
-    contract, contractimpl, symbol_short, testutils::Address as _, testutils::Ledger as _,
-    token, Address, Bytes, Env, IntoVal,
+    contract, contractimpl, symbol_short, testutils::Address as _, testutils::Ledger as _, token,
+    Address, Bytes, Env, IntoVal,
 };
 
 use crate::cross_contract::{AtomicCommitState, ATOMIC_COMMIT_MAX_LIFETIME_LEDGERS};
@@ -107,13 +107,8 @@ fn setup<'a>() -> Fixture<'a> {
 }
 
 fn fund_escrow(f: &Fixture) {
-    f.escrow.create_escrow(
-        &f.commission_id,
-        &f.client,
-        &f.artist,
-        &AMOUNT,
-        &f.config,
-    );
+    f.escrow
+        .create_escrow(&f.commission_id, &f.client, &f.artist, &AMOUNT, &f.config);
 }
 
 /// Move the ledger sequence forward, so the atomic commit's bounded lifetime and
@@ -495,15 +490,15 @@ fn atomic_commit_key_has_a_nonzero_ttl_after_access() {
     f.escrow.begin_atomic_commit(&f.commission_id);
 
     let key = crate::storage::DataKey::AtomicCommit(f.commission_id.clone());
-    let ttl = f
-        .env
-        .as_contract(&f.escrow_addr, || f.env.storage().persistent().get_ttl(&key));
+    let ttl = f.env.as_contract(&f.escrow_addr, || {
+        f.env.storage().persistent().get_ttl(&key)
+    });
     assert!(ttl > 0, "the commit marker must carry a live TTL");
 
     // A read must refresh it too, so polling does not let the entry lapse.
     f.escrow.get_atomic_commit(&f.commission_id);
-    let ttl_after_read = f
-        .env
-        .as_contract(&f.escrow_addr, || f.env.storage().persistent().get_ttl(&key));
+    let ttl_after_read = f.env.as_contract(&f.escrow_addr, || {
+        f.env.storage().persistent().get_ttl(&key)
+    });
     assert!(ttl_after_read > 0);
 }

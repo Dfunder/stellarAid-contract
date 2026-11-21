@@ -13,7 +13,7 @@ use types::{
     QualityScore, ReviewOutcome, VerificationRecord,
 };
 
-include!("../../semver_types.rs");
+use shared::impl_semver_queries;
 
 /// Weights applied to each quality criterion; they sum to 100 so the blended
 /// score stays on the same 0..=100 scale as the individual marks.
@@ -547,8 +547,8 @@ impl Verification {
     ) -> Result<(), VerificationError> {
         require_reviewer(&env, &reviewer)?;
 
-        let mut badge = load_badge(&env, &artist, badge_type)
-            .ok_or(VerificationError::BadgeNotFound)?;
+        let mut badge =
+            load_badge(&env, &artist, badge_type).ok_or(VerificationError::BadgeNotFound)?;
         if badge.status.revoked() {
             return Err(VerificationError::BadgeAlreadyRevoked);
         }
@@ -688,6 +688,14 @@ impl Verification {
     ///
     /// Has no rollout side effect: it never triggers a rollback. Call
     /// `evaluate_auto_rollback` to act on an anomaly.
+    /// One-call operator view: anomaly flag, status, metrics, SLA targets,
+    /// alert config and rollout state, all read from the same ledger.
+    /// Read-only (no alert event, no auto-rollback), so it is safe to simulate.
+    /// Prefer this over calling detect_anomaly, get_health_metrics,
+    /// get_sla_targets, get_alert_config and get_rollout_state separately.
+    pub fn get_health_snapshot(env: Env) -> shared::health::HealthSnapshot {
+        shared::health::health_snapshot(&env)
+    }
     pub fn health_check(env: Env) -> shared::health::HealthReport {
         shared::health::health_check(&env)
     }
@@ -726,7 +734,13 @@ impl Verification {
     pub fn get_flag_cap(env: Env) -> u32 {
         shared::rollout::flag_cap(&env)
     }
-    pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
+    pub fn set_canary_deployment(
+        env: Env,
+        admin: Address,
+        canary: Address,
+        stable: Address,
+        canary_bps: u32,
+    ) {
         admin.require_auth();
         shared::rollout::set_canary_deployment(&env, canary, stable, canary_bps);
     }
@@ -757,4 +771,3 @@ impl Verification {
         shared::rollout::trigger_rollback(&env, &admin);
     }
 }
-

@@ -51,6 +51,15 @@ pub fn get_escrow(env: &Env, id: &Bytes) -> EscrowRecord {
 }
 pub fn save_escrow(env: &Env, r: &EscrowRecord) {
     persistent::set(env, &DataKey::Escrow(r.commission_id.clone()), r);
+    env.storage()
+        .persistent()
+        .get(&DataKey::Escrow(id.clone()))
+        .unwrap()
+}
+pub fn save_escrow(env: &Env, r: &EscrowRecord) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::Escrow(r.commission_id.clone()), r);
 }
 
 // ── Atomic commit markers (#656) ────────────────────────────────────────────
@@ -67,6 +76,9 @@ pub const ATOMIC_COMMIT_TTL_LEDGERS: u32 = 432_000;
 /// `true` when a commit marker exists for `id`.
 pub fn atomic_marker_exists(env: &Env, id: &Bytes) -> bool {
     persistent::has(env, &DataKey::AtomicCommit(id.clone()))
+    env.storage()
+        .persistent()
+        .has(&DataKey::AtomicCommit(id.clone()))
 }
 
 /// Load the commit marker for `id`.
@@ -75,6 +87,10 @@ pub fn atomic_marker_exists(env: &Env, id: &Bytes) -> bool {
 /// alive use [`extend_atomic_marker_ttl`] (or [`get_atomic_marker_refreshed`]).
 pub fn get_atomic_marker(env: &Env, id: &Bytes) -> AtomicCommitMarker {
     persistent::get(env, &DataKey::AtomicCommit(id.clone())).unwrap()
+    env.storage()
+        .persistent()
+        .get(&DataKey::AtomicCommit(id.clone()))
+        .unwrap()
 }
 
 /// Load a commit marker and renew its TTL in the same access (#988).
@@ -94,6 +110,12 @@ pub fn extend_atomic_marker_ttl(env: &Env, id: &Bytes) {
         env.storage()
             .persistent()
             .extend_ttl(&key, ATOMIC_COMMIT_TTL_LEDGERS, ATOMIC_COMMIT_TTL_LEDGERS);
+    if env.storage().persistent().has(&key) {
+        env.storage().persistent().extend_ttl(
+            &key,
+            ATOMIC_COMMIT_TTL_LEDGERS,
+            ATOMIC_COMMIT_TTL_LEDGERS,
+        );
     }
 }
 
@@ -104,6 +126,12 @@ pub fn save_atomic_marker(env: &Env, marker: &AtomicCommitMarker) {
     env.storage()
         .persistent()
         .extend_ttl(&key, ATOMIC_COMMIT_TTL_LEDGERS, ATOMIC_COMMIT_TTL_LEDGERS);
+    env.storage().persistent().set(&key, marker);
+    env.storage().persistent().extend_ttl(
+        &key,
+        ATOMIC_COMMIT_TTL_LEDGERS,
+        ATOMIC_COMMIT_TTL_LEDGERS,
+    );
 }
 
 // ── Re-entrancy lock helpers (#484) ────────────────────────────────────────
@@ -116,6 +144,9 @@ pub fn is_locked(env: &Env) -> bool {
 /// Acquire the re-entrancy lock.
 pub fn set_locked(env: &Env) {
     instance::set(env, &DataKey::ReentrancyLock, &true);
+    env.storage()
+        .instance()
+        .set(&DataKey::ReentrancyLock, &true);
 }
 
 /// Release the re-entrancy lock.
@@ -159,4 +190,8 @@ pub fn get_dispute_ttl_ledgers(env: &Env) -> u32 {
 /// Persists the dispute-period TTL.
 pub fn set_dispute_ttl_ledgers(env: &Env, ledgers: u32) {
     instance::set(env, &DataKey::DisputeTtlLedgers, &ledgers);
+}
+    env.storage()
+        .instance()
+        .set(&DataKey::DisputeTtlLedgers, &ledgers);
 }

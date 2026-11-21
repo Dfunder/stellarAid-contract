@@ -67,6 +67,23 @@ defaults:
     working-directory: sdk/bindings
 
 jobs:
+  rust-check:
+    name: cargo check (workspace)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo check --workspace --all-targets
+        run: cargo check --workspace --all-targets --locked
+
   quality:
     name: typecheck, lint, test, build
     runs-on: ubuntu-latest

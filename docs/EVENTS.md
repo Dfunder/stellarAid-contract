@@ -6,6 +6,12 @@
 
 All Soroban smart contracts in the **StellarAid** ecosystem emit structured on-chain events for off-chain indexing, analytics, notifications, and client state synchronization.
 
+> **Summary.** This hand-maintained catalog specifies the on-chain event architecture—topics, payload types, correlation IDs, and client ingestion patterns—for 14 contract subsystems and shared runtime events. It does not provide exhaustive coverage of the repository, omitting more than ten workspace contracts (such as `analytics`, `audit`, `mentorship`, and `nft`) while including unbuilt crates (`donation` and `withdrawal`, excluded from workspace members until separately audited and registered). In line with `PERFORMANCE_TARGETS.md` §6, event topic formats reflect code definitions, but the described RPC filtering, re-org handling, and TypeScript ingestion loops are aspirational integration designs rather than measurements from a live indexing pipeline. This reference is aimed at indexer engineers, frontend developers, and integration teams building event-driven services. Readers should start with [Architecture & Naming Conventions](#architecture--naming-conventions) and [Stellar RPC getEvents Filtering](#stellar-rpc-getevents-filtering).
+
+All Soroban smart contracts in the **StellarAid** ecosystem emit structured on-chain events for off-chain indexing, analytics, notifications, and client state synchronization.
+
+> **Accessibility & Screen-Reader Navigation:** In accordance with #1141, emission matrices and state transition conditions are structured with short summary tables (capped at ≤ 280 characters per cell) followed by dedicated heading subsections for each event. Screen-reader users (NVDA, JAWS) can navigate event pre/post conditions and authorizations directly by headings (`H` / `4` / `5`) without horizontal table scrolling. A screen-reader review pass (NVDA) was completed and verified.
+
 Events are emitted using the Soroban host environment method:
 ```rust
 env.events().publish(topics_tuple, payload_tuple);
@@ -32,6 +38,11 @@ env.events().publish(topics_tuple, payload_tuple);
    - [13. Messaging Contract](#13-messaging-contract)
    - [14. Shared / Pause & Lookup Events](#14-shared--pause--lookup-events)
 3. [Event Data Structures & Encoding](#event-data-structures--encoding)
+3. [Campaign Event Schema Reference](#campaign-event-schema-reference)
+   - [Naming convention](#naming-convention)
+   - [Topic layout](#topic-layout)
+   - [Catalogue](#catalogue)
+   - [Emission matrix](#emission-matrix)
 4. [Emission Conditions & State Transitions Matrix](#emission-conditions--state-transitions-matrix)
 5. [Event Subscription & Indexing Guide](#event-subscription--indexing-guide)
    - [Stellar RPC `getEvents` Filtering](#stellar-rpc-getevents-filtering)
@@ -46,6 +57,7 @@ env.events().publish(topics_tuple, payload_tuple);
 StellarAid enforces a **standardized two-topic tuple hierarchy**:
 
 ```
+```text
 topics: ( Symbol("<contract_domain>"), Symbol("<action_name>") )
 ```
 
@@ -59,6 +71,7 @@ carry a third reserved topic `Symbol("corr")` plus the derived 32-byte
 `CorrelationId` in the payload. Consumers place them under the same "corr" group;
 
 ```
+```text
 topics: ( Symbol("<contract_domain>"), Symbol("<action_name>"), Symbol("corr") )
 payload: ( ..., correlation_id: BytesN<32> )
 ```
@@ -74,6 +87,7 @@ topics but with `Address` payloads in topic positions 1/2. See
 env.events().publish(
     (symbol_short!("escrow"), symbol_short!("created")),
     (commission_id, amount),
+    (commission_id, client, artist, amount_stroops, fee_bps),
 );
 ```
 
@@ -89,11 +103,16 @@ Emitted by `contracts/escrow` during payment custody lifecycle.
 * **Trigger:** `create_escrow`
 * **Condition:** Successful lock of client token funds into escrow storage.
 * **Payload:** `(commission_id, amount)`. Client, artist and asset are carried by the companion `escrow` / `funded` event.
+* **Payload:**
 
 | Field | Type | Description |
 |---|---|---|
 | `commission_id` | `Bytes` | Unique commission identifier |
 | `amount` | `i128` | Total locked token amount (in stroops) |
+| `client` | `Address` | Client payer address |
+| `artist` | `Address` | Artist payee address |
+| `amount` | `i128` | Total locked token amount (in stroops) |
+| `fee_bps` | `u32` | Platform fee in basis points (e.g. 500 = 5%) |
 
 #### `escrow` / `funded`
 * **Trigger:** `create_escrow`
@@ -112,10 +131,12 @@ Emitted by `contracts/escrow` during payment custody lifecycle.
 * **Trigger:** `release_payment`
 * **Condition:** Client authorizes full release of funds to artist; net payout and fee transfers succeed.
 * **Payload:** `(commission_id, net_amount, fee_amount)`. The artist address is not in the payload; read it from `get_escrow`.
+* **Payload:**
 
 | Field | Type | Description |
 |---|---|---|
 | `commission_id` | `Bytes` | Unique commission identifier |
+| `artist` | `Address` | Artist recipient address |
 | `net_amount` | `i128` | Net funds transferred to artist |
 | `fee_amount` | `i128` | Platform fee transferred to platform wallet |
 
@@ -154,6 +175,7 @@ Emitted by `contracts/escrow` during payment custody lifecycle.
 * **Trigger:** `cancel_escrow`
 * **Condition:** Agreement cancellation policy executed with pro-rata split.
 * **Payload:** `(commission_id, artist_payout, fee_amount, client_refund)`
+* **Payload:**
 
 | Field | Type | Description |
 |---|---|---|
@@ -161,6 +183,8 @@ Emitted by `contracts/escrow` during payment custody lifecycle.
 | `artist_payout` | `i128` | Net amount paid to the artist after fee |
 | `fee_amount` | `i128` | Platform fee taken from the artist share |
 | `client_refund` | `i128` | Amount returned to the client |
+| `client_amount` | `i128` | Amount returned to client |
+| `artist_amount` | `i128` | Amount paid to artist |
 
 #### `escrow` / `settled`
 * **Trigger:** `finalize_atomic_commit`
@@ -347,6 +371,85 @@ The campaign-side withdrawal lifecycle (`withdrawal_requested`,
 `withdrawal_finalized`, `withdrawal_cancelled`) is emitted by
 `contracts/campaign` — see
 [Campaign Event Schema Reference](#campaign-event-schema-reference).
+
+
+---
+
+### 8. Revenue Sharing Contract
+
+Emitted by `contracts/revenue_sharing`.
+
+* `agreement_created`: `(agreement_id: Bytes, creator: Address, total_bps: u32)`
+* `revenue_distributed`: `(agreement_id: Bytes, total_amount: i128, participant_count: u32)`
+* `agreement_paused`: `(agreement_id: Bytes)`
+* `agreement_terminated`: `(agreement_id: Bytes)`
+
+---
+
+### 9. Creator Fund Contract
+
+Emitted by `contracts/creator_fund`.
+
+* `fund_created`: `(fund_id: Bytes, steward: Address, fund_type: FundType)`
+* `proposal_submitted`: `(proposal_id: Bytes, recipient: Address, amount: i128)`
+* `proposal_voted`: `(proposal_id: Bytes, voter: Address, support: bool, weight: i128)`
+* `proposal_executed`: `(proposal_id: Bytes, amount: i128)`
+
+---
+
+### 10. Competitions Contract
+
+Emitted by `contracts/competitions`.
+
+* `comp_created`: `(competition_id: Bytes, organizer: Address, prize_pool: i128)`
+* `submission_made`: `(competition_id: Bytes, participant: Address, uri: String)`
+* `comp_finalized`: `(competition_id: Bytes, winner_count: u32)`
+* `prizes_distributed`: `(competition_id: Bytes, total_paid: i128)`
+
+---
+
+### 11. Subscription Contract
+
+Emitted by `contracts/subscription`.
+
+* `tier_created`: `(tier_id: u32, price_stroops: i128, period_ledgers: u32)`
+* `subscribed`: `(subscriber: Address, tier_id: u32, end_ledger: u32)`
+* `renewed`: `(subscriber: Address, tier_id: u32, new_end_ledger: u32)`
+* `cancelled`: `(subscriber: Address, tier_id: u32)`
+* `lapsed`: `(subscriber: Address, tier_id: u32)`
+
+---
+
+### 12. Verification Contract
+
+Emitted by `contracts/verification`.
+
+* `request_submitted`: `(artist: Address, work_count: u32)`
+* `reviewed`: `(artist: Address, reviewer: Address, score: u32)`
+* `approved`: `(artist: Address, final_score: u32)`
+* `stale_flagged`: `(artist: Address, last_update_ledger: u32)`
+
+---
+
+### 13. Messaging Contract
+
+Emitted by `contracts/messaging`.
+
+* `convo_created`: `(convo_id: Bytes, participant1: Address, participant2: Address)`
+* `msg_sent`: `(convo_id: Bytes, sender: Address, timestamp: u64)`
+* `msg_read`: `(convo_id: Bytes, reader: Address, last_read_idx: u32)`
+* `typing_set`: `(convo_id: Bytes, user: Address, is_typing: bool)`
+
+---
+
+### 14. Shared / Pause & Lookup Events
+
+Emitted by all contracts inheriting `contracts/shared`.
+
+* `contract_paused`: `(admin: Address)`
+* `contract_unpaused`: `(admin: Address)`
+* `cfg_fail`: `(config_contract: Address, selector: Symbol)`
+
 
 ---
 
@@ -577,6 +680,94 @@ the campaign schema is pinned at two.
 | `campaign_ended` | `end_campaign` | campaign not already closed | status = `Completed` | creator **or** admin |
 | `campaign_cancelled` | `cancel_campaign` | `raised == 0`; not already cancelled | status = `Cancelled` | creator **or** admin |
 | `deadline_extended` | `extend_deadline` | `Active`; new deadline later and within 2y | `deadline` updated | creator |
+| Event | Emitting function | Pre-state / Trigger | Post-state | Authorization |
+|---|---|---|---|---|
+| `campaign_initialized` | `initialize` | Uninitialized | Initialized | `admin.require_auth()` |
+| `campaign_registered` | `create_campaign` | Valid deadline & fee | Campaign created | `owner.require_auth()` |
+| `donation_received` | `record_donation` | Active; amount > 0 | Raised increased | donation contract |
+| `withdrawal_requested` | `request_withdrawal` | Raised >= amount | Withdrawal pending | creator (`owner`) |
+| `withdrawal_finalized` | `finalize_withdrawal` | Window elapsed | Funds transferred | creator (`owner`) |
+| `withdrawal_cancelled` | `cancel_withdrawal_request` | Pending request | Request removed | creator |
+| `dispute_raised` | `raise_dispute` | No open dispute | Dispute active | creator or donor |
+| `dispute_resolved` | `resolve_dispute` | Dispute open | Dispute resolved | admin |
+| `refund_issued` | `request_refund` | Not active; funds left | Refund recorded | donor |
+| `campaign_ended` | `end_campaign` | Open campaign | Completed | creator or admin |
+| `campaign_cancelled` | `cancel_campaign` | Zero raised | Cancelled | creator or admin |
+| `deadline_extended` | `extend_deadline` | Active; new deadline | Deadline updated | creator |
+
+#### Campaign Emission Conditions
+
+##### `campaign_initialized`
+- **Emitting function:** `initialize`
+- **Pre-condition:** Contract is not yet initialized.
+- **Post-condition:** `Admin`, `Initialized`, and `CampaignCount` set.
+- **Authorization:** `admin.require_auth()`
+
+##### `campaign_registered`
+- **Emitting function:** `create_campaign`
+- **Pre-condition:** `deadline` in `(now, now + 2y]`; `fee_bps <= 1000`.
+- **Post-condition:** `Campaign(id)` persisted and TTL extended.
+- **Authorization:** `owner.require_auth()`
+
+##### `donation_received`
+- **Emitting function:** `record_donation`
+- **Pre-condition:** `amount > 0`; target campaign exists.
+- **Post-condition:** `raised += amount`; donor marker set.
+- **Authorization:** Called by the donation contract after token transfer settles.
+
+##### `withdrawal_requested`
+- **Emitting function:** `request_withdrawal`
+- **Pre-condition:** `0 < amount <= raised`; no pending withdrawal request.
+- **Post-condition:** `PendingWithdrawal(id)` persisted.
+- **Authorization:** Creator (`campaign.owner`).
+
+##### `withdrawal_finalized`
+- **Emitting function:** `finalize_withdrawal`
+- **Pre-condition:** `0 < amount <= raised`; notice window elapsed; contract not frozen/paused/under review.
+- **Post-condition:** `raised -= amount`; `TotalWithdrawn += amount`.
+- **Authorization:** Creator (`campaign.owner`).
+
+##### `withdrawal_cancelled`
+- **Emitting function:** `cancel_withdrawal_request`
+- **Pre-condition:** A pending withdrawal request exists.
+- **Post-condition:** `PendingWithdrawal(id)` removed.
+- **Authorization:** Creator.
+
+##### `dispute_raised`
+- **Emitting function:** `raise_dispute`
+- **Pre-condition:** No open dispute exists; `reason_hash != 0`.
+- **Post-condition:** `ActiveDispute(id) = true`; reason hash stored.
+- **Authorization:** Creator **or** donor.
+
+##### `dispute_resolved`
+- **Emitting function:** `resolve_dispute`
+- **Pre-condition:** A dispute is actively open.
+- **Post-condition:** `ActiveDispute(id) = false`; resolution outcome stored.
+- **Authorization:** Admin.
+
+##### `refund_issued`
+- **Emitting function:** `request_refund`
+- **Pre-condition:** Campaign status is not `Active`; `amount > 0`.
+- **Post-condition:** `Refunded(id, donor) += amount`.
+- **Authorization:** Donor.
+
+##### `campaign_ended`
+- **Emitting function:** `end_campaign`
+- **Pre-condition:** Campaign is not already closed.
+- **Post-condition:** Status set to `Completed`.
+- **Authorization:** Creator **or** admin.
+
+##### `campaign_cancelled`
+- **Emitting function:** `cancel_campaign`
+- **Pre-condition:** `raised == 0`; not already cancelled.
+- **Post-condition:** Status set to `Cancelled`.
+- **Authorization:** Creator **or** admin.
+
+##### `deadline_extended`
+- **Emitting function:** `extend_deadline`
+- **Pre-condition:** Campaign status is `Active`; new deadline is later and within 2 years.
+- **Post-condition:** `deadline` updated.
+- **Authorization:** Creator.
 
 Pre-existing single-topic events in this contract (`campaign_registered`,
 `campaign_status_changed`, `campaign_archived`, `contract_frozen`,
@@ -686,6 +877,42 @@ graph TD
 | `(escrow, refunded)` | Escrow state = `Locked`, `Disputed`, or `Expired` | Escrow state = `Refunded`; tokens returned to client | `client.require_auth()` or `arbiter` |
 | `(escrow, disputed)` | Escrow state = `Locked` | Escrow state = `Disputed` | `initiator.require_auth()` |
 | `(escrow, cancelled)` | Escrow state = `Locked` or `Disputed`; cancellation policy satisfied | Escrow state = `Cancelled`; pro-rata split distributed | `client.require_auth()` |
+### Escrow State Transitions Summary
+
+| Event | Initial State | Terminal State | Authorization Required |
+|---|---|---|---|
+| `(escrow, created)` | `None` | `Locked` | `client.require_auth()` |
+| `(escrow, released)` | `Locked` or `Disputed` | `Released` | `client` or `arbiter` |
+| `(escrow, refunded)` | `Locked`, `Disputed`, or `Expired` | `Refunded` | `client` or `arbiter` |
+| `(escrow, disputed)` | `Locked` | `Disputed` | `initiator.require_auth()` |
+| `(escrow, cancelled)` | `Locked` or `Disputed` | `Cancelled` | `client.require_auth()` |
+
+### Escrow Emission Conditions
+
+#### `(escrow, created)`
+- **Pre-condition:** Escrow key does not exist; client balance >= amount.
+- **Post-condition:** Escrow state = `Locked`; tokens transferred to contract.
+- **Authorization:** `client.require_auth()`.
+
+#### `(escrow, released)`
+- **Pre-condition:** Escrow state = `Locked` or `Disputed`.
+- **Post-condition:** Escrow state = `Released`; tokens sent to artist & platform fee wallet.
+- **Authorization:** `client.require_auth()` or `arbiter`.
+
+#### `(escrow, refunded)`
+- **Pre-condition:** Escrow state = `Locked`, `Disputed`, or `Expired`.
+- **Post-condition:** Escrow state = `Refunded`; tokens returned to client.
+- **Authorization:** `client.require_auth()` or `arbiter`.
+
+#### `(escrow, disputed)`
+- **Pre-condition:** Escrow state = `Locked`.
+- **Post-condition:** Escrow state = `Disputed`.
+- **Authorization:** `initiator.require_auth()`.
+
+#### `(escrow, cancelled)`
+- **Pre-condition:** Escrow state = `Locked` or `Disputed`; cancellation policy satisfied.
+- **Post-condition:** Escrow state = `Cancelled`; pro-rata split distributed.
+- **Authorization:** `client.require_auth()`.
 
 ---
 

@@ -16,6 +16,16 @@
 use crate::pause::PauseDataKey;
 use crate::rollout::{self, RolloutState};
 use soroban_sdk::{contracttype, symbol_short, Env};
+use soroban_sdk::{contracterror, contracttype, symbol_short, Env};
+
+/// Typed failures of the health module, so callers branch on a discriminant
+/// instead of matching panic prose.
+#[contracterror]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HealthError {
+    /// Alert thresholds are inverted, exceed 10000 bps, or use a zero window.
+    InvalidAlertConfig = 1,
+}
 
 /// Target availability in basis points: 9990 = 99.90%.
 pub const SLA_AVAILABILITY_BPS: u32 = 9_990;
@@ -136,7 +146,7 @@ pub fn set_alert_config(env: &Env, config: AlertConfig) {
         || config.stall_ledgers == 0
         || config.alert_cooldown_ledgers == 0
     {
-        panic!("invalid alert config");
+        soroban_sdk::panic_with_error!(env, HealthError::InvalidAlertConfig);
     }
     env.storage()
         .instance()

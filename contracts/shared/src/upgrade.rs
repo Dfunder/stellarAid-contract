@@ -58,7 +58,9 @@ pub fn record_upgrade(env: &Env, admin: &Address, version: ContractVersion) {
     admin.require_auth();
     let prev: Option<ContractVersion> = env.storage().instance().get(&UpgradeKey::Version);
     env.storage().instance().set(&UpgradeKey::Version, &version);
-    env.storage().instance().set(&UpgradeKey::LastUpgradeLedger, &env.ledger().sequence());
+    env.storage()
+        .instance()
+        .set(&UpgradeKey::LastUpgradeLedger, &env.ledger().sequence());
     env.events().publish(
         (symbol_short!("upgraded"),),
         (prev, version, env.ledger().sequence()),
@@ -70,7 +72,11 @@ pub fn get_version(env: &Env) -> ContractVersion {
     env.storage()
         .instance()
         .get(&UpgradeKey::Version)
-        .unwrap_or(ContractVersion { major: 0, minor: 0, patch: 0 })
+        .unwrap_or(ContractVersion {
+            major: 0,
+            minor: 0,
+            patch: 0,
+        })
 }
 
 /// Panic if the contract is not paused.
@@ -79,12 +85,13 @@ pub fn get_version(env: &Env) -> ContractVersion {
 /// no operations are in progress during WASM replacement (closes #595).
 pub fn require_paused_for_upgrade(env: &Env) {
     // Read the pause flag written by `shared::pause`.
-    let paused: bool = env.storage()
+    let paused: bool = env
+        .storage()
         .instance()
         .get(&crate::pause::PauseDataKey::Paused)
         .unwrap_or(false);
     if !paused {
-        panic!("contract must be paused before upgrading");
+        soroban_sdk::panic_with_error!(env, crate::pause::PauseError::NotPaused);
     }
 }
 
@@ -92,9 +99,11 @@ pub fn require_paused_for_upgrade(env: &Env) {
 /// off-chain data migration script before resuming operations.
 ///
 /// Closes #595.
-pub fn signal_migration_needed(env: &Env, from_version: ContractVersion, to_version: ContractVersion) {
-    env.events().publish(
-        (symbol_short!("mig_need"),),
-        (from_version, to_version),
-    );
+pub fn signal_migration_needed(
+    env: &Env,
+    from_version: ContractVersion,
+    to_version: ContractVersion,
+) {
+    env.events()
+        .publish((symbol_short!("mig_need"),), (from_version, to_version));
 }

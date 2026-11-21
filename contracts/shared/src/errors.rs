@@ -225,7 +225,9 @@ impl SharedErrorCode {
             Self::DisputeUnauthorized => "dispute: unauthorized",
 
             Self::CircuitBreakerTripped => "circuit breaker is tripped; operations halted",
-            Self::CircuitBreakerAutoHalted => "circuit breaker auto-halted: error threshold exceeded",
+            Self::CircuitBreakerAutoHalted => {
+                "circuit breaker auto-halted: error threshold exceeded"
+            }
             Self::CircuitBreakerAlreadyHalted => "circuit breaker is already halted",
             Self::CircuitBreakerNotHalted => "circuit breaker is not halted; cannot reset",
             Self::CircuitBreakerRecoveryPending => "circuit breaker recovery is time-locked",

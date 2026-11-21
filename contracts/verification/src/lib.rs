@@ -13,7 +13,7 @@ use types::{
     QualityScore, ReviewOutcome, VerificationRecord,
 };
 
-include!("../../semver_types.rs");
+use shared::impl_semver_queries;
 
 /// Weights applied to each quality criterion; they sum to 100 so the blended
 /// score stays on the same 0..=100 scale as the individual marks.
@@ -547,8 +547,8 @@ impl Verification {
     ) -> Result<(), VerificationError> {
         require_reviewer(&env, &reviewer)?;
 
-        let mut badge = load_badge(&env, &artist, badge_type)
-            .ok_or(VerificationError::BadgeNotFound)?;
+        let mut badge =
+            load_badge(&env, &artist, badge_type).ok_or(VerificationError::BadgeNotFound)?;
         if badge.status.revoked() {
             return Err(VerificationError::BadgeAlreadyRevoked);
         }
@@ -732,7 +732,13 @@ impl Verification {
     pub fn get_flag_cap(env: Env) -> u32 {
         shared::rollout::flag_cap(&env)
     }
-    pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
+    pub fn set_canary_deployment(
+        env: Env,
+        admin: Address,
+        canary: Address,
+        stable: Address,
+        canary_bps: u32,
+    ) {
         admin.require_auth();
         shared::rollout::set_canary_deployment(&env, canary, stable, canary_bps);
     }
@@ -754,4 +760,3 @@ impl Verification {
         shared::rollout::trigger_rollback(&env, &admin);
     }
 }
-

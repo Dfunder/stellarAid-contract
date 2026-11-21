@@ -11,13 +11,13 @@
 //!
 //! ## Time-locked recovery (#711)
 //!
-//! An immediate `unpause` means a single compromised — or simply mistaken —
+//! An immediate `unpause` means a single compromised - or simply mistaken -
 //! admin keypress undoes an emergency stop. [`schedule_recovery`] arms a
 //! time-lock instead: it records the ledger at which recovery matures, and
 //! [`unpause`] then *refuses* to run before that ledger. The chosen flow is:
 //!
-//! 1. `pause(&env, &admin)` — stop the contract.
-//! 2. `schedule_recovery(&env, &admin, delay_ledgers)` — declare the intent to
+//! 1. `pause(&env, &admin)` - stop the contract.
+//! 2. `schedule_recovery(&env, &admin, delay_ledgers)` - declare the intent to
 //!    resume. Returns the ledger at which recovery matures and emits
 //!    `recovery_scheduled`. Further pauses clear the pending lock.
 //! 3. Wait for the lock to mature. Monitors can watch `recovery_eta`.
@@ -40,7 +40,7 @@
 //! ## Known limitation
 //!
 //! The five consumer contracts have not been migrated to
-//! [`require_not_paused_typed`] yet — that is deliberately **not** done in the
+//! [`require_not_paused_typed`] yet - that is deliberately **not** done in the
 //! #711 change, because those contracts are out of scope for it. They still
 //! see an abort (a `HostError`) instead of a `PauseError` they can inspect.
 //! Adopting the typed error is a follow-up that touches `escrow`,
@@ -108,8 +108,8 @@ pub fn get_suggestion(error: PauseError) -> Symbol {
 #[contracttype]
 pub enum PauseDataKey {
     Paused,
-    /// Ledger at which a scheduled recovery matures. `0` — the value stored by
-    /// `pause` and by `cancel_recovery` — means "no recovery armed". A scheduled
+    /// Ledger at which a scheduled recovery matures. `0` - the value stored by
+    /// `pause` and by `cancel_recovery` - means "no recovery armed". A scheduled
     /// recovery always lands on `now + delay` with `delay >= 1`, so `0` is an
     /// unambiguous sentinel (#711).
     RecoveryEta,
@@ -148,7 +148,7 @@ pub struct RecoveryCompletedEvent {
     pub eta_ledger: u32,
 }
 
-// ── Visibility ───────────────────────────────────────────────────────────────
+// -- Visibility ---------------------------------------------------------------
 
 /// `true` when the contract is currently paused.
 ///
@@ -171,7 +171,7 @@ pub fn recovery_eta(env: &Env) -> Option<u32> {
     }
 }
 
-// ── Guards ───────────────────────────────────────────────────────────────────
+// -- Guards -------------------------------------------------------------------
 
 /// Typed guard: returns [`PauseError::ContractPaused`] instead of aborting.
 ///
@@ -197,7 +197,7 @@ pub fn require_not_paused(env: &Env) {
     }
 }
 
-// ── Pause / recovery ─────────────────────────────────────────────────────────
+// -- Pause / recovery ---------------------------------------------------------
 
 /// Pause the contract. Any pending recovery is cleared: a fresh stop invalidates
 /// whatever the admin had scheduled before (#711).
@@ -293,5 +293,105 @@ pub fn try_unpause(env: &Env, admin: &Address) -> Result<(), PauseError> {
 pub fn unpause(env: &Env, admin: &Address) {
     if let Err(err) = try_unpause(env, admin) {
         panic!("{}", err);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use super::*;
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
+
+    fn setup() -> (Env, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        env.ledger().with_mut(|l| l.sequence_number = 10);
+        (env, admin)
+    }
+
+    #[test]
+    fn pause_sets_flag_and_guard_rejects() {
+        let (env, admin) = setup();
+        assert!(!is_paused(&env));
+        pause(&env, &admin);
+        assert!(is_paused(&env));
+        assert_eq!(
+            require_not_paused_typed(&env),
+            Err(PauseError::ContractPaused)
+        );
+        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            require_not_paused(&env);
+        }));
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn unpause_is_refused_before_maturity_and_allowed_on_it() {
+        let (env, admin) = setup();
+        pause(&env, &admin);
+        let eta = schedule_recovery(&env, &admin, 5).unwrap();
+        assert_eq!(eta, 15);
+        assert_eq!(recovery_eta(&env), Some(15));
+
+        env.ledger().with_mut(|l| l.sequence_number = 14);
+        assert_eq!(try_unpause(&env, &admin), Err(PauseError::RecoveryPending));
+        assert!(is_paused(&env));
+
+        env.ledger().with_mut(|l| l.sequence_number = 15);
+        assert_eq!(try_unpause(&env, &admin), Ok(()));
+        assert!(!is_paused(&env));
+        assert_eq!(recovery_eta(&env), None);
+    }
+
+    #[test]
+    fn repausing_clears_a_pending_recovery() {
+        let (env, admin) = setup();
+        pause(&env, &admin);
+        schedule_recovery(&env, &admin, 5).unwrap();
+        assert_eq!(recovery_eta(&env), Some(15));
+
+        pause(&env, &admin);
+        assert_eq!(recovery_eta(&env), None);
+        assert!(is_paused(&env));
+    }
+
+    #[test]
+    fn cancel_recovery_disarms_without_unpausing() {
+        let (env, admin) = setup();
+        pause(&env, &admin);
+        schedule_recovery(&env, &admin, 5).unwrap();
+        assert_eq!(cancel_recovery(&env, &admin), Ok(()));
+        assert!(is_paused(&env));
+        assert_eq!(recovery_eta(&env), None);
+        assert_eq!(
+            cancel_recovery(&env, &admin),
+            Err(PauseError::RecoveryNotScheduled)
+        );
+    }
+
+    #[test]
+    fn unpause_without_a_scheduled_recovery_is_immediate() {
+        let (env, admin) = setup();
+        pause(&env, &admin);
+        unpause(&env, &admin);
+        assert!(!is_paused(&env));
+        assert_eq!(recovery_eta(&env), None);
+    }
+
+    #[test]
+    fn invalid_recovery_delays_are_rejected() {
+        let (env, admin) = setup();
+        pause(&env, &admin);
+        assert_eq!(
+            schedule_recovery(&env, &admin, 0),
+            Err(PauseError::InvalidRecoveryDelay)
+        );
+        assert_eq!(
+            schedule_recovery(&env, &admin, MAX_RECOVERY_DELAY_LEDGERS + 1),
+            Err(PauseError::InvalidRecoveryDelay)
+        );
+        assert_eq!(recovery_eta(&env), None);
     }
 }

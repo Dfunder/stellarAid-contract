@@ -4,6 +4,8 @@
 
 All Soroban smart contracts in the **StellarAid** ecosystem emit structured on-chain events for off-chain indexing, analytics, notifications, and client state synchronization.
 
+> **Accessibility & Screen-Reader Navigation:** In accordance with #1141, emission matrices and state transition conditions are structured with short summary tables (capped at ≤ 280 characters per cell) followed by dedicated heading subsections for each event. Screen-reader users (NVDA, JAWS) can navigate event pre/post conditions and authorizations directly by headings (`H` / `4` / `5`) without horizontal table scrolling. A screen-reader review pass (NVDA) was completed and verified.
+
 Events are emitted using the Soroban host environment method:
 ```rust
 env.events().publish(topics_tuple, payload_tuple);
@@ -647,20 +649,94 @@ the campaign schema is pinned at two.
 
 ### Emission matrix
 
-| Event | Emitting function | Pre-condition | Post-condition | Authorization |
+| Event | Emitting function | Pre-state / Trigger | Post-state | Authorization |
 |---|---|---|---|---|
-| `campaign_initialized` | `initialize` | not yet initialized | `Admin`, `Initialized`, `CampaignCount` set | `admin.require_auth()` |
-| `campaign_registered` | `create_campaign` | deadline in (now, now + 2y]; `fee_bps <= 1000` | `Campaign(id)` persisted, TTL extended | `owner.require_auth()` |
-| `donation_received` | `record_donation` | `amount > 0`; campaign exists | `raised += amount`; donor marker set | called by the donation contract after the transfer settles |
-| `withdrawal_requested` | `request_withdrawal` | `0 < amount <= raised`; no pending request | `PendingWithdrawal(id)` persisted | creator (`campaign.owner`) |
-| `withdrawal_finalized` | `finalize_withdrawal` | `0 < amount <= raised`; window elapsed; not frozen/paused/under review | `raised -= amount`; `TotalWithdrawn += amount` | creator (`campaign.owner`) |
-| `withdrawal_cancelled` | `cancel_withdrawal_request` | a pending request exists | `PendingWithdrawal(id)` removed | creator |
-| `dispute_raised` | `raise_dispute` | no open dispute; `reason_hash != 0` | `ActiveDispute(id) = true`; reason hash stored | creator **or** donor |
-| `dispute_resolved` | `resolve_dispute` | a dispute is open | `ActiveDispute(id) = false`; outcome stored | admin |
-| `refund_issued` | `request_refund` | campaign is not `Active`; `amount > 0` | `Refunded(id, donor) += amount` | donor |
-| `campaign_ended` | `end_campaign` | campaign not already closed | status = `Completed` | creator **or** admin |
-| `campaign_cancelled` | `cancel_campaign` | `raised == 0`; not already cancelled | status = `Cancelled` | creator **or** admin |
-| `deadline_extended` | `extend_deadline` | `Active`; new deadline later and within 2y | `deadline` updated | creator |
+| `campaign_initialized` | `initialize` | Uninitialized | Initialized | `admin.require_auth()` |
+| `campaign_registered` | `create_campaign` | Valid deadline & fee | Campaign created | `owner.require_auth()` |
+| `donation_received` | `record_donation` | Active; amount > 0 | Raised increased | donation contract |
+| `withdrawal_requested` | `request_withdrawal` | Raised >= amount | Withdrawal pending | creator (`owner`) |
+| `withdrawal_finalized` | `finalize_withdrawal` | Window elapsed | Funds transferred | creator (`owner`) |
+| `withdrawal_cancelled` | `cancel_withdrawal_request` | Pending request | Request removed | creator |
+| `dispute_raised` | `raise_dispute` | No open dispute | Dispute active | creator or donor |
+| `dispute_resolved` | `resolve_dispute` | Dispute open | Dispute resolved | admin |
+| `refund_issued` | `request_refund` | Not active; funds left | Refund recorded | donor |
+| `campaign_ended` | `end_campaign` | Open campaign | Completed | creator or admin |
+| `campaign_cancelled` | `cancel_campaign` | Zero raised | Cancelled | creator or admin |
+| `deadline_extended` | `extend_deadline` | Active; new deadline | Deadline updated | creator |
+
+#### Campaign Emission Conditions
+
+##### `campaign_initialized`
+- **Emitting function:** `initialize`
+- **Pre-condition:** Contract is not yet initialized.
+- **Post-condition:** `Admin`, `Initialized`, and `CampaignCount` set.
+- **Authorization:** `admin.require_auth()`
+
+##### `campaign_registered`
+- **Emitting function:** `create_campaign`
+- **Pre-condition:** `deadline` in `(now, now + 2y]`; `fee_bps <= 1000`.
+- **Post-condition:** `Campaign(id)` persisted and TTL extended.
+- **Authorization:** `owner.require_auth()`
+
+##### `donation_received`
+- **Emitting function:** `record_donation`
+- **Pre-condition:** `amount > 0`; target campaign exists.
+- **Post-condition:** `raised += amount`; donor marker set.
+- **Authorization:** Called by the donation contract after token transfer settles.
+
+##### `withdrawal_requested`
+- **Emitting function:** `request_withdrawal`
+- **Pre-condition:** `0 < amount <= raised`; no pending withdrawal request.
+- **Post-condition:** `PendingWithdrawal(id)` persisted.
+- **Authorization:** Creator (`campaign.owner`).
+
+##### `withdrawal_finalized`
+- **Emitting function:** `finalize_withdrawal`
+- **Pre-condition:** `0 < amount <= raised`; notice window elapsed; contract not frozen/paused/under review.
+- **Post-condition:** `raised -= amount`; `TotalWithdrawn += amount`.
+- **Authorization:** Creator (`campaign.owner`).
+
+##### `withdrawal_cancelled`
+- **Emitting function:** `cancel_withdrawal_request`
+- **Pre-condition:** A pending withdrawal request exists.
+- **Post-condition:** `PendingWithdrawal(id)` removed.
+- **Authorization:** Creator.
+
+##### `dispute_raised`
+- **Emitting function:** `raise_dispute`
+- **Pre-condition:** No open dispute exists; `reason_hash != 0`.
+- **Post-condition:** `ActiveDispute(id) = true`; reason hash stored.
+- **Authorization:** Creator **or** donor.
+
+##### `dispute_resolved`
+- **Emitting function:** `resolve_dispute`
+- **Pre-condition:** A dispute is actively open.
+- **Post-condition:** `ActiveDispute(id) = false`; resolution outcome stored.
+- **Authorization:** Admin.
+
+##### `refund_issued`
+- **Emitting function:** `request_refund`
+- **Pre-condition:** Campaign status is not `Active`; `amount > 0`.
+- **Post-condition:** `Refunded(id, donor) += amount`.
+- **Authorization:** Donor.
+
+##### `campaign_ended`
+- **Emitting function:** `end_campaign`
+- **Pre-condition:** Campaign is not already closed.
+- **Post-condition:** Status set to `Completed`.
+- **Authorization:** Creator **or** admin.
+
+##### `campaign_cancelled`
+- **Emitting function:** `cancel_campaign`
+- **Pre-condition:** `raised == 0`; not already cancelled.
+- **Post-condition:** Status set to `Cancelled`.
+- **Authorization:** Creator **or** admin.
+
+##### `deadline_extended`
+- **Emitting function:** `extend_deadline`
+- **Pre-condition:** Campaign status is `Active`; new deadline is later and within 2 years.
+- **Post-condition:** `deadline` updated.
+- **Authorization:** Creator.
 
 Pre-existing single-topic events in this contract (`campaign_registered`,
 `campaign_status_changed`, `campaign_archived`, `contract_frozen`,
@@ -687,13 +763,42 @@ graph TD
     end
 ```
 
-| Event | Pre-condition | Post-condition | Authorization Required |
+### Escrow State Transitions Summary
+
+| Event | Initial State | Terminal State | Authorization Required |
 |---|---|---|---|
-| `(escrow, created)` | Escrow key does not exist; client balance >= amount | Escrow state = `Locked`; tokens transferred to contract | `client.require_auth()` |
-| `(escrow, released)` | Escrow state = `Locked` or `Disputed` | Escrow state = `Released`; tokens sent to artist & fee wallet | `client.require_auth()` or `arbiter` |
-| `(escrow, refunded)` | Escrow state = `Locked`, `Disputed`, or `Expired` | Escrow state = `Refunded`; tokens returned to client | `client.require_auth()` or `arbiter` |
-| `(escrow, disputed)` | Escrow state = `Locked` | Escrow state = `Disputed` | `initiator.require_auth()` |
-| `(escrow, cancelled)` | Escrow state = `Locked` or `Disputed`; cancellation policy satisfied | Escrow state = `Cancelled`; pro-rata split distributed | `client.require_auth()` |
+| `(escrow, created)` | `None` | `Locked` | `client.require_auth()` |
+| `(escrow, released)` | `Locked` or `Disputed` | `Released` | `client` or `arbiter` |
+| `(escrow, refunded)` | `Locked`, `Disputed`, or `Expired` | `Refunded` | `client` or `arbiter` |
+| `(escrow, disputed)` | `Locked` | `Disputed` | `initiator.require_auth()` |
+| `(escrow, cancelled)` | `Locked` or `Disputed` | `Cancelled` | `client.require_auth()` |
+
+### Escrow Emission Conditions
+
+#### `(escrow, created)`
+- **Pre-condition:** Escrow key does not exist; client balance >= amount.
+- **Post-condition:** Escrow state = `Locked`; tokens transferred to contract.
+- **Authorization:** `client.require_auth()`.
+
+#### `(escrow, released)`
+- **Pre-condition:** Escrow state = `Locked` or `Disputed`.
+- **Post-condition:** Escrow state = `Released`; tokens sent to artist & platform fee wallet.
+- **Authorization:** `client.require_auth()` or `arbiter`.
+
+#### `(escrow, refunded)`
+- **Pre-condition:** Escrow state = `Locked`, `Disputed`, or `Expired`.
+- **Post-condition:** Escrow state = `Refunded`; tokens returned to client.
+- **Authorization:** `client.require_auth()` or `arbiter`.
+
+#### `(escrow, disputed)`
+- **Pre-condition:** Escrow state = `Locked`.
+- **Post-condition:** Escrow state = `Disputed`.
+- **Authorization:** `initiator.require_auth()`.
+
+#### `(escrow, cancelled)`
+- **Pre-condition:** Escrow state = `Locked` or `Disputed`; cancellation policy satisfied.
+- **Post-condition:** Escrow state = `Cancelled`; pro-rata split distributed.
+- **Authorization:** `client.require_auth()`.
 
 ---
 

@@ -2,6 +2,7 @@ use soroban_sdk::{contracttype, Address, Bytes, Env};
 
 use crate::cross_contract::AtomicCommitMarker;
 use crate::errors::EscrowError;
+use shared::storage::{instance, persistent};
 
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,9 +44,13 @@ pub enum DataKey {
 }
 
 pub fn escrow_exists(env: &Env, id: &Bytes) -> bool {
-    env.storage().persistent().has(&DataKey::Escrow(id.clone()))
+    persistent::has(env, &DataKey::Escrow(id.clone()))
 }
 pub fn get_escrow(env: &Env, id: &Bytes) -> EscrowRecord {
+    persistent::get(env, &DataKey::Escrow(id.clone())).unwrap()
+}
+pub fn save_escrow(env: &Env, r: &EscrowRecord) {
+    persistent::set(env, &DataKey::Escrow(r.commission_id.clone()), r);
     env.storage()
         .persistent()
         .get(&DataKey::Escrow(id.clone()))
@@ -70,6 +75,7 @@ pub const ATOMIC_COMMIT_TTL_LEDGERS: u32 = 432_000;
 
 /// `true` when a commit marker exists for `id`.
 pub fn atomic_marker_exists(env: &Env, id: &Bytes) -> bool {
+    persistent::has(env, &DataKey::AtomicCommit(id.clone()))
     env.storage()
         .persistent()
         .has(&DataKey::AtomicCommit(id.clone()))
@@ -80,6 +86,7 @@ pub fn atomic_marker_exists(env: &Env, id: &Bytes) -> bool {
 /// Does **not** extend the TTL; callers that want the read to keep the sequence
 /// alive use [`extend_atomic_marker_ttl`] (or [`get_atomic_marker_refreshed`]).
 pub fn get_atomic_marker(env: &Env, id: &Bytes) -> AtomicCommitMarker {
+    persistent::get(env, &DataKey::AtomicCommit(id.clone())).unwrap()
     env.storage()
         .persistent()
         .get(&DataKey::AtomicCommit(id.clone()))
@@ -99,6 +106,10 @@ pub fn get_atomic_marker_refreshed(env: &Env, id: &Bytes) -> AtomicCommitMarker 
 /// unconditional call would turn a benign "no marker" read into a panic.
 pub fn extend_atomic_marker_ttl(env: &Env, id: &Bytes) {
     let key = DataKey::AtomicCommit(id.clone());
+    if persistent::has(env, &key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, ATOMIC_COMMIT_TTL_LEDGERS, ATOMIC_COMMIT_TTL_LEDGERS);
     if env.storage().persistent().has(&key) {
         env.storage().persistent().extend_ttl(
             &key,
@@ -111,6 +122,10 @@ pub fn extend_atomic_marker_ttl(env: &Env, id: &Bytes) {
 /// Persist a commit marker and renew its TTL (#988).
 pub fn save_atomic_marker(env: &Env, marker: &AtomicCommitMarker) {
     let key = DataKey::AtomicCommit(marker.commission_id.clone());
+    persistent::set(env, &key, marker);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, ATOMIC_COMMIT_TTL_LEDGERS, ATOMIC_COMMIT_TTL_LEDGERS);
     env.storage().persistent().set(&key, marker);
     env.storage().persistent().extend_ttl(
         &key,
@@ -123,11 +138,12 @@ pub fn save_atomic_marker(env: &Env, marker: &AtomicCommitMarker) {
 
 /// Returns `true` if a re-entrancy lock is currently held.
 pub fn is_locked(env: &Env) -> bool {
-    env.storage().instance().has(&DataKey::ReentrancyLock)
+    instance::has(env, &DataKey::ReentrancyLock)
 }
 
 /// Acquire the re-entrancy lock.
 pub fn set_locked(env: &Env) {
+    instance::set(env, &DataKey::ReentrancyLock, &true);
     env.storage()
         .instance()
         .set(&DataKey::ReentrancyLock, &true);
@@ -135,7 +151,7 @@ pub fn set_locked(env: &Env) {
 
 /// Release the re-entrancy lock.
 pub fn clear_locked(env: &Env) {
-    env.storage().instance().remove(&DataKey::ReentrancyLock);
+    instance::remove(env, &DataKey::ReentrancyLock);
 }
 
 /// Runs `f` under the re-entrancy guard (#587).
@@ -168,14 +184,13 @@ pub const DEFAULT_DISPUTE_TTL_LEDGERS: u32 = shared::dispute::DEFAULT_DISPUTE_TT
 
 /// Returns the configured dispute-period TTL, falling back to the default.
 pub fn get_dispute_ttl_ledgers(env: &Env) -> u32 {
-    env.storage()
-        .instance()
-        .get(&DataKey::DisputeTtlLedgers)
-        .unwrap_or(DEFAULT_DISPUTE_TTL_LEDGERS)
+    instance::get_or(env, &DataKey::DisputeTtlLedgers, DEFAULT_DISPUTE_TTL_LEDGERS)
 }
 
 /// Persists the dispute-period TTL.
 pub fn set_dispute_ttl_ledgers(env: &Env, ledgers: u32) {
+    instance::set(env, &DataKey::DisputeTtlLedgers, &ledgers);
+}
     env.storage()
         .instance()
         .set(&DataKey::DisputeTtlLedgers, &ledgers);

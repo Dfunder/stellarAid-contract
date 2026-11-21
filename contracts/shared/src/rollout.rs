@@ -438,7 +438,10 @@ fn apply_rollback(env: &Env) {
         .publish((symbol_short!("rollback"),), env.ledger().sequence());
 }
 
-/// Automatic rollback used by health checks when the trigger fires.
+/// Automatic rollback when the trigger fires.
+///
+/// Not called by `health_check` (monitoring has no deployment side effect).
+/// Contracts expose it explicitly as `evaluate_auto_rollback`.
 pub fn maybe_auto_rollback(env: &Env) -> bool {
     if get_phase(env) == RolloutPhase::RolledBack {
         return true;

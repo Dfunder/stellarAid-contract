@@ -15,10 +15,10 @@
 #   warnings — and nothing verified the target network is reachable. Both are
 #   cheap to check and expensive to discover mid-deploy.
 #
-#   This script closes that gap. It runs the repository's own gates (fmt,
-#   clippy, test, WASM build), checks the environment variables the deploy will
-#   need, probes the target network, and then hands off to the deploy
-#   preflight so the two compose rather than duplicate.
+#   This script closes that gap. It runs the repository's own gates (cargo
+#   check, fmt, clippy, test, WASM build), checks the environment variables the
+#   deploy will need, probes the target network, and then hands off to the
+#   deploy preflight so the two compose rather than duplicate.
 #
 #   It is a superset: running only this script is sufficient, and it is what
 #   `make preflight` and the deploy scripts call.
@@ -215,16 +215,20 @@ else
 fi
 
 # ── 3. Repository gates ─────────────────────────────────────────────────────
-# The same commands CI runs. `cargo fmt --all -- --check` and clippy are
-# deliberately run from $REPO_ROOT rather than through the scripts/ helpers,
-# because those helpers are separately tracked and may be mid-fix.
-run_gate "3a. cargo fmt --all -- --check" \
+# The same commands CI runs. A fast `cargo check` runs first so compile errors
+# are caught before slower gates/builds. `cargo fmt --all -- --check` and
+# clippy are deliberately run from $REPO_ROOT rather than through the scripts/
+# helpers, because those helpers are separately tracked and may be mid-fix.
+run_gate "3a. cargo check --workspace --all-targets --locked" \
+    cargo check --workspace --all-targets --locked
+
+run_gate "3b. cargo fmt --all -- --check" \
     cargo fmt --all -- --check
 
-run_gate "3b. cargo clippy --workspace --all-targets -- -D warnings" \
+run_gate "3c. cargo clippy --workspace --all-targets -- -D warnings" \
     cargo clippy --workspace --all-targets -- -D warnings
 
-run_gate "3c. cargo test --workspace --no-fail-fast" \
+run_gate "3d. cargo test --workspace --no-fail-fast" \
     cargo test --workspace --no-fail-fast
 
 # ── 4. WASM artifacts ───────────────────────────────────────────────────────

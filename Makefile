@@ -1,29 +1,26 @@
 # StellarAid contract workspace Makefile
 #
-# Benchmarks (closes #860)
-#   make bench          Run all workspace benchmarks (cargo bench --workspace)
-#   make bench-compare  Run benchmarks and compare against the last saved run
-#                       (stores results in .bench/results.txt; previous run in
-#                       .bench/results.prev.txt). First run establishes a baseline.
+# Local quality gates (mirrors CI expectations where applicable).
+# `make check` is the single pre-push command: it runs non-mutating checks and
+# never modifies the working tree.
 
-BENCH_DIR := .bench
-BENCH_RESULTS := $(BENCH_DIR)/results.txt
-BENCH_PREV := $(BENCH_DIR)/results.prev.txt
+CARGO ?= cargo
 
-.PHONY: bench bench-compare
+.DEFAULT_GOAL := check
 
-bench:
-	cargo bench --workspace
+.PHONY: check fmt fmt-check lint test
 
-bench-compare:
-	@mkdir -p $(BENCH_DIR)
-	@if [ -f $(BENCH_RESULTS) ]; then cp $(BENCH_RESULTS) $(BENCH_PREV); fi
-	cargo bench --workspace | tee $(BENCH_RESULTS)
-	@if [ -f $(BENCH_PREV) ]; then \
-		echo ""; \
-		echo "=== benchmark comparison (previous vs current) ==="; \
-		diff -u $(BENCH_PREV) $(BENCH_RESULTS) || true; \
-	else \
-		echo ""; \
-		echo "No previous benchmark results found; baseline saved to $(BENCH_RESULTS)."; \
-	fi
+fmt:
+	$(CARGO) fmt --all
+
+fmt-check:
+	$(CARGO) fmt --all -- --check
+
+lint:
+	$(CARGO) clippy --workspace --all-targets -- -D warnings
+
+test:
+	$(CARGO) test --workspace --no-fail-fast
+
+# Composed from the same underlying targets/commands to keep local and CI in sync.
+check: fmt-check lint test

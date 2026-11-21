@@ -37,7 +37,7 @@ pub use circuit_breaker::{
     CircuitBreakerConfig, CircuitBreakerError, CircuitBreakerState,
 };
 pub use health::{
-    AlertConfig, HealthMetrics, HealthReport, HealthStatus, SlaTargets,
+    AlertConfig, HealthMetrics, HealthReport, HealthSnapshot, HealthStatus, SlaTargets,
 };
 pub use pagination::{
     clamp_limit, collect_window, page_info, paginate, paginated, window, PageInfo, DEFAULT_LIMIT,

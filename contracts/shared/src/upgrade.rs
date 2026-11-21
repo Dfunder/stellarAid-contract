@@ -91,7 +91,7 @@ pub fn require_paused_for_upgrade(env: &Env) {
         .get(&crate::pause::PauseDataKey::Paused)
         .unwrap_or(false);
     if !paused {
-        panic!("contract must be paused before upgrading");
+        soroban_sdk::panic_with_error!(env, crate::pause::PauseError::NotPaused);
     }
 }
 

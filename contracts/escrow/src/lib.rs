@@ -18,7 +18,7 @@ pub use invariants::InvariantError;
 use errors::EscrowError;
 use storage::{escrow_exists, get_escrow, save_escrow, CommissionStatus, EscrowRecord};
 
-include!("../../semver_types.rs");
+
 
 /// Emit a correlated event `(domain, action, "corr")` carrying a deterministic
 /// correlation id derived from the shared operation key (#661).
@@ -123,33 +123,7 @@ impl EscrowContract {
         Ok(())
     }
 
-    /// Return the contract semantic version (MAJOR.MINOR.PATCH) from Cargo.toml.
-    pub fn get_version(_env: Env) -> ContractVersion {
-        parse_pkg_semver(env!("CARGO_PKG_VERSION"))
-    }
-
-    /// Return crate name, semver, min-compatible client version, and storage schema.
-    pub fn get_version_metadata(env: Env) -> VersionMetadata {
-        let version = parse_pkg_semver(env!("CARGO_PKG_VERSION"));
-        VersionMetadata {
-            name: soroban_sdk::String::from_str(&env, env!("CARGO_PKG_NAME")),
-            min_compatible: min_compatible_for(&version),
-            version,
-            storage_schema: CURRENT_STORAGE_SCHEMA,
-        }
-    }
-
-    /// Return `true` if this WASM can serve a client that requires `(major, minor, patch)`.
-    pub fn is_version_compatible(_env: Env, major: u32, minor: u32, patch: u32) -> bool {
-        is_compatible(
-            &parse_pkg_semver(env!("CARGO_PKG_VERSION")),
-            &ContractVersion {
-                major,
-                minor,
-                patch,
-            },
-        )
-    }
+    shared::impl_semver_queries!();
 
     /// Pause the escrow contract — blocks `create_escrow` and `refund_client`.
     /// Only callable by the escrow admin set during `initialize`.

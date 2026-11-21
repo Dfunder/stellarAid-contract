@@ -72,7 +72,7 @@ use types::{
     MIN_THRESHOLD,
 };
 
-include!("../../semver_types.rs");
+use shared::impl_semver_queries;
 
 /// Retention for collected signatures and their proposal markers: ~90 days at
 /// 6 s/ledger, matching `contracts/analytics`. A proposal that is neither

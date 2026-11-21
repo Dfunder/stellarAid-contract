@@ -193,7 +193,7 @@ pub fn require_not_paused_typed(env: &Env) -> Result<(), PauseError> {
 /// `PauseError::ContractPaused` (#711).
 pub fn require_not_paused(env: &Env) {
     if let Err(err) = require_not_paused_typed(env) {
-        panic!("{}", err);
+        soroban_sdk::panic_with_error!(env, err);
     }
 }
 
@@ -304,7 +304,7 @@ pub fn try_unpause(env: &Env, admin: &Address) -> Result<(), PauseError> {
 /// new call sites should prefer [`try_unpause`] (#711).
 pub fn unpause(env: &Env, admin: &Address) {
     if let Err(err) = try_unpause(env, admin) {
-        panic!("{}", err);
+        soroban_sdk::panic_with_error!(env, err);
     }
 }
 

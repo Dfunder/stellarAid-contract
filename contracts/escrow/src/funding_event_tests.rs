@@ -6,8 +6,8 @@
 
 extern crate std;
 use soroban_sdk::{
-    contract, contractimpl, symbol_short, testutils::Address as _, testutils::Events, token,
-    Address, Bytes, Env, Symbol, TryFromVal, Val,
+    contract, contractimpl, testutils::Address as _, testutils::Events, token, Address, Bytes, Env,
+    Symbol, TryFromVal, Val,
 };
 
 use crate::cross_contract::AtomicCommitState;
@@ -73,13 +73,13 @@ fn setup<'a>() -> Fixture<'a> {
     let escrow = EscrowContractClient::new(&env, &escrow_id);
 
     Fixture {
+        commission_id: Bytes::from_slice(&env, b"comm-001"),
         env,
         escrow,
         config,
         usdc,
         client,
         artist,
-        commission_id: Bytes::from_slice(&env, b"comm-001"),
     }
 }
 

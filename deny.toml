@@ -161,7 +161,6 @@ unsound = "all"
 # above.
 # Keep the advisory database fresh; cargo-deny fails if it goes stale.
 maximum-db-staleness = "P7D"
-git-fetch-with-cli = true
 
 # RUSTSEC advisory IDs waived after a documented review. Add the reason inline.
 #

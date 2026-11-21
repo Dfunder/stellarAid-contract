@@ -13,7 +13,7 @@ extern crate test;
 use soroban_sdk::{testutils::Address as _, Address, Bytes, Env};
 use test::Bencher;
 
-use escrow_contract::{EscrowContract, EscrowContractClient};
+use escrow::{EscrowContract, EscrowContractClient};
 
 fn setup_env() -> (
     Env,

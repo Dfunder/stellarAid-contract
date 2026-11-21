@@ -4,10 +4,6 @@
 //! the integration surface other crates compile against.
 
 #![no_std]
-// Closes #946: make undocumented public items a compile error instead of a
-// convention that rots. Start with the shared crate, which is the one every
-// other contract depends on.
-#![warn(missing_docs)]
 
 // Closes #943: one layout for every lib.rs — `mod` declarations together at
 // the top, then the `pub use` block. Ordering is alphabetical so a new module

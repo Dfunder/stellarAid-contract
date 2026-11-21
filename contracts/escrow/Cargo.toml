@@ -12,8 +12,14 @@ min-compatible = "0.1.0"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[bench]]
+name = "escrow_benchmark"
+path = "benches/escrow_benchmark.rs"
+required-features = ["nightly-bench"]
+
 [features]
 testutils = ["soroban-sdk/testutils"]
+nightly-bench = []
 
 [dependencies]
 soroban-sdk = { version = "21.0.0" }

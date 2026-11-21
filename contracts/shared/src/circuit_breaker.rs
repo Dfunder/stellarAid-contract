@@ -427,6 +427,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn valid_threshold_constants() {
         assert!(DEFAULT_HALT_ERROR_BPS <= 10_000);
         assert!(MIN_SAMPLE_FOR_HALT >= 1);

@@ -89,12 +89,10 @@ impl Fixture<'_> {
             out.push_back(extra);
         }
         let mut trimmed: Vec<Address> = Vec::new(&self.env);
-        let mut i = 0usize;
-        for signer in out.iter() {
+        for (i, signer) in out.iter().enumerate() {
             if i < count {
                 trimmed.push_back(signer);
             }
-            i += 1;
         }
         trimmed
     }
@@ -623,7 +621,7 @@ fn approvals_are_retained_after_explicit_expiry() {
     assert!(!f.client.is_approved(&f.proposal_id));
     let err = f
         .client
-        .try_finalize(&f.executor, &f.proposal_id)
+        .try_finalize(&f.proposal_id, &f.executor)
         .err()
         .unwrap()
         .unwrap();
@@ -656,6 +654,6 @@ fn an_approved_proposal_is_not_expired() {
     f.open();
     f.client.approve(&f.proposal_id, &f.signers.get(0).unwrap());
     f.client.approve(&f.proposal_id, &f.signers.get(1).unwrap());
-    f.client.finalize(&f.executor, &f.proposal_id);
+    f.client.finalize(&f.proposal_id, &f.executor);
     assert!(!f.client.is_expired(&f.proposal_id));
 }

@@ -234,7 +234,7 @@ fn good_quality() -> QualityScore {
 /// moving input rather than always reading ledger 0.
 fn advance_ledgers(env: &Env, by: u32) {
     env.ledger().with_mut(|li| {
-        li.sequence = li.sequence.saturating_add(by);
+        li.sequence_number = li.sequence_number.saturating_add(by);
     });
 }
 
@@ -246,8 +246,8 @@ fn advance_ledgers(env: &Env, by: u32) {
 /// count every call made so far on this `Env` and would climb by one per
 /// iteration regardless of what the operation does. Taking the difference is
 /// what makes the figure an event count.
-fn events_emitted_since(before: usize, env: &Env) -> u32 {
-    (env.events().all().len() - before) as u32
+fn events_emitted_since(before: u32, env: &Env) -> u32 {
+    env.events().all().len() - before
 }
 
 // ── Benchmarks ───────────────────────────────────────────────────────────────
@@ -469,7 +469,7 @@ fn main() {
         return;
     }
 
-    let mut failures: Vec<String> = Vec::new();
+    let mut failures: std::vec::Vec<std::string::String> = std::vec::Vec::new();
     for m in &measurements {
         let budget = match BUDGETS.iter().find(|(name, _)| *name == m.name) {
             Some((_, b)) => *b,

@@ -1,5 +1,11 @@
 # StellarAid Smart Contract Events Reference
 
+> **Single source of truth.** This file is the only authoritative specification of StellarAid contract events. `docs/event_schemas.md` is retained only as a redirect: its struct-style tables (`AgreementCreated` with `u64`/`String` fields, and so on) never matched what the contracts emit. Indexers must decode the topic tuples and `ScVal` payloads described here.
+
+> **Summary.** This hand-maintained catalog specifies the on-chain event architecture—topics, payload types, correlation IDs, and client ingestion patterns—for 13 contract subsystems and shared runtime events. It does not provide exhaustive coverage of the repository, omitting more than ten workspace contracts (such as `analytics`, `audit`, `mentorship`, and `nft`) while including non-workspace crates (`donation` and `withdrawal`). In line with `PERFORMANCE_TARGETS.md` §6, event topic formats reflect code definitions, but the described RPC filtering, re-org handling, and TypeScript ingestion loops are aspirational integration designs rather than measurements from a live indexing pipeline. This reference is aimed at indexer engineers, frontend developers, and integration teams building event-driven services. Readers should start with [Architecture & Naming Conventions](#architecture--naming-conventions) and [Stellar RPC getEvents Filtering](#stellar-rpc-getevents-filtering).
+
+All Soroban smart contracts in the **StellarAid** ecosystem emit structured on-chain events for off-chain indexing, analytics, notifications, and client state synchronization.
+
 > **Summary.** This hand-maintained catalog specifies the on-chain event architecture—topics, payload types, correlation IDs, and client ingestion patterns—for 14 contract subsystems and shared runtime events. It does not provide exhaustive coverage of the repository, omitting more than ten workspace contracts (such as `analytics`, `audit`, `mentorship`, and `nft`) while including unbuilt crates (`donation` and `withdrawal`, excluded from workspace members until separately audited and registered). In line with `PERFORMANCE_TARGETS.md` §6, event topic formats reflect code definitions, but the described RPC filtering, re-org handling, and TypeScript ingestion loops are aspirational integration designs rather than measurements from a live indexing pipeline. This reference is aimed at indexer engineers, frontend developers, and integration teams building event-driven services. Readers should start with [Architecture & Naming Conventions](#architecture--naming-conventions) and [Stellar RPC getEvents Filtering](#stellar-rpc-getevents-filtering).
 
 All Soroban smart contracts in the **StellarAid** ecosystem emit structured on-chain events for off-chain indexing, analytics, notifications, and client state synchronization.
@@ -31,6 +37,7 @@ env.events().publish(topics_tuple, payload_tuple);
    - [12. Verification Contract](#12-verification-contract)
    - [13. Messaging Contract](#13-messaging-contract)
    - [14. Shared / Pause & Lookup Events](#14-shared--pause--lookup-events)
+3. [Event Data Structures & Encoding](#event-data-structures--encoding)
 3. [Campaign Event Schema Reference](#campaign-event-schema-reference)
    - [Naming convention](#naming-convention)
    - [Topic layout](#topic-layout)
@@ -49,6 +56,7 @@ env.events().publish(topics_tuple, payload_tuple);
 
 StellarAid enforces a **standardized two-topic tuple hierarchy**:
 
+```
 ```text
 topics: ( Symbol("<contract_domain>"), Symbol("<action_name>") )
 ```
@@ -62,6 +70,7 @@ across contracts (e.g. a `create_escrow` that mirrors a commission agreement)
 carry a third reserved topic `Symbol("corr")` plus the derived 32-byte
 `CorrelationId` in the payload. Consumers place them under the same "corr" group;
 
+```
 ```text
 topics: ( Symbol("<contract_domain>"), Symbol("<action_name>"), Symbol("corr") )
 payload: ( ..., correlation_id: BytesN<32> )
@@ -77,6 +86,7 @@ topics but with `Address` payloads in topic positions 1/2. See
 // Example: Escrow Created Event
 env.events().publish(
     (symbol_short!("escrow"), symbol_short!("created")),
+    (commission_id, amount),
     (commission_id, client, artist, amount_stroops, fee_bps),
 );
 ```
@@ -92,11 +102,13 @@ Emitted by `contracts/escrow` during payment custody lifecycle.
 #### `escrow` / `created`
 * **Trigger:** `create_escrow`
 * **Condition:** Successful lock of client token funds into escrow storage.
+* **Payload:** `(commission_id, amount)`. Client, artist and asset are carried by the companion `escrow` / `funded` event.
 * **Payload:**
 
 | Field | Type | Description |
 |---|---|---|
 | `commission_id` | `Bytes` | Unique commission identifier |
+| `amount` | `i128` | Total locked token amount (in stroops) |
 | `client` | `Address` | Client payer address |
 | `artist` | `Address` | Artist payee address |
 | `amount` | `i128` | Total locked token amount (in stroops) |
@@ -118,6 +130,7 @@ Emitted by `contracts/escrow` during payment custody lifecycle.
 #### `escrow` / `released`
 * **Trigger:** `release_payment`
 * **Condition:** Client authorizes full release of funds to artist; net payout and fee transfers succeed.
+* **Payload:** `(commission_id, net_amount, fee_amount)`. The artist address is not in the payload; read it from `get_escrow`.
 * **Payload:**
 
 | Field | Type | Description |
@@ -161,11 +174,15 @@ Emitted by `contracts/escrow` during payment custody lifecycle.
 #### `escrow` / `cancelled`
 * **Trigger:** `cancel_escrow`
 * **Condition:** Agreement cancellation policy executed with pro-rata split.
+* **Payload:** `(commission_id, artist_payout, fee_amount, client_refund)`
 * **Payload:**
 
 | Field | Type | Description |
 |---|---|---|
 | `commission_id` | `Bytes` | Unique commission identifier |
+| `artist_payout` | `i128` | Net amount paid to the artist after fee |
+| `fee_amount` | `i128` | Platform fee taken from the artist share |
+| `client_refund` | `i128` | Amount returned to the client |
 | `client_amount` | `i128` | Amount returned to client |
 | `artist_amount` | `i128` | Amount paid to artist |
 
@@ -649,6 +666,20 @@ the campaign schema is pinned at two.
 
 ### Emission matrix
 
+| Event | Emitting function | Pre-condition | Post-condition | Authorization |
+|---|---|---|---|---|
+| `campaign_initialized` | `initialize` | not yet initialized | `Admin`, `Initialized`, `CampaignCount` set | `admin.require_auth()` |
+| `campaign_registered` | `create_campaign` | deadline in (now, now + 2y]; `fee_bps <= 1000` | `Campaign(id)` persisted, TTL extended | `owner.require_auth()` |
+| `donation_received` | `record_donation` | `amount > 0`; campaign exists | `raised += amount`; donor marker set | called by the donation contract after the transfer settles |
+| `withdrawal_requested` | `request_withdrawal` | `0 < amount <= raised`; no pending request | `PendingWithdrawal(id)` persisted | creator (`campaign.owner`) |
+| `withdrawal_finalized` | `finalize_withdrawal` | `0 < amount <= raised`; window elapsed; not frozen/paused/under review | `raised -= amount`; `TotalWithdrawn += amount` | creator (`campaign.owner`) |
+| `withdrawal_cancelled` | `cancel_withdrawal_request` | a pending request exists | `PendingWithdrawal(id)` removed | creator |
+| `dispute_raised` | `raise_dispute` | no open dispute; `reason_hash != 0` | `ActiveDispute(id) = true`; reason hash stored | creator **or** donor |
+| `dispute_resolved` | `resolve_dispute` | a dispute is open | `ActiveDispute(id) = false`; outcome stored | admin |
+| `refund_issued` | `request_refund` | campaign is not `Active`; `amount > 0` | `Refunded(id, donor) += amount` | donor |
+| `campaign_ended` | `end_campaign` | campaign not already closed | status = `Completed` | creator **or** admin |
+| `campaign_cancelled` | `cancel_campaign` | `raised == 0`; not already cancelled | status = `Cancelled` | creator **or** admin |
+| `deadline_extended` | `extend_deadline` | `Active`; new deadline later and within 2y | `deadline` updated | creator |
 | Event | Emitting function | Pre-state / Trigger | Post-state | Authorization |
 |---|---|---|---|---|
 | `campaign_initialized` | `initialize` | Uninitialized | Initialized | `admin.require_auth()` |
@@ -744,6 +775,82 @@ Pre-existing single-topic events in this contract (`campaign_registered`,
 keep their historical single-topic shape for backwards compatibility with
 existing indexers. New events must use the two-segment layout above.
 
+---
+
+### 8. Revenue Sharing Contract
+
+Emitted by `contracts/revenue_sharing`.
+
+* `agreement_created`: `(agreement_id: Bytes, creator: Address, total_bps: u32)`
+* `revenue_distributed`: `(agreement_id: Bytes, total_amount: i128, participant_count: u32)`
+* `agreement_paused`: `(agreement_id: Bytes)`
+* `agreement_terminated`: `(agreement_id: Bytes)`
+
+---
+
+### 9. Creator Fund Contract
+
+Emitted by `contracts/creator_fund`.
+
+* `fund_created`: `(fund_id: Bytes, steward: Address, fund_type: FundType)`
+* `proposal_submitted`: `(proposal_id: Bytes, recipient: Address, amount: i128)`
+* `proposal_voted`: `(proposal_id: Bytes, voter: Address, support: bool, weight: i128)`
+* `proposal_executed`: `(proposal_id: Bytes, amount: i128)`
+
+---
+
+### 10. Competitions Contract
+
+Emitted by `contracts/competitions`.
+
+* `comp_created`: `(competition_id: Bytes, organizer: Address, prize_pool: i128)`
+* `submission_made`: `(competition_id: Bytes, participant: Address, uri: String)`
+* `comp_finalized`: `(competition_id: Bytes, winner_count: u32)`
+* `prizes_distributed`: `(competition_id: Bytes, total_paid: i128)`
+
+---
+
+### 11. Subscription Contract
+
+Emitted by `contracts/subscription`.
+
+* `tier_created`: `(tier_id: u32, price_stroops: i128, period_ledgers: u32)`
+* `subscribed`: `(subscriber: Address, tier_id: u32, end_ledger: u32)`
+* `renewed`: `(subscriber: Address, tier_id: u32, new_end_ledger: u32)`
+* `cancelled`: `(subscriber: Address, tier_id: u32)`
+* `lapsed`: `(subscriber: Address, tier_id: u32)`
+
+---
+
+### 12. Verification Contract
+
+Emitted by `contracts/verification`.
+
+* `request_submitted`: `(artist: Address, work_count: u32)`
+* `reviewed`: `(artist: Address, reviewer: Address, score: u32)`
+* `approved`: `(artist: Address, final_score: u32)`
+* `stale_flagged`: `(artist: Address, last_update_ledger: u32)`
+
+---
+
+### 13. Messaging Contract
+
+Emitted by `contracts/messaging`.
+
+* `convo_created`: `(convo_id: Bytes, participant1: Address, participant2: Address)`
+* `msg_sent`: `(convo_id: Bytes, sender: Address, timestamp: u64)`
+* `msg_read`: `(convo_id: Bytes, reader: Address, last_read_idx: u32)`
+* `typing_set`: `(convo_id: Bytes, user: Address, is_typing: bool)`
+
+---
+
+### 14. Shared / Pause & Lookup Events
+
+Emitted by all contracts inheriting `contracts/shared`.
+
+* `contract_paused`: `(admin: Address)`
+* `contract_unpaused`: `(admin: Address)`
+* `cfg_fail`: `(config_contract: Address, selector: Symbol)`
 
 ---
 
@@ -763,6 +870,13 @@ graph TD
     end
 ```
 
+| Event | Pre-condition | Post-condition | Authorization Required |
+|---|---|---|---|
+| `(escrow, created)` | Escrow key does not exist; client balance >= amount | Escrow state = `Locked`; tokens transferred to contract | `client.require_auth()` |
+| `(escrow, released)` | Escrow state = `Locked` or `Disputed` | Escrow state = `Released`; tokens sent to artist & fee wallet | `client.require_auth()` or `arbiter` |
+| `(escrow, refunded)` | Escrow state = `Locked`, `Disputed`, or `Expired` | Escrow state = `Refunded`; tokens returned to client | `client.require_auth()` or `arbiter` |
+| `(escrow, disputed)` | Escrow state = `Locked` | Escrow state = `Disputed` | `initiator.require_auth()` |
+| `(escrow, cancelled)` | Escrow state = `Locked` or `Disputed`; cancellation policy satisfied | Escrow state = `Cancelled`; pro-rata split distributed | `client.require_auth()` |
 ### Escrow State Transitions Summary
 
 | Event | Initial State | Terminal State | Authorization Required |

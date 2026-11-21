@@ -29,6 +29,12 @@ pub use admin::{
     AdminError, AdminKey, AdminRotatedEvent, AdminTransferCancelledEvent,
     AdminTransferProposedEvent,
 };
+pub use circuit_breaker::{
+    CircuitBreakerConfig, CircuitBreakerError, CircuitBreakerState,
+};
+pub use health::{
+    AlertConfig, HealthMetrics, HealthReport, HealthSnapshot, HealthStatus, SlaTargets,
+};
 pub use circuit_breaker::{CircuitBreakerConfig, CircuitBreakerError, CircuitBreakerState};
 pub use health::{AlertConfig, HealthMetrics, HealthReport, HealthStatus, SlaTargets};
 pub use pagination::{

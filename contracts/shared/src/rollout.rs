@@ -44,7 +44,8 @@
 
 use crate::health;
 use soroban_sdk::{
-    contracterror, contracttype, panic_with_error, symbol_short, xdr::ToXdr, Address, Env, Symbol, Vec,
+    contracterror, contracttype, panic_with_error, symbol_short, xdr::ToXdr, Address, Env, Symbol,
+    Vec,
 };
 
 const BPS_DENOM: u32 = 10_000;
@@ -139,7 +140,6 @@ pub enum RolloutKey {
     MaxFlags,
 }
 
-
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RolloutPhase {
@@ -204,8 +204,7 @@ pub fn set_flag_cap(env: &Env, cap: u32) -> Result<(), RolloutError> {
         return Err(RolloutError::InvalidFlagCap);
     }
     env.storage().instance().set(&RolloutKey::MaxFlags, &cap);
-    env.events()
-        .publish((symbol_short!("flag_cap"),), cap);
+    env.events().publish((symbol_short!("flag_cap"),), cap);
     Ok(())
 }
 
@@ -221,9 +220,7 @@ fn save_flag_index(env: &Env, index: &Vec<Symbol>) {
     if index.len() > cap {
         panic_with_error!(env, RolloutError::FlagLimitReached);
     }
-    env.storage()
-        .instance()
-        .set(&RolloutKey::FlagList, index);
+    env.storage().instance().set(&RolloutKey::FlagList, index);
 }
 
 fn flag_count(env: &Env) -> u32 {
@@ -279,12 +276,7 @@ fn phase_from_bps(bps: u32) -> RolloutPhase {
 }
 
 /// Register canary/stable contract IDs and the share of traffic sent to canary.
-pub fn set_canary_deployment(
-    env: &Env,
-    canary: Address,
-    stable: Address,
-    canary_bps: u32,
-) {
+pub fn set_canary_deployment(env: &Env, canary: Address, stable: Address, canary_bps: u32) {
     if canary_bps > BPS_DENOM {
         panic!("canary_bps exceeds 10000");
     }
@@ -400,8 +392,7 @@ pub fn set_rollback_trigger(env: &Env, error_bps: u32) {
     env.storage()
         .instance()
         .set(&RolloutKey::RollbackErrorBps, &error_bps);
-    env.events()
-        .publish((symbol_short!("rb_trig"),), error_bps);
+    env.events().publish((symbol_short!("rb_trig"),), error_bps);
 }
 
 /// `true` when health error-rate meets the rollback trigger, or phase is already RolledBack.
@@ -430,9 +421,7 @@ fn disable_all_flags(env: &Env) {
 }
 
 fn apply_rollback(env: &Env) {
-    env.storage()
-        .instance()
-        .set(&RolloutKey::CanaryBps, &0_u32);
+    env.storage().instance().set(&RolloutKey::CanaryBps, &0_u32);
     env.storage()
         .instance()
         .set(&RolloutKey::Phase, &RolloutPhase::RolledBack);
@@ -466,7 +455,9 @@ pub fn trigger_rollback(env: &Env, admin: &Address) {
         .set(&crate::pause::PauseDataKey::Paused, &true);
     env.events().publish(
         (soroban_sdk::Symbol::new(env, "contract_paused"),),
-        crate::pause::ContractPausedEvent { admin: admin.clone() },
+        crate::pause::ContractPausedEvent {
+            admin: admin.clone(),
+        },
     );
 }
 

@@ -204,10 +204,14 @@ pub fn require_not_paused(env: &Env) {
 pub fn pause(env: &Env, admin: &Address) {
     admin.require_auth();
     env.storage().instance().set(&PauseDataKey::Paused, &true);
-    env.storage().instance().set(&PauseDataKey::RecoveryEta, &0u32);
+    env.storage()
+        .instance()
+        .set(&PauseDataKey::RecoveryEta, &0u32);
     env.events().publish(
         (Symbol::new(env, "contract_paused"),),
-        ContractPausedEvent { admin: admin.clone() },
+        ContractPausedEvent {
+            admin: admin.clone(),
+        },
     );
 }
 
@@ -233,7 +237,9 @@ pub fn schedule_recovery(
         .sequence()
         .checked_add(delay_ledgers)
         .ok_or(PauseError::InvalidRecoveryDelay)?;
-    env.storage().instance().set(&PauseDataKey::RecoveryEta, &eta);
+    env.storage()
+        .instance()
+        .set(&PauseDataKey::RecoveryEta, &eta);
     env.events().publish(
         (Symbol::new(env, "recovery_scheduled"),),
         RecoveryScheduledEvent {
@@ -252,7 +258,9 @@ pub fn cancel_recovery(env: &Env, admin: &Address) -> Result<(), PauseError> {
     if recovery_eta(env).is_none() {
         return Err(PauseError::RecoveryNotScheduled);
     }
-    env.storage().instance().set(&PauseDataKey::RecoveryEta, &0u32);
+    env.storage()
+        .instance()
+        .set(&PauseDataKey::RecoveryEta, &0u32);
     Ok(())
 }
 
@@ -266,7 +274,9 @@ pub fn try_unpause(env: &Env, admin: &Address) -> Result<(), PauseError> {
         if env.ledger().sequence() < eta {
             return Err(PauseError::RecoveryPending);
         }
-        env.storage().instance().set(&PauseDataKey::RecoveryEta, &0u32);
+        env.storage()
+            .instance()
+            .set(&PauseDataKey::RecoveryEta, &0u32);
         env.events().publish(
             (Symbol::new(env, "recovery_completed"),),
             RecoveryCompletedEvent {
@@ -278,7 +288,9 @@ pub fn try_unpause(env: &Env, admin: &Address) -> Result<(), PauseError> {
     env.storage().instance().set(&PauseDataKey::Paused, &false);
     env.events().publish(
         (Symbol::new(env, "contract_unpaused"),),
-        ContractUnpausedEvent { admin: admin.clone() },
+        ContractUnpausedEvent {
+            admin: admin.clone(),
+        },
     );
     Ok(())
 }

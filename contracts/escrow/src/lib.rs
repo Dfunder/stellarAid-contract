@@ -895,6 +895,14 @@ impl EscrowContract {
     }
 
     // ── Health monitoring (#678) and gradual rollout (#684) ──────────────
+    /// One-call operator view: anomaly flag, status, metrics, SLA targets,
+    /// alert config and rollout state, all read from the same ledger.
+    /// Read-only (no alert event, no auto-rollback), so it is safe to simulate.
+    /// Prefer this over calling detect_anomaly, get_health_metrics,
+    /// get_sla_targets, get_alert_config and get_rollout_state separately.
+    pub fn get_health_snapshot(env: Env) -> shared::health::HealthSnapshot {
+        shared::health::health_snapshot(&env)
+    }
     pub fn health_check(env: Env) -> shared::health::HealthReport {
         let report = shared::health::health_check(&env);
         if report.anomaly {

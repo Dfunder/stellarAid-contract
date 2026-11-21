@@ -1,0 +1,19 @@
+[package]
+name = "multi_wallet_session"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[package.metadata.stellar-aid]
+versioning = "semver"
+storage-schema = 1
+min-compatible = "0.1.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

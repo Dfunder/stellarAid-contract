@@ -42,6 +42,9 @@ if (!lobstr?.isAvailable()) {
   throw new Error("Lobstr is not available");
 }
 ```
+* `connect()` — prompt for the user's `G...` public key.
+* `sign(xdr)` — sign a base64 envelope and return the signed XDR.
+* `disconnect()`, `isAvailable()` — session and detection helpers.
 
 ## Contract-interaction bindings (`src/contracts`, issue #866)
 
@@ -81,6 +84,21 @@ if (disputeSim.error) throw new Error(disputeSim.error);
 const client = await ContractClient.for(config);
 const receipt = await client.send("open_dispute", ["commission-1", from]);
 console.log(receipt.value); // { hash, status: "SUCCESS" | "FAILED" }
+import { ContractClient, EscrowClient, TESTNET, type ContractClientConfig } from "../src/index";
+
+const client = await EscrowClient.for({
+  contractId: "C...",
+  network: TESTNET,
+  source: "G...",
+  wallet: getDefaultAdapter(),
+});
+
+// simulate without paying, to show cost + events:
+const sim = await client.simulateCreateEscrow("commission-1", from, to, 1_000_000_000);
+console.log(sim.minResourceFee, sim.events);
+
+// or build + sign + submit + poll to a terminal state:
+const receipt = await client.simulateOpenDispute("commission-1", from);
 ```
 
 Per-contract typed clients ([`contracts.ts`](src/contracts/contracts.ts)) pin the
@@ -94,6 +112,18 @@ with the same method name and arguments.
   signs or submits.
 * `send` builds the invoke transaction, signs it through the wallet adapter,
   submits it and polls `getTransactionStatus` until it reaches a terminal state.
+disputes and campaigns. `simulate`/`send` mirror the Rust SDK's flow: fetch the
+source account from Horizon, build a single invoke transaction, simulate for a
+realistic fee, sign through the wallet, submit and poll
+
+## Security & Dependency Auditing
+
+`@stellaraid/wallet-adapters` dependencies are audited in CI via `npm audit --omit=dev` and verified against `audit-allowlist.json`.
+
+* `npm run audit` — validates production dependencies against allowlisted exceptions.
+* `npm run audit:strict` — fails on any unmitigated vulnerability with high/critical severity.
+* See `docs/STORAGE.md` §9.6 for the full exception process and policy rationale.
+`getTransactionStatus`.
 
 ### Argument encoding
 

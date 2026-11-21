@@ -3,7 +3,7 @@
 use campaign::{CampaignContract, CampaignContractClient};
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Symbol, Vec};
 
-include!("../../semver_types.rs");
+use shared::impl_semver_queries;
 
 #[contracttype]
 pub enum DataKey {

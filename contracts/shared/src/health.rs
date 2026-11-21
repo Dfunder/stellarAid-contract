@@ -14,7 +14,19 @@
 //! counters reflect real invocation outcomes.
 
 use crate::pause::PauseDataKey;
+use crate::rollout::{self, RolloutState};
+use crate::storage::instance;
 use soroban_sdk::{contracttype, symbol_short, Env};
+use soroban_sdk::{contracterror, contracttype, symbol_short, Env};
+
+/// Typed failures of the health module, so callers branch on a discriminant
+/// instead of matching panic prose.
+#[contracterror]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HealthError {
+    /// Alert thresholds are inverted, exceed 10000 bps, or use a zero window.
+    InvalidAlertConfig = 1,
+}
 
 /// Target availability in basis points: 9990 = 99.90%.
 pub const SLA_AVAILABILITY_BPS: u32 = 9_990;
@@ -121,10 +133,7 @@ pub fn sla_targets() -> SlaTargets {
 }
 
 pub fn get_alert_config(env: &Env) -> AlertConfig {
-    env.storage()
-        .instance()
-        .get(&HealthKey::AlertConfig)
-        .unwrap_or_else(default_alert_config)
+    instance::get_or_else(env, &HealthKey::AlertConfig, default_alert_config)
 }
 
 /// Persist alerting thresholds. Panics if the bps values are inverted or > 10000.
@@ -135,40 +144,45 @@ pub fn set_alert_config(env: &Env, config: AlertConfig) {
         || config.stall_ledgers == 0
         || config.alert_cooldown_ledgers == 0
     {
-        panic!("invalid alert config");
+        soroban_sdk::panic_with_error!(env, HealthError::InvalidAlertConfig);
     }
-    env.storage()
-        .instance()
-        .set(&HealthKey::AlertConfig, &config);
+    instance::set(env, &HealthKey::AlertConfig, &config);
     env.events()
         .publish((symbol_short!("alrt_cfg"),), config.unhealthy_error_bps);
 }
 
 fn is_paused(env: &Env) -> bool {
-    env.storage()
-        .instance()
-        .get(&PauseDataKey::Paused)
-        .unwrap_or(false)
+    instance::get_or(env, &PauseDataKey::Paused, false)
 }
 
 pub fn get_metrics(env: &Env) -> HealthMetrics {
-    let mut metrics: HealthMetrics =
-        env.storage()
-            .instance()
-            .get(&HealthKey::Metrics)
-            .unwrap_or(HealthMetrics {
-                ok_count: 0,
-                error_count: 0,
-                last_ok_ledger: 0,
-                last_error_ledger: 0,
-                paused: false,
-            });
+    let mut metrics: HealthMetrics = instance::get_or(
+        env,
+        &HealthKey::Metrics,
+        HealthMetrics {
+            ok_count: 0,
+            error_count: 0,
+            last_ok_ledger: 0,
+            last_error_ledger: 0,
+            paused: false,
+        },
+    );
     metrics.paused = is_paused(env);
     metrics
 }
 
 fn save_metrics(env: &Env, metrics: &HealthMetrics) {
-    env.storage().instance().set(&HealthKey::Metrics, metrics);
+    instance::set(env, &HealthKey::Metrics, metrics);
+}
+
+/// Record one invocation outcome: `ok = true` is a success sample,
+/// `ok = false` an error sample. Backs the `report_outcome` entry point.
+pub fn record_outcome(env: &Env, ok: bool) {
+    if ok {
+        record_ok(env)
+    } else {
+        record_error(env)
+    }
 }
 
 /// Record a successful invocation sample.
@@ -236,18 +250,12 @@ fn maybe_emit_alert(env: &Env, report: &HealthReport, config: &AlertConfig) {
     if !config.alerting_enabled || !report.anomaly {
         return;
     }
-    let last: u32 = env
-        .storage()
-        .instance()
-        .get(&HealthKey::LastAlertLedger)
-        .unwrap_or(0);
+    let last: u32 = instance::get_or(env, &HealthKey::LastAlertLedger, 0);
     let now = env.ledger().sequence();
     if last != 0 && now.saturating_sub(last) < config.alert_cooldown_ledgers {
         return;
     }
-    env.storage()
-        .instance()
-        .set(&HealthKey::LastAlertLedger, &now);
+    instance::set(env, &HealthKey::LastAlertLedger, &now);
     env.events().publish(
         (symbol_short!("hlth_alrt"),),
         (report.status, report.error_bps, report.stalled),
@@ -268,4 +276,146 @@ pub fn health_check(env: &Env) -> HealthReport {
     };
     maybe_emit_alert(env, &report, &config);
     report
+}
+
+/// Everything an operator needs to judge contract health, read in one call.
+///
+/// Before this existed, answering "is this contract healthy?" took five
+/// separate simulations (`detect_anomaly`, `get_health_metrics`,
+/// `get_sla_targets`, `get_alert_config`, `get_rollout_state`). Each one was a
+/// separate RPC round trip and could be served from a different ledger. A
+/// snapshot is assembled inside a single invocation, so every field describes
+/// the same ledger, recorded in `ledger`.
+///
+/// `anomaly` is the field to read first in an incident. It needs no context
+/// to interpret, and it is also the first key in the encoded `ScMap`
+/// (Soroban sorts struct fields by name).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HealthSnapshot {
+    /// `true` when the contract is degraded, unhealthy, or stalled. Same value
+    /// as `detect_anomaly`.
+    pub anomaly: bool,
+    /// Alert thresholds in effect (`get_alert_config`).
+    pub alert_config: AlertConfig,
+    /// Error rate in basis points derived from `metrics`.
+    pub error_bps: u32,
+    /// Ledger sequence at which this snapshot was taken.
+    pub ledger: u32,
+    /// Raw counters and pause flag (`get_health_metrics`).
+    pub metrics: HealthMetrics,
+    /// Canary / rollback state (`get_rollout_state`). `phase` is `RolledBack`
+    /// once a rollback has fired; `rollback_error_bps` is the armed trigger.
+    pub rollout: RolloutState,
+    /// Published SLA targets (`get_sla_targets`).
+    pub sla_targets: SlaTargets,
+    /// `true` when no activity has been recorded for `alert_config.stall_ledgers`.
+    pub stalled: bool,
+    /// Classification against `alert_config`.
+    pub status: HealthStatus,
+}
+
+/// Build a [`HealthSnapshot`] for the current ledger.
+///
+/// Strictly read-only. Unlike [`health_check`], it emits no `hlth_alrt`
+/// event, does not touch the alert cooldown, and never triggers an automatic
+/// rollback. It is therefore safe to simulate as often as a monitor likes.
+pub fn health_snapshot(env: &Env) -> HealthSnapshot {
+    let metrics = get_metrics(env);
+    let alert_config = get_alert_config(env);
+    let (status, anomaly) = classify(env, &metrics, &alert_config);
+    HealthSnapshot {
+        anomaly,
+        error_bps: error_bps(&metrics),
+        stalled: is_stalled(env, &metrics, &alert_config),
+        ledger: env.ledger().sequence(),
+        rollout: rollout::get_state(env),
+        sla_targets: sla_targets(),
+        status,
+        metrics,
+        alert_config,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::testutils::{Events as _, Ledger as _};
+    use soroban_sdk::{contract, Address};
+
+    #[contract]
+    struct HealthHost;
+
+    fn setup() -> (Env, Address) {
+        let env = Env::default();
+        let id = env.register_contract(None, HealthHost);
+        (env, id)
+    }
+
+    #[test]
+    fn snapshot_of_fresh_contract_is_healthy() {
+        let (env, id) = setup();
+        env.as_contract(&id, || {
+            let snap = health_snapshot(&env);
+            assert!(!snap.anomaly);
+            assert_eq!(snap.status, HealthStatus::Healthy);
+            assert_eq!(snap.error_bps, 0);
+            assert!(!snap.stalled);
+            assert_eq!(snap.sla_targets, sla_targets());
+            assert_eq!(snap.alert_config, default_alert_config());
+            assert_eq!(snap.rollout, rollout::get_state(&env));
+            assert_eq!(snap.ledger, env.ledger().sequence());
+        });
+    }
+
+    #[test]
+    fn snapshot_agrees_with_individual_getters() {
+        let (env, id) = setup();
+        env.as_contract(&id, || {
+            for _ in 0..9 {
+                record_ok(&env);
+            }
+            record_error(&env); // 10% error rate -> Unhealthy under defaults
+            let snap = health_snapshot(&env);
+            assert_eq!(snap.anomaly, detect_anomaly(&env));
+            assert!(snap.anomaly);
+            assert_eq!(snap.status, HealthStatus::Unhealthy);
+            assert_eq!(snap.metrics, get_metrics(&env));
+            assert_eq!(snap.error_bps, 1_000);
+            assert_eq!(snap.alert_config, get_alert_config(&env));
+        });
+    }
+
+    #[test]
+    fn snapshot_reports_stall() {
+        let (env, id) = setup();
+        env.ledger().with_mut(|l| l.sequence_number = 100);
+        env.as_contract(&id, || record_ok(&env));
+        env.ledger()
+            .with_mut(|l| l.sequence_number = 100 + DEFAULT_STALL_LEDGERS);
+        env.as_contract(&id, || {
+            let snap = health_snapshot(&env);
+            assert!(snap.stalled);
+            assert!(snap.anomaly);
+            assert_eq!(snap.status, HealthStatus::Degraded);
+            assert_eq!(snap.ledger, 100 + DEFAULT_STALL_LEDGERS);
+        });
+    }
+
+    #[test]
+    fn snapshot_is_read_only() {
+        let (env, id) = setup();
+        env.as_contract(&id, || {
+            record_error(&env); // anomaly with alerting enabled
+        });
+        let before = env.events().all().len();
+        env.as_contract(&id, || {
+            let snap = health_snapshot(&env);
+            assert!(snap.anomaly);
+            // No alert cooldown written, unlike health_check.
+            let last: Option<u32> = env.storage().instance().get(&HealthKey::LastAlertLedger);
+            assert_eq!(last, None);
+        });
+        assert_eq!(env.events().all().len(), before);
+    }
 }

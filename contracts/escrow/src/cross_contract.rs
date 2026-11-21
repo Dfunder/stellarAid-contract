@@ -4,9 +4,7 @@
 //! Closes #480 – call USDC token contract from Escrow
 //! Closes #656 – atomic escrow-to-commission orchestration
 
-use soroban_sdk::{
-    contracttype, symbol_short, token, Address, Bytes, Env, IntoVal, Symbol,
-};
+use soroban_sdk::{contracttype, symbol_short, token, Address, Bytes, Env, IntoVal, Symbol};
 
 use crate::errors::EscrowError;
 use crate::storage::{self, CommissionStatus};
@@ -47,7 +45,12 @@ pub fn usdc_balance(env: &Env, usdc: &Address, account: &Address) -> i128 {
 
 /// Verify that `account` holds at least `required` USDC tokens.
 /// Returns the current balance.
-pub fn check_sufficient_balance(env: &Env, usdc: &Address, account: &Address, required: i128) -> i128 {
+pub fn check_sufficient_balance(
+    env: &Env,
+    usdc: &Address,
+    account: &Address,
+    required: i128,
+) -> i128 {
     let bal = usdc_balance(env, usdc, account);
     if bal < required {
         soroban_sdk::panic_with_error!(env, crate::errors::EscrowError::InsufficientBalance);
@@ -91,20 +94,38 @@ pub const REFUND_CLIENT_SYMBOL: &str = "refund_cl";
 pub const RELEASE_PAYMENT_SYMBOL: &str = "release_p";
 
 /// Call `refund_client` on the EscrowContract from another contract (e.g. DisputeArbiter).
-pub fn call_refund_client(env: &Env, escrow_contract: &Address, commission_id: Bytes, config_contract: Address) {
+pub fn call_refund_client(
+    env: &Env,
+    escrow_contract: &Address,
+    commission_id: Bytes,
+    config_contract: Address,
+) {
     env.invoke_contract::<()>(
         escrow_contract,
         &symbol_short!("refund_cl"),
-        soroban_sdk::vec![env, commission_id.into_val(env), config_contract.into_val(env)],
+        soroban_sdk::vec![
+            env,
+            commission_id.into_val(env),
+            config_contract.into_val(env)
+        ],
     );
 }
 
 /// Call `release_payment` on the EscrowContract from another contract.
-pub fn call_release_payment(env: &Env, escrow_contract: &Address, commission_id: Bytes, config_contract: Address) {
+pub fn call_release_payment(
+    env: &Env,
+    escrow_contract: &Address,
+    commission_id: Bytes,
+    config_contract: Address,
+) {
     env.invoke_contract::<()>(
         escrow_contract,
         &symbol_short!("release_p"),
-        soroban_sdk::vec![env, commission_id.into_val(env), config_contract.into_val(env)],
+        soroban_sdk::vec![
+            env,
+            commission_id.into_val(env),
+            config_contract.into_val(env)
+        ],
     );
 }
 // ── Atomic escrow-to-commission orchestration (closes #656) ──────────────────
@@ -345,8 +366,11 @@ pub fn atomic_escrow_to_commission(
     commission_contract: &Address,
 ) -> Result<AtomicCommitMarker, EscrowError> {
     // CHECKS (admin-authorized exactly like release_payment)
-    let admin: Address =
-        env.invoke_contract(config_contract, &symbol_short!("get_adm"), soroban_sdk::vec![env]);
+    let admin: Address = env.invoke_contract(
+        config_contract,
+        &symbol_short!("get_adm"),
+        soroban_sdk::vec![env],
+    );
     admin.require_auth();
 
     storage::with_reentrancy_guard(env, || {
@@ -354,8 +378,7 @@ pub fn atomic_escrow_to_commission(
             return Err(EscrowError::NotFound);
         }
         let record = storage::get_escrow(env, commission_id);
-        if record.status != CommissionStatus::Locked
-            && record.status != CommissionStatus::Disputed
+        if record.status != CommissionStatus::Locked && record.status != CommissionStatus::Disputed
         {
             return Err(EscrowError::InvalidStatus);
         }
@@ -393,16 +416,26 @@ pub fn atomic_escrow_to_commission(
         storage::save_atomic_marker(env, &marker);
 
         // INTERACTIONS
-        let usdc: Address =
-            env.invoke_contract(config_contract, &symbol_short!("get_usdc"), soroban_sdk::vec![env]);
-        let pw: Address =
-            env.invoke_contract(config_contract, &symbol_short!("get_pw"), soroban_sdk::vec![env]);
+        let usdc: Address = env.invoke_contract(
+            config_contract,
+            &symbol_short!("get_usdc"),
+            soroban_sdk::vec![env],
+        );
+        let pw: Address = env.invoke_contract(
+            config_contract,
+            &symbol_short!("get_pw"),
+            soroban_sdk::vec![env],
+        );
         let tc = token::Client::new(env, &usdc);
         if fee > 0 {
             tc.transfer(&env.current_contract_address(), &pw, &fee);
         }
         if payout > 0 {
-            tc.transfer(&env.current_contract_address(), commission_contract, &payout);
+            tc.transfer(
+                &env.current_contract_address(),
+                commission_contract,
+                &payout,
+            );
         }
 
         // EVENTS (primary + correlated)

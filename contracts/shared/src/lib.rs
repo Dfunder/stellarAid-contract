@@ -24,6 +24,7 @@ pub mod initialization;
 pub mod pagination;
 pub mod pause;
 pub mod rollout;
+pub mod storage;
 pub mod types;
 pub mod upgrade;
 pub mod validation;

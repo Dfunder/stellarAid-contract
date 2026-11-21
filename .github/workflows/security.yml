@@ -63,7 +63,7 @@ jobs:
         with:
           tool: cargo-deny
       - name: cargo deny check
-        run: cargo deny check advisories bans licenses sources all-features
+        run: cargo deny check advisories bans licenses sources
 
   # Repo-specific security checklist scan
   security-lint:

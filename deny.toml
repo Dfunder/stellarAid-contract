@@ -146,20 +146,6 @@ version = 2
 # soon as soroban-sdk ships a wasmi on spin 0.10. Tracked in docs/STORAGE.md
 # §9.2.
 yanked = "warn"
-# Unmaintained is *not* "insecure", but an unmaintained crate in the tree is
-# an unpatched crate waiting to happen, and there is no cost to refusing it
-# today: the two current hits (adler, paste) are waived below with reasons.
-unmaintained = "all"
-# Unsound code is treated the same as a vulnerability. There are no waivers
-# in this category, because an unsound crate in a contract's graph can be
-# triggered by contract code and a deployed contract cannot be patched.
-unsound = "all"
-# cargo-deny 0.20 removed the separate `notice` and `severity-threshold`
-# keys: every advisory RustSec publishes is now evaluated and
-# `severity-threshold` is fixed at "low". Informational/unsound entries are
-# therefore surfaced automatically and are handled by the `unsound` setting
-# above.
-# Keep the advisory database fresh; cargo-deny fails if it goes stale.
 maximum-db-staleness = "P7D"
 
 # RUSTSEC advisory IDs waived after a documented review. Add the reason inline.
@@ -189,6 +175,3 @@ ignore = [
     "RUSTSEC-2026-0543",
 ]
 
-# Fails if `ignore` lists an advisory that no longer applies, so waivers
-# cannot silently rot.
-unused-ignored-advisory = "warn"

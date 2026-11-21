@@ -1,0 +1,38 @@
+name: Documentation Link Check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "scripts/check_doc_anchors.py"
+      - ".github/workflows/docs-link-check.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "scripts/check_doc_anchors.py"
+      - ".github/workflows/docs-link-check.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: docs-link-check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check-anchors:
+    name: Verify Markdown anchor links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Verify documentation anchor links
+        run: python3 scripts/check_doc_anchors.py

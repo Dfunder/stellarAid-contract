@@ -45,11 +45,13 @@ on:
     branches: [main]
     paths:
       - "sdk/bindings/**"
+      - "sdk/**"
       - ".github/workflows/typescript-ci.yml"
   pull_request:
     branches: [main]
     paths:
       - "sdk/bindings/**"
+      - "sdk/**"
       - ".github/workflows/typescript-ci.yml"
   workflow_dispatch:
 
@@ -192,3 +194,22 @@ jobs:
           npx tsc --noEmit --strict --skipLibCheck --module esnext \
             --moduleResolution bundler --target es2020 .ci-consumer/consumer.ts
           rm -rf .ci-consumer
+
+  sdk-utils:
+    name: sdk utils tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install
+        working-directory: sdk
+        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+
+      - name: Test
+        working-directory: sdk
+        run: npm test

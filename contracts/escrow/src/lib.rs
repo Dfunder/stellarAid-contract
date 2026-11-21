@@ -488,6 +488,9 @@ impl EscrowContract {
     /// Only the platform admin (as resolved from `config_contract`) may call
     /// this. The value is used by `open_dispute` to extend a disputed escrow's
     /// persistent-storage TTL so it survives arbitration.
+    ///
+    /// Minimum: `ESCROW_TTL_LEDGERS` (432,000 ledgers). Values below the minimum
+    /// are rejected with `EscrowError::InvalidTtl`.
     pub fn set_dispute_ttl_ledgers(
         env: Env,
         config_contract: Address,
@@ -500,7 +503,7 @@ impl EscrowContract {
 
         // CHECKS
         if ledgers == 0 || ledgers < ESCROW_TTL_LEDGERS {
-            return Err(EscrowError::InvalidAmount);
+            return Err(EscrowError::InvalidTtl);
         }
 
         // EFFECTS

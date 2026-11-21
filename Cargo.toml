@@ -33,11 +33,11 @@ members = [
 ]
 resolver = "2"
 
-# NOTE: `contracts/campaign`, `contracts/donation` and `contracts/withdrawal`
-# exist on disk but are still not workspace members, so they are never built.
-# They are deliberately left unregistered here: adding crates that have not been
-# audited (and that pin no `[package.metadata.stellar-aid]` block) is a
-# separate change. Reported, not fixed.
+# NOTE: `contracts/campaign` is a workspace member and is built with the
+# workspace. `contracts/donation` and `contracts/withdrawal` exist on disk but
+# are not workspace members (unaudited and not registered), so they are not
+# built by `cargo build --workspace` and are excluded until separately audited
+# and registered.
 
 [workspace.package]
 version = "0.1.0"

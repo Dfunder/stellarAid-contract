@@ -600,21 +600,6 @@ impl Verification {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
-    /// Paginated variant of `get_artist_badge_types`.
-    pub fn get_artist_badge_types_page(
-        env: Env,
-        artist: Address,
-        start: u32,
-        limit: u32,
-    ) -> (Vec<BadgeType>, shared::PageInfo) {
-        let types: Vec<BadgeType> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::BadgeTypes(artist))
-            .unwrap_or_else(|| Vec::new(&env));
-        shared::pagination::paginated(&env, &types, start, limit)
-    }
-
     pub fn get_badge_history(env: Env, artist: Address) -> Vec<BadgeEvent> {
         env.storage()
             .persistent()

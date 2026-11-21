@@ -160,3 +160,6 @@ fn campaigns_by_creator(env: &Env, creator: &Address) -> Vec<Address> {
 
     filtered
 }
+
+#[cfg(test)]
+mod test;

@@ -160,6 +160,15 @@ fn map_admin_error(err: shared::admin::AdminError) -> MultiSigError {
     }
 }
 
+
+fn check_expiry(proposal: &Proposal, now: u32) -> Result<(), MultiSigError> {
+    if now >= proposal.expires_ledger {
+        Err(MultiSigError::ProposalExpired)
+    } else {
+        Ok(())
+    }
+}
+
 #[contractimpl]
 impl MultiSigContract {
     /// One-shot bootstrap. The admin is the only address that may rewrite the
@@ -284,12 +293,7 @@ impl MultiSigContract {
             return Err(MultiSigError::ProposalClosed);
         }
         let now = env.ledger().sequence();
-        if now > proposal.expires_ledger {
-            return Err(MultiSigError::ProposalClosed);
-        }
-        if now >= proposal.expires_ledger {
-            return Err(MultiSigError::ProposalExpired);
-        }
+        check_expiry(&proposal, now)?;
         let key = approval_key(&proposal_id, &signer);
         if env.storage().persistent().has(&key) {
             return Err(MultiSigError::DuplicateSigner);
@@ -331,9 +335,6 @@ impl MultiSigContract {
             return Err(MultiSigError::ProposalClosed);
         }
         let now = env.ledger().sequence();
-        if now > proposal.expires_ledger {
-            return Err(MultiSigError::ProposalClosed);
-        }
         if now >= proposal.expires_ledger {
             proposal.status = ProposalStatus::Expired;
             save_proposal(&env, &proposal);
@@ -373,7 +374,8 @@ impl MultiSigContract {
         if proposal.status != ProposalStatus::Pending {
             return Err(MultiSigError::ProposalClosed);
         }
-        if env.ledger().sequence() < proposal.expires_ledger {
+        let now = env.ledger().sequence();
+        if now < proposal.expires_ledger {
             return Err(MultiSigError::NotExpired);
         }
         proposal.status = ProposalStatus::Expired;

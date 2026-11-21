@@ -223,7 +223,7 @@ fn save_flag_index(env: &Env, index: &Vec<Symbol>) {
     }
     env.storage()
         .instance()
-        .set(&RolloutKey::FlagList, list);
+        .set(&RolloutKey::FlagList, index);
 }
 
 fn flag_count(env: &Env) -> u32 {
@@ -263,9 +263,8 @@ pub fn get_state(env: &Env) -> RolloutState {
         canary: env.storage().instance().get(&RolloutKey::Canary),
         stable: env.storage().instance().get(&RolloutKey::Stable),
         rollback_error_bps: get_rollback_error_bps(env),
-        flag_count: flag_index(env).len(),
-        flag_cap: flag_cap(env),
         flag_count: flag_count(env),
+        flag_cap: flag_cap(env),
     }
 }
 
@@ -376,7 +375,7 @@ pub fn set_feature_flag(env: &Env, flag: &Symbol, enabled: bool) {
         let mut list = flag_list(env);
         if list.len() < FLAG_LIST_CAP {
             list.push_back(flag.clone());
-            save_flag_list(env, &list);
+            save_flag_index(env, &list);
         }
     }
 

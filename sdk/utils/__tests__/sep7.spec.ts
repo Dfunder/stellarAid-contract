@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import { buildDonationPaymentLink } from '../sep7';
 
 describe('Issue #373: SEP-0007 Payment Link Serialization Tests', () => {
@@ -28,6 +29,15 @@ describe('Issue #373: SEP-0007 Payment Link Serialization Tests', () => {
   it('should drop execution routines if the destination string breaks structural integrity rules', () => {
     expect(() => {
       buildDonationPaymentLink({ ...mockParams, destination: 'INVALID_STELLAR_ADDRESS' });
+    }).toThrow();
+  });
+
+  it('should reject memos longer than 28 bytes (SEP-0007 MEMO_TEXT limit)', () => {
+    expect(() => {
+      buildDonationPaymentLink({
+        ...mockParams,
+        memo: '1234567890123456789012345678901234567890', // 40 bytes
+      });
     }).toThrow();
   });
 });

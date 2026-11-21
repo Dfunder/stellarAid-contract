@@ -32,6 +32,8 @@ pub enum EscrowError {
     TokenBalanceMismatch = 20,
     /// Circuit breaker is tripped; operations are temporarily halted (#771).
     CircuitBreakerTripped = 21,
+    /// Dispute TTL is below the minimum allowed value.
+    InvalidTtl = 22,
 }
 
 impl core::fmt::Display for EscrowError {
@@ -58,6 +60,7 @@ impl core::fmt::Display for EscrowError {
             Self::InvalidStateTransition => write!(f, "escrow status transition is not permitted"),
             Self::TokenBalanceMismatch => write!(f, "contract token balance does not match escrowed accounting"),
             Self::CircuitBreakerTripped => write!(f, "circuit breaker is tripped; operations are temporarily halted"),
+            Self::InvalidTtl => write!(f, "dispute TTL must be at least ESCROW_TTL_LEDGERS"),
         }
     }
 }
@@ -85,5 +88,6 @@ pub fn get_suggestion(error: EscrowError) -> Symbol {
         EscrowError::InvalidStateTransition => symbol_short!("BAD_TRS"),
         EscrowError::TokenBalanceMismatch => symbol_short!("BAD_BAL"),
         EscrowError::CircuitBreakerTripped => symbol_short!("CB_TRIP"),
+        EscrowError::InvalidTtl => symbol_short!("BAD_TTL"),
     }
 }

@@ -238,7 +238,16 @@ if [ -z "$WORKSPACE_CONTRACTS" ]; then
     record_fail "could not read the [workspace] members list from Cargo.toml"
 else
     missing=0
+    deployable=0
+    skipped=0
     for c in $WORKSPACE_CONTRACTS; do
+        manifest="$REPO_ROOT/contracts/$c/Cargo.toml"
+        if [ ! -f "$manifest" ] || ! grep -q 'crate-type.*cdylib' "$manifest"; then
+            skipped=$((skipped + 1))
+            info "skipped: $c (not a cdylib contract; no WASM artifact expected)"
+            continue
+        fi
+        deployable=$((deployable + 1))
         w="$(wasm_path "$c")"
         if [ -f "$w" ]; then
             record_pass "wasm present: $c ($(du -h "$w" | cut -f1))"
@@ -247,8 +256,11 @@ else
             info "missing: $c  ->  $w"
         fi
     done
+    if [ "$skipped" -ne 0 ]; then
+        info "skipped $skipped non-contract workspace crate(s) from WASM inventory"
+    fi
     if [ "$missing" -ne 0 ]; then
-        record_fail "$missing of $(printf '%s\n' $WORKSPACE_CONTRACTS | wc -l | tr -d ' ') workspace contracts have no WASM artifact"
+        record_fail "$missing of $deployable deployable workspace contracts have no WASM artifact"
     fi
 fi
 

@@ -13,7 +13,7 @@ Before you begin, ensure you have the following software installed on your syste
 | Soroban CLI | Latest | Stellar's smart contract development toolkit | https://developers.stellar.org/docs/build/sdks-and-tools/soroban-cli |
 | Node.js | 18.x+ | For TypeScript SDK and frontend development | https://nodejs.org/ |
 | Git | 2.40+ | Version control | https://git-scm.com/downloads |
-| Docker | 24.x+ | For local testing and containerized services | https://www.docker.com/get-started/ |
+| Docker | 24.x+ | Optional: containerized build and test (`make docker-build`) | https://www.docker.com/get-started/ |
 | VS Code | Latest | Recommended IDE with Rust/Soroban extensions | https://code.visualstudio.com/ |
 
 ### System Requirements
@@ -26,9 +26,12 @@ Before you begin, ensure you have the following software installed on your syste
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/akargi/stellarAid-contract.git
+git clone https://github.com/Dfunder/stellarAid-contract.git
 cd stellarAid-contract
 ```
+
+If you plan to open a pull request, fork `Dfunder/stellarAid-contract` on
+GitHub first and clone your fork instead.
 
 ### 2. Install Rust and Targets
 ```bash
@@ -42,67 +45,71 @@ rustup target add wasm32-unknown-unknown
 rustup component add clippy rustfmt
 ```
 
+The pinned toolchain lives in `rust-toolchain.toml`. `rustup` selects it
+automatically inside the repository.
+
 ### 3. Install Soroban CLI
 ```bash
-# Install Soroban CLI using cargo
-cargo install soroban-cli
+# Same command as CONTRIBUTING.md
+cargo install --locked soroban-cli --features opt
 
 # Verify installation
 soroban --version
 ```
 
 ### 4. Install Node.js Dependencies
+The repository root has no `package.json`. The TypeScript packages live under
+`sdk/`:
 ```bash
-# Install TypeScript dependencies
-npm install
-
-# Install TypeScript SDK globally (optional)
-npm install -g @stellar/stellar-sdk
+cd sdk/bindings
+npm ci
+cd ../..
 ```
 
-### 5. Configure Docker Services
+### 5. Docker (optional)
+The repository has no `docker-compose.yml` and does not run a local Soroban
+network. Development and deployment target the public **testnet**. Docker is
+only used to build and test the contracts in a container, via the `Dockerfile`:
 ```bash
-# Start local development containers
-docker-compose up -d local-soroban-rpc horizon-postgres
-
-# Verify all services are running
-docker-compose ps
+make docker-build   # docker build -t stellaraid-contracts .
+make docker-test    # builds the Dockerfile's "test" stage
 ```
 
 ## Configuration Steps
 
 ### 1. Environment Setup
-Create a local environment file from the template:
+Create your environment file from the template, as in
+[CONTRIBUTING.md](../CONTRIBUTING.md):
 ```bash
-cp .env.example .env.local
+cp .env.example .env
 ```
 
-Edit `.env.local` with your configuration:
+`.env` is read by the worker (`worker/src/main.rs`). The template defaults
+point to testnet:
 ```env
-# Local development settings
-SOROBAN_RPC_URL=http://localhost:8000/soroban/rpc
-HORIZON_URL=http://localhost:8000/horizon
-NETWORK_PASSPHRASE="Local SDF Network ; September 2015"
+SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+HORIZON_URL=https://horizon-testnet.stellar.org
+SOROBAN_NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
 
-# Local accounts
-ADMIN_SECRET_KEY=SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-OPERATOR_SECRET_KEY=SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+# Contract ID (C...) of the deployed donation contract. Required for donations.
+DONATION_CONTRACT_ID=
 
-# Development settings
-LOG_LEVEL=debug
-IPFS_GATEWAY_URL=http://localhost:8080/ipfs/
+BIND_ADDRESS=0.0.0.0:3000
 ```
 
-### 2. Generate Local Stellar Accounts
+Never put secret keys in `.env` or commit them. Deployment secrets are read
+from environment variables (see [Local Deployment Test](#4-local-deployment-test)).
+
+### 2. Generate Testnet Stellar Accounts
 ```bash
-# Generate a new test account
-soroban keys generate local-admin
+# Generate a new test identity
+soroban keys generate dev-admin
 
-# Fund the account on local network
-soroban keys fund local-admin --network local
+# Fund it from the testnet friendbot
+soroban keys fund dev-admin --network testnet
 
-# Export the secret key to use in .env.local
-soroban keys show localadmin --secret-key
+# Show the secret key (for STELLAR_PLATFORM_SECRET; keep it out of git)
+soroban keys show dev-admin
 ```
 
 ### 3. Configure IDE Extensions
@@ -123,22 +130,20 @@ cargo test --all
 # Run tests with output
 cargo test -- --nocapture
 
-# Run specific contract tests
-cargo test -p dispute-arbiter
-cargo test -p commission-agreement
-cargo test -p campaign-factory
+# Run specific contract tests (use the package names from each Cargo.toml)
+cargo test -p dispute_arbiter
+cargo test -p commission_agreement
+cargo test -p escrow
 ```
 
-### 2. Run Integration Tests
+### 2. Run SDK Tests and Workspace Gates
 ```bash
-# Start local network first
-docker-compose up -d
+# TypeScript SDK: typecheck + lint + test + build
+(cd sdk/bindings && npm run check)
 
-# Run end-to-end deployment tests
-./scripts/test-local-deployment.sh
-
-# Run TypeScript SDK tests
-npm test
+# The same gates CI runs (see CONTRIBUTING.md)
+make fmt lint test
+./scripts/security_lint.sh
 ```
 
 ### 3. Code Quality Checks
@@ -154,15 +159,24 @@ cargo fmt --all --check
 ```
 
 ### 4. Local Deployment Test
+Deployments target testnet. Run the preflight gate first, then do a dry run
+before deploying for real:
 ```bash
-# Deploy all contracts to local network
-./scripts/deploy.sh --network local \
-  --env-file .env.local \
-  --deploy-all-contracts
+export STELLAR_PLATFORM_SECRET=...   # from `soroban keys show dev-admin`; never commit it
 
-# Verify deployment
-./scripts/verify-deployment.sh --network local
+# Full preflight gate (fmt, clippy, tests, WASM build, env, network probe)
+make preflight
+
+# Dry run, then deploy to testnet
+./scripts/deploy.sh testnet --dry-run
+./scripts/deploy.sh testnet
+
+# Verify the deployment (reads config/testnet_contracts.json)
+./scripts/verify_deployment.sh testnet
 ```
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the full pipeline (`make deploy-all`,
+`make deploy-verify`, mainnet gates).
 
 ## Development Workflow
 
@@ -175,12 +189,14 @@ git checkout -b feature/your-feature-name
 - Follow Rust best practices and project conventions
 - Write unit tests for all new functionality
 - Ensure all existing tests pass
-- Run linting and formatting checks
+- Install the pre-commit hooks (`pre-commit install`) as described in
+  [CONTRIBUTING.md](../CONTRIBUTING.md)
 
 ### 3. Submit Pull Request
-- Push your branch and create a PR
+- Use conventional commit messages (`feat:`, `fix:`, `docs:`, ...)
+- One issue per PR
+- Push your branch to your fork and open a PR against `Dfunder/stellarAid-contract`
 - Ensure CI pipeline passes all checks
-- Request code review from maintainers
 
 ## Troubleshooting
 
@@ -199,28 +215,25 @@ cargo build
 ```
 
 #### 2. Soroban RPC Connection Errors
-**Symptom**: `Failed to connect to Soroban RPC at localhost:8000`
+**Symptom**: `Failed to connect to Soroban RPC`
 **Solution**:
 ```bash
-# Check if Docker containers are running
-docker-compose ps
+# Check that SOROBAN_RPC_URL in .env points to a reachable endpoint
+grep SOROBAN_RPC_URL .env
 
-# Restart Soroban RPC container
-docker-compose restart local-soroban-rpc
-
-# Verify logs
-docker-compose logs local-soroban-rpc
+# Probe the environment and the target network
+make preflight-env
 ```
 
 #### 3. Account Funding Issues
 **Symptom**: `Insufficient funds for transaction`
 **Solution**:
 ```bash
-# Re-fund your local account
-soroban keys fund local-admin --network local
+# Re-fund your testnet identity from friendbot
+soroban keys fund dev-admin --network testnet
 
-# Check account balance
-soroban contract balance <YOUR_ACCOUNT_ADDRESS> --network local
+# Check the account balance on Horizon
+curl "https://horizon-testnet.stellar.org/accounts/$(soroban keys address dev-admin)"
 ```
 
 #### 4. WASM Compilation Errors
@@ -234,23 +247,24 @@ rustup target list --installed
 rustup target add wasm32-unknown-unknown
 ```
 
-#### 5. Docker Network Conflicts
-**Symptom**: `Bind for 0.0.0.0:8000 failed: port is already allocated`
+#### 5. Worker Port Conflicts
+**Symptom**: `Address already in use` when starting the worker
 **Solution**:
 ```bash
-# Find process using port 8000
-netstat -ano | findstr :8000
+# Find the process using port 3000 (Windows)
+netstat -ano | findstr :3000
+# macOS / Linux
+lsof -i :3000
 
-# Stop conflicting process or change port in docker-compose.yml
+# Stop the conflicting process or change BIND_ADDRESS in .env
 ```
 
 ### Getting Help
 
 If you encounter issues not listed here:
-1. Check the GitHub Issues page for known problems
+1. Check the [GitHub Issues](https://github.com/Dfunder/stellarAid-contract/issues) page for known problems
 2. Join the Stellar Developer Discord for community support
-3. Contact the StellarAid maintainers at maintainers@stellar-aid.org
-4. Create a new issue with detailed logs and reproduction steps
+3. Open a new issue with detailed logs and reproduction steps
 
 ## Additional Resources
 

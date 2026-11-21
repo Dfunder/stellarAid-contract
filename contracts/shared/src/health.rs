@@ -15,6 +15,7 @@
 
 use crate::pause::PauseDataKey;
 use crate::rollout::{self, RolloutState};
+use crate::storage::instance;
 use soroban_sdk::{contracttype, symbol_short, Env};
 
 /// Target availability in basis points: 9990 = 99.90%.
@@ -122,10 +123,7 @@ pub fn sla_targets() -> SlaTargets {
 }
 
 pub fn get_alert_config(env: &Env) -> AlertConfig {
-    env.storage()
-        .instance()
-        .get(&HealthKey::AlertConfig)
-        .unwrap_or_else(default_alert_config)
+    instance::get_or_else(env, &HealthKey::AlertConfig, default_alert_config)
 }
 
 /// Persist alerting thresholds. Panics if the bps values are inverted or > 10000.
@@ -138,38 +136,43 @@ pub fn set_alert_config(env: &Env, config: AlertConfig) {
     {
         panic!("invalid alert config");
     }
-    env.storage()
-        .instance()
-        .set(&HealthKey::AlertConfig, &config);
+    instance::set(env, &HealthKey::AlertConfig, &config);
     env.events()
         .publish((symbol_short!("alrt_cfg"),), config.unhealthy_error_bps);
 }
 
 fn is_paused(env: &Env) -> bool {
-    env.storage()
-        .instance()
-        .get(&PauseDataKey::Paused)
-        .unwrap_or(false)
+    instance::get_or(env, &PauseDataKey::Paused, false)
 }
 
 pub fn get_metrics(env: &Env) -> HealthMetrics {
-    let mut metrics: HealthMetrics =
-        env.storage()
-            .instance()
-            .get(&HealthKey::Metrics)
-            .unwrap_or(HealthMetrics {
-                ok_count: 0,
-                error_count: 0,
-                last_ok_ledger: 0,
-                last_error_ledger: 0,
-                paused: false,
-            });
+    let mut metrics: HealthMetrics = instance::get_or(
+        env,
+        &HealthKey::Metrics,
+        HealthMetrics {
+            ok_count: 0,
+            error_count: 0,
+            last_ok_ledger: 0,
+            last_error_ledger: 0,
+            paused: false,
+        },
+    );
     metrics.paused = is_paused(env);
     metrics
 }
 
 fn save_metrics(env: &Env, metrics: &HealthMetrics) {
-    env.storage().instance().set(&HealthKey::Metrics, metrics);
+    instance::set(env, &HealthKey::Metrics, metrics);
+}
+
+/// Record one invocation outcome: `ok = true` is a success sample,
+/// `ok = false` an error sample. Backs the `report_outcome` entry point.
+pub fn record_outcome(env: &Env, ok: bool) {
+    if ok {
+        record_ok(env)
+    } else {
+        record_error(env)
+    }
 }
 
 /// Record a successful invocation sample.
@@ -237,18 +240,12 @@ fn maybe_emit_alert(env: &Env, report: &HealthReport, config: &AlertConfig) {
     if !config.alerting_enabled || !report.anomaly {
         return;
     }
-    let last: u32 = env
-        .storage()
-        .instance()
-        .get(&HealthKey::LastAlertLedger)
-        .unwrap_or(0);
+    let last: u32 = instance::get_or(env, &HealthKey::LastAlertLedger, 0);
     let now = env.ledger().sequence();
     if last != 0 && now.saturating_sub(last) < config.alert_cooldown_ledgers {
         return;
     }
-    env.storage()
-        .instance()
-        .set(&HealthKey::LastAlertLedger, &now);
+    instance::set(env, &HealthKey::LastAlertLedger, &now);
     env.events().publish(
         (symbol_short!("hlth_alrt"),),
         (report.status, report.error_bps, report.stalled),

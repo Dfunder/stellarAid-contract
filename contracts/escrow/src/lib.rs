@@ -895,45 +895,39 @@ impl EscrowContract {
     }
 
     // ── Health monitoring (#678) and gradual rollout (#684) ──────────────
+    //
+    // The observability surface is four entry points:
+    //   get_health_snapshot  - read-only; replaces detect_anomaly,
+    //                          get_health_metrics, get_sla_targets and
+    //                          get_alert_config (and embeds get_rollout_state)
+    //   health_check         - classify + rate-limited `hlth_alrt` event only
+    //   set_alert_config     - admin: alert thresholds
+    //   report_outcome       - admin: record one ok/error sample
+    // Health monitoring never changes deployment state. Rollback is the
+    // separate, explicit `evaluate_auto_rollback` / `trigger_rollback` path.
+
     /// One-call operator view: anomaly flag, status, metrics, SLA targets,
     /// alert config and rollout state, all read from the same ledger.
-    /// Read-only (no alert event, no auto-rollback), so it is safe to simulate.
-    /// Prefer this over calling detect_anomaly, get_health_metrics,
-    /// get_sla_targets, get_alert_config and get_rollout_state separately.
+    /// Read-only (no alert event, no rollback), so it is safe to simulate.
     pub fn get_health_snapshot(env: Env) -> shared::health::HealthSnapshot {
         shared::health::health_snapshot(&env)
     }
+    /// Classify current health and emit a `hlth_alrt` event if one is due.
+    ///
+    /// Has no rollout side effect: it never triggers a rollback. Call
+    /// `evaluate_auto_rollback` to act on an anomaly.
     pub fn health_check(env: Env) -> shared::health::HealthReport {
-        let report = shared::health::health_check(&env);
-        if report.anomaly {
-            shared::rollout::maybe_auto_rollback(&env);
-        }
-        report
-    }
-    pub fn get_health_metrics(env: Env) -> shared::health::HealthMetrics {
-        shared::health::get_metrics(&env)
-    }
-    pub fn get_sla_targets(env: Env) -> shared::health::SlaTargets {
-        let _ = env;
-        shared::health::sla_targets()
+        shared::health::health_check(&env)
     }
     pub fn set_alert_config(env: Env, admin: Address, config: shared::health::AlertConfig) {
         admin.require_auth();
         shared::health::set_alert_config(&env, config);
     }
-    pub fn get_alert_config(env: Env) -> shared::health::AlertConfig {
-        shared::health::get_alert_config(&env)
-    }
-    pub fn detect_anomaly(env: Env) -> bool {
-        shared::health::detect_anomaly(&env)
-    }
-    pub fn report_ok(env: Env, admin: Address) {
+    /// Record one invocation outcome sample (`ok = false` counts as an error).
+    /// Replaces the former `report_ok` / `report_error` pair.
+    pub fn report_outcome(env: Env, admin: Address, ok: bool) {
         admin.require_auth();
-        shared::health::record_ok(&env);
-    }
-    pub fn report_error(env: Env, admin: Address) {
-        admin.require_auth();
-        shared::health::record_error(&env);
+        shared::health::record_outcome(&env, ok);
     }
     pub fn set_feature_flag(env: Env, admin: Address, flag: soroban_sdk::Symbol, enabled: bool) {
         admin.require_auth();
@@ -958,6 +952,15 @@ impl EscrowContract {
     }
     pub fn should_rollback(env: Env) -> bool {
         shared::rollout::should_rollback(&env)
+    }
+    /// Explicitly apply the automatic rollback if its trigger has fired.
+    ///
+    /// This used to run as a hidden side effect of `health_check`. It is now
+    /// the only automatic path that changes deployment state. Returns `true`
+    /// when the contract is (now) rolled back. Permissionless, like
+    /// `health_check` was: it acts only when the configured trigger is met.
+    pub fn evaluate_auto_rollback(env: Env) -> bool {
+        shared::rollout::maybe_auto_rollback(&env)
     }
     pub fn trigger_rollback(env: Env, admin: Address) {
         admin.require_auth();

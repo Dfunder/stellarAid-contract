@@ -58,9 +58,10 @@ jobs:
         run: |
           rustup show active-toolchain || rustup toolchain install
           rustup target add wasm32-unknown-unknown
-      - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.0.11
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.49.18
         with:
-          manifest-path: Cargo.toml
+          tool: cargo-deny
       - name: cargo deny check
         run: cargo deny check advisories bans licenses sources all-features
 

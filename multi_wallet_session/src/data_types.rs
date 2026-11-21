@@ -5,7 +5,7 @@ use soroban_sdk::{contracttype, Address, Symbol};
 pub enum DataKey {
     ActiveSession(Address), // Maps a user profile to their current active signing wallet
     SessionNonce(Address),  // Tracks transaction replay prevention nonces per wallet
-    IsFlowLocked(Address),   // Mid-flow guard: locks a wallet if an action is incomplete
+    IsFlowLocked(Address),  // Mid-flow guard: locks a wallet if an action is incomplete
 }
 
 #[contracttype]

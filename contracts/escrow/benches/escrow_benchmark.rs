@@ -15,7 +15,14 @@ use test::Bencher;
 
 use escrow_contract::{EscrowContract, EscrowContractClient};
 
-fn setup_env() -> (Env, EscrowContractClient<'static>, Address, Address, Address, Bytes) {
+fn setup_env() -> (
+    Env,
+    EscrowContractClient<'static>,
+    Address,
+    Address,
+    Address,
+    Bytes,
+) {
     let env = Env::default();
     env.mock_all_auths();
     let contract_id = env.register_contract(None, EscrowContract);

@@ -165,8 +165,10 @@ pub fn set_config(env: &Env, config: &CircuitBreakerConfig) {
     env.storage()
         .instance()
         .set(&CircuitBreakerKey::HaltErrorBps, &config.halt_error_bps);
-    env.events()
-        .publish((symbol_short!("cb_cfg"),), (config.admin.clone(), config.halt_error_bps));
+    env.events().publish(
+        (symbol_short!("cb_cfg"),),
+        (config.admin.clone(), config.halt_error_bps),
+    );
 }
 
 /// Read the configured halt threshold, falling back to the default.
@@ -333,7 +335,11 @@ pub fn resume(env: &Env, admin: &Address) -> Result<(), CircuitBreakerError> {
 pub fn get_state(env: &Env) -> CircuitBreakerState {
     let metrics = health::get_metrics(env);
     let total = metrics.ok_count.saturating_add(metrics.error_count);
-    let bps = if total == 0 { 0 } else { health::error_bps(&metrics) };
+    let bps = if total == 0 {
+        0
+    } else {
+        health::error_bps(&metrics)
+    };
     CircuitBreakerState {
         halted: is_halted(env),
         error_bps: bps,
@@ -384,12 +390,11 @@ pub fn schedule_recovery(
     if !is_halted(env) {
         return Err(CircuitBreakerError::NotHalted);
     }
-    pause::schedule_recovery(env, admin, delay_ledgers)
-        .map_err(|e| match e {
-            pause::PauseError::NotPaused => CircuitBreakerError::NotHalted,
-            pause::PauseError::InvalidRecoveryDelay => CircuitBreakerError::InvalidThreshold,
-            _ => CircuitBreakerError::RecoveryPending,
-        })
+    pause::schedule_recovery(env, admin, delay_ledgers).map_err(|e| match e {
+        pause::PauseError::NotPaused => CircuitBreakerError::NotHalted,
+        pause::PauseError::InvalidRecoveryDelay => CircuitBreakerError::InvalidThreshold,
+        _ => CircuitBreakerError::RecoveryPending,
+    })
 }
 
 /// Cancel a previously scheduled recovery (admin only). The contract stays halted.
@@ -484,10 +489,13 @@ mod tests {
         let env = setup();
         let admin = Address::generate(&env);
 
-        set_config(&env, &CircuitBreakerConfig {
-            admin: admin.clone(),
-            halt_error_bps: DEFAULT_HALT_ERROR_BPS,
-        });
+        set_config(
+            &env,
+            &CircuitBreakerConfig {
+                admin: admin.clone(),
+                halt_error_bps: DEFAULT_HALT_ERROR_BPS,
+            },
+        );
 
         assert!(!is_halted(&env));
         halt(&env, &admin).unwrap();
@@ -511,10 +519,13 @@ mod tests {
         let env = setup();
         let admin = Address::generate(&env);
 
-        set_config(&env, &CircuitBreakerConfig {
-            admin: admin.clone(),
-            halt_error_bps: 500, // 5%
-        });
+        set_config(
+            &env,
+            &CircuitBreakerConfig {
+                admin: admin.clone(),
+                halt_error_bps: 500, // 5%
+            },
+        );
 
         // Record 5 errors out of 10 calls (50% error rate, well above 5%)
         for _ in 0..5 {
@@ -524,7 +535,10 @@ mod tests {
             record_success(&env);
         }
 
-        assert!(is_halted(&env), "should auto-halt when error rate exceeds threshold");
+        assert!(
+            is_halted(&env),
+            "should auto-halt when error rate exceeds threshold"
+        );
         assert_eq!(last_halt_ledger(&env), env.ledger().sequence());
     }
 
@@ -533,10 +547,13 @@ mod tests {
         let env = setup();
         let admin = Address::generate(&env);
 
-        set_config(&env, &CircuitBreakerConfig {
-            admin: admin.clone(),
-            halt_error_bps: 500, // 5%
-        });
+        set_config(
+            &env,
+            &CircuitBreakerConfig {
+                admin: admin.clone(),
+                halt_error_bps: 500, // 5%
+            },
+        );
 
         for _ in 0..95 {
             record_success(&env);
@@ -553,10 +570,13 @@ mod tests {
         let env = setup();
         let admin = Address::generate(&env);
 
-        set_config(&env, &CircuitBreakerConfig {
-            admin: admin.clone(),
-            halt_error_bps: 100, // 1% threshold
-        });
+        set_config(
+            &env,
+            &CircuitBreakerConfig {
+                admin: admin.clone(),
+                halt_error_bps: 100, // 1% threshold
+            },
+        );
 
         // Only 2 samples — below MIN_SAMPLE_FOR_HALT
         record_failure(&env);
@@ -569,10 +589,13 @@ mod tests {
         let env = setup();
         let admin = Address::generate(&env);
 
-        set_config(&env, &CircuitBreakerConfig {
-            admin: admin.clone(),
-            halt_error_bps: 500,
-        });
+        set_config(
+            &env,
+            &CircuitBreakerConfig {
+                admin: admin.clone(),
+                halt_error_bps: 500,
+            },
+        );
 
         record_success(&env);
         record_success(&env);
@@ -591,10 +614,13 @@ mod tests {
         let env = setup();
         let admin = Address::generate(&env);
 
-        set_config(&env, &CircuitBreakerConfig {
-            admin: admin.clone(),
-            halt_error_bps: 500,
-        });
+        set_config(
+            &env,
+            &CircuitBreakerConfig {
+                admin: admin.clone(),
+                halt_error_bps: 500,
+            },
+        );
 
         halt(&env, &admin).unwrap();
         assert!(is_halted(&env));

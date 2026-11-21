@@ -7,16 +7,16 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Bytes, Env};
 
-pub mod errors;
-pub mod storage;
 pub mod cross_contract;
+pub mod errors;
 pub mod invariants;
+pub mod storage;
 
 pub use cross_contract::{AtomicCommitMarker, AtomicCommitState};
 pub use invariants::InvariantError;
 
 use errors::EscrowError;
-use storage::{CommissionStatus, EscrowRecord, escrow_exists, get_escrow, save_escrow};
+use storage::{escrow_exists, get_escrow, save_escrow, CommissionStatus, EscrowRecord};
 
 include!("../../semver_types.rs");
 
@@ -34,7 +34,13 @@ fn correlation_publish(
 ) {
     let scope = shared::correlation::scope(env, domain);
     let cid = shared::correlation::CorrelationId::derive(env, &scope, &[id]);
-    shared::correlation::publish(env, soroban_sdk::Symbol::new(env, domain), action, &cid, key);
+    shared::correlation::publish(
+        env,
+        soroban_sdk::Symbol::new(env, domain),
+        action,
+        &cid,
+        key,
+    );
 }
 
 // ── Pause helpers (closes #594) ─────────────────────────────────────────────
@@ -51,7 +57,11 @@ enum PauseKey {
 
 /// Require the escrow contract is not paused.
 fn require_not_paused(env: &Env) -> Result<(), EscrowError> {
-    let paused: bool = env.storage().instance().get(&PauseKey::Paused).unwrap_or(false);
+    let paused: bool = env
+        .storage()
+        .instance()
+        .get(&PauseKey::Paused)
+        .unwrap_or(false);
     if paused {
         Err(EscrowError::ContractPaused)
     } else {
@@ -146,17 +156,17 @@ impl EscrowContract {
     /// Closes #594.
     pub fn pause(env: Env, admin: Address) -> Result<(), EscrowError> {
         admin.require_auth();
-        let stored: Address = env.storage().instance()
+        let stored: Address = env
+            .storage()
+            .instance()
             .get(&PauseKey::Admin)
             .ok_or(EscrowError::Unauthorized)?;
         if stored != admin {
             return Err(EscrowError::Unauthorized);
         }
         env.storage().instance().set(&PauseKey::Paused, &true);
-        env.events().publish(
-            (symbol_short!("esc"), symbol_short!("paused")),
-            admin,
-        );
+        env.events()
+            .publish((symbol_short!("esc"), symbol_short!("paused")), admin);
         Ok(())
     }
 
@@ -164,23 +174,26 @@ impl EscrowContract {
     /// Closes #594.
     pub fn unpause(env: Env, admin: Address) -> Result<(), EscrowError> {
         admin.require_auth();
-        let stored: Address = env.storage().instance()
+        let stored: Address = env
+            .storage()
+            .instance()
             .get(&PauseKey::Admin)
             .ok_or(EscrowError::Unauthorized)?;
         if stored != admin {
             return Err(EscrowError::Unauthorized);
         }
         env.storage().instance().set(&PauseKey::Paused, &false);
-        env.events().publish(
-            (symbol_short!("esc"), symbol_short!("unpaused")),
-            admin,
-        );
+        env.events()
+            .publish((symbol_short!("esc"), symbol_short!("unpaused")), admin);
         Ok(())
     }
 
     /// Returns `true` when the contract is currently paused.
     pub fn is_paused(env: Env) -> bool {
-        env.storage().instance().get(&PauseKey::Paused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&PauseKey::Paused)
+            .unwrap_or(false)
     }
 
     // ── Admin key rotation (closes #635) ─────────────────────────────────────
@@ -203,7 +216,9 @@ impl EscrowContract {
         if stored != admin {
             return Err(EscrowError::Unauthorized);
         }
-        env.storage().instance().set(&PauseKey::PendingAdmin, &new_admin);
+        env.storage()
+            .instance()
+            .set(&PauseKey::PendingAdmin, &new_admin);
         env.events().publish(
             (symbol_short!("esc"), symbol_short!("adm_prop")),
             (admin, new_admin),
@@ -274,16 +289,26 @@ impl EscrowContract {
         // CHECKS
         require_not_paused(&env)?;
         shared::circuit_breaker::require_not_halted(&env)?;
-        if amount <= 0 { return Err(EscrowError::InvalidAmount); }
-        if escrow_exists(&env, &commission_id) { return Err(EscrowError::AlreadyExists); }
+        if amount <= 0 {
+            return Err(EscrowError::InvalidAmount);
+        }
+        if escrow_exists(&env, &commission_id) {
+            return Err(EscrowError::AlreadyExists);
+        }
         // Self-dealing guard (#801): a client must not escrow funds to themselves.
-        if client == artist { return Err(EscrowError::InvalidAddress); }
+        if client == artist {
+            return Err(EscrowError::InvalidAddress);
+        }
 
         let fee_bps: u32 = env.invoke_contract(
-            &config_contract, &symbol_short!("get_fee_b"), soroban_sdk::vec![&env],
+            &config_contract,
+            &symbol_short!("get_fee_b"),
+            soroban_sdk::vec![&env],
         );
         let usdc_token: Address = env.invoke_contract(
-            &config_contract, &symbol_short!("get_usdc"), soroban_sdk::vec![&env],
+            &config_contract,
+            &symbol_short!("get_usdc"),
+            soroban_sdk::vec![&env],
         );
 
         // EFFECTS + INTERACTIONS under re-entrancy guard (#587);
@@ -303,12 +328,13 @@ impl EscrowContract {
             extend_escrow_ttl_default(&env, &record);
 
             // INVARIANT: balance consistency — released starts at 0, amount is positive (#770)
-            invariants::verify_balance_consistency(&env, &record)
-                .map_err(EscrowError::from)?;
+            invariants::verify_balance_consistency(&env, &record).map_err(EscrowError::from)?;
 
             // INTERACTIONS – external call after effects
             token::Client::new(&env, &usdc_token).transfer(
-                &client, &env.current_contract_address(), &amount,
+                &client,
+                &env.current_contract_address(),
+                &amount,
             );
 
             // EVENT — additive funding notification (#978). The existing
@@ -329,7 +355,13 @@ impl EscrowContract {
                     env.ledger().sequence(),
                 ),
             );
-            correlation_publish(&env, "escrow", symbol_short!("created"), &commission_id, &commission_id);
+            correlation_publish(
+                &env,
+                "escrow",
+                symbol_short!("created"),
+                &commission_id,
+                &commission_id,
+            );
             Ok(())
         })
     }
@@ -344,12 +376,26 @@ impl EscrowContract {
         // CHECKS
         shared::circuit_breaker::require_not_halted(&env)?;
         let mut r = get_escrow(&env, &commission_id);
-        if r.status != CommissionStatus::Locked { return Err(EscrowError::InvalidStatus); }
+        if r.status != CommissionStatus::Locked {
+            return Err(EscrowError::InvalidStatus);
+        }
 
-        let admin: Address = env.invoke_contract(&config_contract, &symbol_short!("get_adm"), soroban_sdk::vec![&env]);
+        let admin: Address = env.invoke_contract(
+            &config_contract,
+            &symbol_short!("get_adm"),
+            soroban_sdk::vec![&env],
+        );
         admin.require_auth();
-        let usdc: Address = env.invoke_contract(&config_contract, &symbol_short!("get_usdc"), soroban_sdk::vec![&env]);
-        let pw: Address = env.invoke_contract(&config_contract, &symbol_short!("get_pw"), soroban_sdk::vec![&env]);
+        let usdc: Address = env.invoke_contract(
+            &config_contract,
+            &symbol_short!("get_usdc"),
+            soroban_sdk::vec![&env],
+        );
+        let pw: Address = env.invoke_contract(
+            &config_contract,
+            &symbol_short!("get_pw"),
+            soroban_sdk::vec![&env],
+        );
 
         let artist = r.artist.clone();
 
@@ -396,9 +442,17 @@ impl EscrowContract {
         if r.status != CommissionStatus::Locked && r.status != CommissionStatus::Disputed {
             return Err(EscrowError::InvalidStatus);
         }
-        let admin: Address = env.invoke_contract(&config_contract, &symbol_short!("get_adm"), soroban_sdk::vec![&env]);
+        let admin: Address = env.invoke_contract(
+            &config_contract,
+            &symbol_short!("get_adm"),
+            soroban_sdk::vec![&env],
+        );
         admin.require_auth();
-        let usdc: Address = env.invoke_contract(&config_contract, &symbol_short!("get_usdc"), soroban_sdk::vec![&env]);
+        let usdc: Address = env.invoke_contract(
+            &config_contract,
+            &symbol_short!("get_usdc"),
+            soroban_sdk::vec![&env],
+        );
 
         let client = r.client.clone();
         let amount = r.amount;
@@ -415,7 +469,11 @@ impl EscrowContract {
             save_escrow(&env, &r);
 
             // INTERACTIONS
-            token::Client::new(&env, &usdc).transfer(&env.current_contract_address(), &client, &amount);
+            token::Client::new(&env, &usdc).transfer(
+                &env.current_contract_address(),
+                &client,
+                &amount,
+            );
 
             // EVENT
             env.events().publish(
@@ -427,12 +485,20 @@ impl EscrowContract {
     }
 
     /// Closes #482 (CEI), #486 (events).
-    pub fn expire_escrow(env: Env, commission_id: Bytes, expiry_ledger: u32) -> Result<(), EscrowError> {
+    pub fn expire_escrow(
+        env: Env,
+        commission_id: Bytes,
+        expiry_ledger: u32,
+    ) -> Result<(), EscrowError> {
         // CHECKS
         shared::circuit_breaker::require_not_halted(&env)?;
         let mut r = get_escrow(&env, &commission_id);
-        if r.status != CommissionStatus::Locked { return Err(EscrowError::InvalidStatus); }
-        if env.ledger().sequence() < expiry_ledger { return Err(EscrowError::NotExpired); }
+        if r.status != CommissionStatus::Locked {
+            return Err(EscrowError::InvalidStatus);
+        }
+        if env.ledger().sequence() < expiry_ledger {
+            return Err(EscrowError::NotExpired);
+        }
 
         // EFFECTS
         let prev_status = r.status;
@@ -453,15 +519,25 @@ impl EscrowContract {
     }
 
     /// Closes #482 (CEI), #486 (events), #586 (dispute-period TTL extension).
-    pub fn open_dispute(env: Env, commission_id: Bytes, initiator: Address) -> Result<(), EscrowError> {
+    pub fn open_dispute(
+        env: Env,
+        commission_id: Bytes,
+        initiator: Address,
+    ) -> Result<(), EscrowError> {
         initiator.require_auth();
 
         // CHECKS
         shared::circuit_breaker::require_not_halted(&env)?;
         let mut r = get_escrow(&env, &commission_id);
-        if r.status == CommissionStatus::Disputed { return Err(EscrowError::DisputeAlreadyOpen); }
-        if r.status != CommissionStatus::Locked { return Err(EscrowError::InvalidStatus); }
-        if initiator != r.client && initiator != r.artist { return Err(EscrowError::Unauthorized); }
+        if r.status == CommissionStatus::Disputed {
+            return Err(EscrowError::DisputeAlreadyOpen);
+        }
+        if r.status != CommissionStatus::Locked {
+            return Err(EscrowError::InvalidStatus);
+        }
+        if initiator != r.client && initiator != r.artist {
+            return Err(EscrowError::Unauthorized);
+        }
 
         // EFFECTS – extend the record TTL with the dispute-period length so the
         // escrow cannot expire mid-arbitration (#586).
@@ -497,7 +573,9 @@ impl EscrowContract {
         ledgers: u32,
     ) -> Result<(), EscrowError> {
         let admin: Address = env.invoke_contract(
-            &config_contract, &symbol_short!("get_adm"), soroban_sdk::vec![&env],
+            &config_contract,
+            &symbol_short!("get_adm"),
+            soroban_sdk::vec![&env],
         );
         admin.require_auth();
 
@@ -510,10 +588,8 @@ impl EscrowContract {
         storage::set_dispute_ttl_ledgers(&env, ledgers);
 
         // EVENT
-        env.events().publish(
-            (symbol_short!("ttl"), symbol_short!("updated")),
-            ledgers,
-        );
+        env.events()
+            .publish((symbol_short!("ttl"), symbol_short!("updated")), ledgers);
         Ok(())
     }
 
@@ -550,7 +626,8 @@ impl EscrowContract {
             return Err(EscrowError::InvalidAmount);
         }
 
-        let remaining = r.amount
+        let remaining = r
+            .amount
             .checked_sub(r.released_amount)
             .ok_or(EscrowError::ArithmeticOverflow)?;
         if release_amount > remaining {
@@ -558,14 +635,20 @@ impl EscrowContract {
         }
 
         let admin: Address = env.invoke_contract(
-            &config_contract, &symbol_short!("get_adm"), soroban_sdk::vec![&env],
+            &config_contract,
+            &symbol_short!("get_adm"),
+            soroban_sdk::vec![&env],
         );
         admin.require_auth();
         let usdc: Address = env.invoke_contract(
-            &config_contract, &symbol_short!("get_usdc"), soroban_sdk::vec![&env],
+            &config_contract,
+            &symbol_short!("get_usdc"),
+            soroban_sdk::vec![&env],
         );
         let pw: Address = env.invoke_contract(
-            &config_contract, &symbol_short!("get_pw"), soroban_sdk::vec![&env],
+            &config_contract,
+            &symbol_short!("get_pw"),
+            soroban_sdk::vec![&env],
         );
 
         let artist = r.artist.clone();
@@ -575,11 +658,13 @@ impl EscrowContract {
 
             // EFFECTS – update released_amount and status before external calls
             let prev_status = r.status;
-            r.released_amount = r.released_amount
+            r.released_amount = r
+                .released_amount
                 .checked_add(release_amount)
                 .ok_or(EscrowError::ArithmeticOverflow)?;
 
-            let new_remaining = r.amount
+            let new_remaining = r
+                .amount
                 .checked_sub(r.released_amount)
                 .ok_or(EscrowError::ArithmeticOverflow)?;
 
@@ -605,7 +690,13 @@ impl EscrowContract {
             // EVENT
             env.events().publish(
                 (symbol_short!("escrow"), symbol_short!("partial")),
-                (commission_id.clone(), release_amount, payout, fee, r.released_amount),
+                (
+                    commission_id.clone(),
+                    release_amount,
+                    payout,
+                    fee,
+                    r.released_amount,
+                ),
             );
             Ok(())
         })
@@ -635,7 +726,8 @@ impl EscrowContract {
             return Err(EscrowError::NotExpired);
         }
 
-        let remaining = r.amount
+        let remaining = r
+            .amount
             .checked_sub(r.released_amount)
             .ok_or(EscrowError::ArithmeticOverflow)?;
         if remaining <= 0 {
@@ -643,10 +735,14 @@ impl EscrowContract {
         }
 
         let usdc: Address = env.invoke_contract(
-            &config_contract, &symbol_short!("get_usdc"), soroban_sdk::vec![&env],
+            &config_contract,
+            &symbol_short!("get_usdc"),
+            soroban_sdk::vec![&env],
         );
         let pw: Address = env.invoke_contract(
-            &config_contract, &symbol_short!("get_pw"), soroban_sdk::vec![&env],
+            &config_contract,
+            &symbol_short!("get_pw"),
+            soroban_sdk::vec![&env],
         );
 
         let artist = r.artist.clone();
@@ -682,7 +778,13 @@ impl EscrowContract {
             // EVENT
             env.events().publish(
                 (symbol_short!("escrow"), symbol_short!("autorls")),
-                (commission_id.clone(), auto_release_ledger, remaining, payout, fee),
+                (
+                    commission_id.clone(),
+                    auto_release_ledger,
+                    remaining,
+                    payout,
+                    fee,
+                ),
             );
             Ok(())
         })
@@ -723,10 +825,22 @@ impl EscrowContract {
             return Err(EscrowError::InvalidSplit);
         }
 
-        let admin: Address = env.invoke_contract(&config_contract, &symbol_short!("get_adm"), soroban_sdk::vec![&env]);
+        let admin: Address = env.invoke_contract(
+            &config_contract,
+            &symbol_short!("get_adm"),
+            soroban_sdk::vec![&env],
+        );
         admin.require_auth();
-        let usdc: Address = env.invoke_contract(&config_contract, &symbol_short!("get_usdc"), soroban_sdk::vec![&env]);
-        let pw: Address = env.invoke_contract(&config_contract, &symbol_short!("get_pw"), soroban_sdk::vec![&env]);
+        let usdc: Address = env.invoke_contract(
+            &config_contract,
+            &symbol_short!("get_usdc"),
+            soroban_sdk::vec![&env],
+        );
+        let pw: Address = env.invoke_contract(
+            &config_contract,
+            &symbol_short!("get_pw"),
+            soroban_sdk::vec![&env],
+        );
 
         let artist = r.artist.clone();
         let client = r.client.clone();
@@ -766,7 +880,9 @@ impl EscrowContract {
     }
 
     pub fn get_escrow(env: Env, commission_id: Bytes) -> Result<EscrowRecord, EscrowError> {
-        if !escrow_exists(&env, &commission_id) { return Err(EscrowError::NotFound); }
+        if !escrow_exists(&env, &commission_id) {
+            return Err(EscrowError::NotFound);
+        }
         Ok(storage::get_escrow(&env, &commission_id))
     }
 
@@ -866,10 +982,7 @@ impl EscrowContract {
     /// status is one of the valid terminal/intermediate states. Does not touch
     /// the token contract — for on-chain balance verification use
     /// [`Self::verify_contract_balance`].
-    pub fn verify_escrow_invariants(
-        env: Env,
-        commission_id: Bytes,
-    ) -> Result<bool, EscrowError> {
+    pub fn verify_escrow_invariants(env: Env, commission_id: Bytes) -> Result<bool, EscrowError> {
         let record = get_escrow(&env, &commission_id);
         invariants::verify_balance_consistency(&env, &record)?;
         Ok(true)
@@ -885,12 +998,8 @@ impl EscrowContract {
         commission_contract: Address,
     ) -> Result<bool, EscrowError> {
         let record = get_escrow(&env, &commission_id);
-        let result = invariants::verify_escrow_amount(
-            &env,
-            &commission_contract,
-            &commission_id,
-            &record,
-        )?;
+        let result =
+            invariants::verify_escrow_amount(&env, &commission_contract, &commission_id, &record)?;
         Ok(result.is_some())
     }
 
@@ -934,7 +1043,13 @@ impl EscrowContract {
     pub fn is_feature_enabled(env: Env, flag: soroban_sdk::Symbol) -> bool {
         shared::rollout::is_feature_enabled(&env, &flag)
     }
-    pub fn set_canary_deployment(env: Env, admin: Address, canary: Address, stable: Address, canary_bps: u32) {
+    pub fn set_canary_deployment(
+        env: Env,
+        admin: Address,
+        canary: Address,
+        stable: Address,
+        canary_bps: u32,
+    ) {
         admin.require_auth();
         shared::rollout::set_canary_deployment(&env, canary, stable, canary_bps);
     }
@@ -966,7 +1081,9 @@ impl EscrowContract {
     /// from [`shared::pause`] are reused.
     pub fn halt(env: Env, admin: Address) -> Result<(), EscrowError> {
         admin.require_auth();
-        let stored: Address = env.storage().instance()
+        let stored: Address = env
+            .storage()
+            .instance()
             .get(&PauseKey::Admin)
             .ok_or(EscrowError::Unauthorized)?;
         if stored != admin {
@@ -983,7 +1100,9 @@ impl EscrowContract {
     /// lock must have matured first.
     pub fn resume(env: Env, admin: Address) -> Result<(), EscrowError> {
         admin.require_auth();
-        let stored: Address = env.storage().instance()
+        let stored: Address = env
+            .storage()
+            .instance()
             .get(&PauseKey::Admin)
             .ok_or(EscrowError::Unauthorized)?;
         if stored != admin {
@@ -1016,7 +1135,9 @@ impl EscrowContract {
         halt_error_bps: u32,
     ) -> Result<(), EscrowError> {
         admin.require_auth();
-        let stored: Address = env.storage().instance()
+        let stored: Address = env
+            .storage()
+            .instance()
             .get(&PauseKey::Admin)
             .ok_or(EscrowError::Unauthorized)?;
         if stored != admin {
@@ -1033,26 +1154,25 @@ impl EscrowContract {
     }
 }
 
-
 #[cfg(test)]
-mod tests;
+mod atomic_flow_tests;
 #[cfg(test)]
-mod refund_tests;
+mod cancellation_tests;
+#[cfg(test)]
+mod correlation_tests;
 #[cfg(test)]
 mod dispute_tests;
 #[cfg(test)]
 mod fee_math_tests;
 #[cfg(test)]
-mod storage_edge_tests;
-#[cfg(test)]
-mod cancellation_tests;
+mod funding_event_tests;
 #[cfg(test)]
 mod integration_tests;
 #[cfg(test)]
-mod atomic_flow_tests;
-#[cfg(test)]
-mod correlation_tests;
-#[cfg(test)]
 mod invariant_tests;
 #[cfg(test)]
-mod funding_event_tests;
+mod refund_tests;
+#[cfg(test)]
+mod storage_edge_tests;
+#[cfg(test)]
+mod tests;

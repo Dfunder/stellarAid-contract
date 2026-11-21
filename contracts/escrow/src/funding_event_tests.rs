@@ -106,8 +106,7 @@ fn create_escrow_emits_funding_event_with_expected_values() {
     f.escrow
         .create_escrow(&f.commission_id, &f.client, &f.artist, &AMOUNT, &f.config);
 
-    let data = two_topic_data(&f, "escrow", "funded")
-        .expect("expected an (escrow, funded) event");
+    let data = two_topic_data(&f, "escrow", "funded").expect("expected an (escrow, funded) event");
     let (commission_id, funder, amount, asset, ledger): (Bytes, Address, i128, Address, u32) =
         TryFromVal::try_from_val(&f.env, &data).unwrap();
 

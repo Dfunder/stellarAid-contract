@@ -99,7 +99,6 @@ jobs:
       - name: Every source module emitted a declaration file
         run: |
           set -euo pipefail
-          cd sdk/bindings
           missing=0
           for f in $(find src -name '*.ts' -not -name '*.d.ts' | sort); do
             base="${f#src/}"
@@ -115,7 +114,6 @@ jobs:
       - name: Typecheck a consumer against dist/
         run: |
           set -euo pipefail
-          cd sdk/bindings
           mkdir -p .ci-consumer
           cat > .ci-consumer/consumer.ts <<'EOF'
           import type { WalletAdapter } from "../dist/index.js";

@@ -22,6 +22,10 @@ accounted for below. This table is the tracking document required by #1081.
 | `contracts/escrow_tip_payment.rs` | Absent | Same. |
 | `contracts/escrow_emergency_pause.rs` | Absent | Same. |
 | `contracts/commission_signature.rs` | Absent | Same. |
+| `contracts/donation/` | Deleted | Triplicated `lib.rs`/`doc.rs`/`clippy.rs` and unused `fee_config.rs`; rationale in [DONATION_CONTRACT_DECISION.md](./DONATION_CONTRACT_DECISION.md). |
+| `contracts/campaign/` | Deleted | Panic-based error paths; successor is `campaign_factory` with typed errors in [CONTRACTS.md](./CONTRACTS.md). |
+| `contracts/factory/` | Deleted | Competing factory; canonical WASM-hash path is `campaign_factory`. |
+| `worker/src/*.ts` | Deleted | Seven dead TypeScript files; Rust worker is canonical in [../worker/README.md](../worker/README.md). |
 
 No experimental crate is registered for these paths because no source remains
 to quarantine. The workspace `members` list was reduced to the five crates

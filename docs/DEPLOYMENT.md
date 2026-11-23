@@ -30,12 +30,12 @@
 | `scripts/deploy/deploy_mainnet.sh` | Mainnet wrapper, pins `--network mainnet` + approval gate |
 | `scripts/deploy/verify_deploy.sh` | Post-deploy smoke test (read-only, no key needed) |
 
-The pre-existing `scripts/deploy.sh` and `scripts/verify_deployment.sh` at the
-repository root are **unchanged** and still work. The Makefile's `deploy-testnet`
-and `validate*` targets point at them. The new `scripts/deploy/` tree exists so
-that the credential handling, the approval gate and the checklist live in one
-reviewable place; the two trees intentionally overlap and the old one has not
-been migrated.
+There is exactly **one** testnet entry point: `scripts/deploy/deploy_testnet.sh`.
+`make deploy-testnet` calls it, and it delegates to `scripts/deploy/deploy.sh`.
+The old root-level `scripts/deploy_testnet.sh` was removed (closes #1090): it
+generated a new keypair on every run, deployed only two contracts and wrote an
+untracked `.env.contracts`. That filename is now gitignored, and no document or
+Makefile target refers to the removed script.
 
 ---
 
@@ -408,39 +408,17 @@ harness. It is hand-maintained from `Cargo.toml`, so re-check it whenever the
 | Crate | Path | Responsibility | Kind |
 |-------|------|----------------|------|
 | shared | `contracts/shared` | Guards, pause, health, rollout and shared types | Library |
-| platform_config | `contracts/platform_config` | Platform-wide settings and admin surface | Deployed |
 | escrow | `contracts/escrow` | Holds funds for the commission lifecycle | Deployed |
-| commission_agreement | `contracts/commission_agreement` | Artist/client agreements | Deployed |
-| dispute_arbiter | `contracts/dispute_arbiter` | Resolves escrow disputes | Deployed |
-| analytics | `contracts/analytics` | Platform analytics | Deployed |
-| reputation | `contracts/reputation` | Reviews and reputation scores | Deployed |
-| messaging | `contracts/messaging` | Off-chain message records | Deployed |
-| subscription | `contracts/subscription` | Subscriptions | Deployed |
-| competitions | `contracts/competitions` | Competitions and ranking | Deployed |
 | verification | `contracts/verification` | Identity verification | Deployed |
-| search | `contracts/search` | Search indexing | Deployed |
-| revenue_sharing | `contracts/revenue_sharing` | Revenue splits | Deployed |
-| recruitment | `contracts/recruitment` | Recruitment flows | Deployed |
-| creator_fund | `contracts/creator_fund` | Creator funding | Deployed |
-| rate_limiter | `contracts/rate_limiter` | Rate limiting | Deployed |
 | multi_sig | `contracts/multi_sig` | Multi-signature approvals | Deployed |
-| audit | `contracts/audit` | Audit trail | Deployed |
-| nft | `contracts/nft` | NFTs and licensing | Deployed |
-| dao | `contracts/dao` | Governance | Deployed |
-| ecosystem_funding | `contracts/ecosystem_funding` | Ecosystem grants | Deployed |
-| licensing | `contracts/licensing` | Creative licensing | Deployed |
-| mentorship | `contracts/mentorship` | Mentorship engagements | Deployed |
-| campaign | `contracts/campaign` | Campaigns and pledges | Deployed |
-| campaign_factory | `contracts/campaign_factory` | Campaign factory | Deployed |
-| campaign_instance | `contracts/campaign_instance` | Campaign instance | Deployed |
-| factory | `contracts/factory` | Generic factory | Deployed |
+| campaign_factory | `contracts/campaign_factory` | WASM-hash campaign factory | Deployed |
 | sdk | `sdk` | TypeScript client bindings | Library |
-| tests/framework | `tests/framework` | Cross-contract test fixtures | Library |
-| tests/upgrade_testing | `tests/upgrade_testing` | Upgrade test harness | Library |
 
-On disk but **not** workspace members, therefore not built by
-`cargo build --workspace`: `contracts/donation`, `contracts/withdrawal`,
-`worker/`, `multi_wallet_session/` and `tests/wallet_integration/`.
+No contract crate outside this table remains on disk. Removed paths are listed
+in [CONTRACTS_TOP_LEVEL_DISPOSITION.md](./CONTRACTS_TOP_LEVEL_DISPOSITION.md),
+the deleted donation crates are explained in
+[DONATION_CONTRACT_DECISION.md](./DONATION_CONTRACT_DECISION.md), and the
+canonical factory and error-code rules live in [CONTRACTS.md](./CONTRACTS.md).
 
 ---
 

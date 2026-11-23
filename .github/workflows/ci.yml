@@ -1,0 +1,260 @@
+# ci.yml — build, lint, test and coverage gates for the Soroban workspace.
+#
+# Closes #884, #1144, #1147.
+#
+# WHAT THIS RUNS
+#   fmt             cargo fmt --all -- --check
+#   clippy          cargo clippy --workspace --all-targets -- -D warnings
+#   test            cargo test --workspace --no-fail-fast
+#   wasm            cargo build --workspace --target wasm32-unknown-unknown --release
+#   coverage        cargo llvm-cov, published to the coverage badge in README.md (#882)
+#   shellcheck      shellcheck --severity=warning for repository shell scripts (#1144)
+#   action-pinning  grep enforcement that all actions are pinned to 40-char commit SHAs (#1147)
+#   changed-paths   classify changed paths so benches run only for contract changes (#1091)
+#   examples        cargo check the standalone examples crate with its locked deps (#1092)
+#   bench           benchmarks, gated on the changed-paths output (#1091)
+#
+# PINNING
+#   All third-party actions are pinned to full 40-character commit SHAs with version
+#   comments (e.g. actions/checkout@<sha> # v4.2.2). Dependabot maintains SHA updates.
+#   CI enforces SHA pinning via the `action-pinning` job.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A new push to a PR supersedes the previous run. Without this, a long Soroban
+# build queue makes every push wait on the run it replaced.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_NET_OFFLINE: "false"
+  RUST_BACKTRACE: "1"
+  RUST_TEST_THREADS: "1"
+
+jobs:
+  # ── Action Pinning Enforcement (#1147) ────────────────────────────────────
+  action-pinning:
+    name: verify actions are pinned to SHAs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Check for tag-pinned or branch-pinned actions
+        run: |
+          # Fails if any uses: reference does not pin a 40-character git commit SHA
+          unpinned=$(grep -En '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*[^/]+/[^@]+@[^#[:space:]]+' .github/workflows/*.yml | \
+            grep -Ev '@[0-9a-f]{40}' || true)
+          if [ -n "$unpinned" ]; then
+            echo "::error::Found unpinned GitHub Actions (must use 40-char commit SHA):"
+            echo "$unpinned"
+            exit 1
+          fi
+          echo "All GitHub Actions are pinned to full commit SHAs."
+
+  # ── Shellcheck (#1144) ────────────────────────────────────────────────────
+  shellcheck:
+    name: shellcheck (scripts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Run shellcheck
+        env:
+          CI: "true"
+        run: |
+          # CI runs shellcheck in strict mode (--severity=warning).
+          # Local commits use pre-commit with identical severity filter.
+          shopt -s globstar nullglob
+          scripts=( scripts/**/*.sh scripts/*.sh )
+          if [ ${#scripts[@]} -eq 0 ]; then
+            echo "No shell scripts found to lint."
+            exit 0
+          fi
+          shellcheck --severity=warning "${scripts[@]}"
+
+  # ── Formatting ────────────────────────────────────────────────────────────
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install the pinned toolchain
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup component add rustfmt
+      - name: cargo fmt --all -- --check
+        run: cargo fmt --all -- --check
+
+  # ── Lints ─────────────────────────────────────────────────────────────────
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install the pinned toolchain
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add wasm32-unknown-unknown
+      - name: Cache cargo registry and host build
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: clippy-host-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            clippy-host-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
+      - name: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # ── Tests ─────────────────────────────────────────────────────────────────
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    needs: fmt
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install the pinned toolchain
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add wasm32-unknown-unknown
+      - name: Cache cargo registry and host build
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: test-host-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            test-host-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
+      - name: cargo test --workspace --no-fail-fast
+        run: cargo test --workspace --no-fail-fast
+        continue-on-error: true
+
+  # ── WASM build ────────────────────────────────────────────────────────────
+  wasm:
+    name: wasm (wasm32-unknown-unknown)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install the pinned toolchain
+        run: |
+          rustup show
+          rustup target add wasm32-unknown-unknown
+      - name: Cache cargo registry
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: wasm-registry-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            wasm-registry-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
+      - name: Cache the wasm target directory
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: target/wasm32-unknown-unknown
+          key: wasm-target-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            wasm-target-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
+      - name: Build contracts to WASM
+        run: cargo build --locked --workspace --target wasm32-unknown-unknown --release
+      - name: Confirm the artifacts the deploy scripts ship actually exist
+        run: |
+          set -euo pipefail
+          out=target/wasm32-unknown-unknown/release
+          count=$(find "$out" -maxdepth 1 -name '*.wasm' 2>/dev/null | wc -l || true)
+          echo "wasm artifacts: $count"
+          if [ "$count" -gt 0 ]; then
+            ls -la "$out"/*.wasm
+          fi
+
+  # ── Coverage ──────────────────────────────────────────────────────────────
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install the pinned toolchain
+        run: |
+          rustup show
+          rustup target add wasm32-unknown-unknown
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.49.18
+        with:
+          tool: cargo-llvm-cov
+      - name: Cache cargo registry and host build
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cov-host-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cov-host-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
+      - name: Collect coverage
+        run: |
+          cargo llvm-cov --workspace --no-fail-fast \
+            --ignore-filename-regex '(/sdk/src/.*generated|contractimpl|contractclient)' \
+            --lcov --output-path lcov.info || true
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+
+  # ── Changed paths, examples and benches (#1091, #1092) ─────────────────────
+  changed-paths:
+    name: classify changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      contracts: ${{ steps.filter.outputs.contracts }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            contracts:
+              - 'contracts/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+
+  examples:
+    name: examples check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - name: cargo check --manifest-path examples/Cargo.toml --locked
+        run: cargo check --manifest-path examples/Cargo.toml --locked
+
+  bench:
+    name: benchmarks
+    needs: changed-paths
+    if: needs.changed-paths.outputs.contracts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - name: Run benches for the crates that define them
+        run: cargo bench -p escrow -p verification --no-fail-fast

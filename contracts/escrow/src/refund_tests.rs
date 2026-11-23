@@ -3,8 +3,8 @@
 
 #![cfg(test)]
 
+use crate::{errors::EscrowError, storage::CommissionStatus, EscrowContract};
 use soroban_sdk::Env;
-use crate::{EscrowContract, storage::CommissionStatus, errors::EscrowError};
 
 // ── #489 – Happy path: create → refund ─────────────────────────────────────
 
@@ -32,8 +32,12 @@ fn test_happy_path_refund_from_disputed_state() {
 #[test]
 fn test_happy_path_refund_idempotency_guard() {
     let refunded = CommissionStatus::Refunded;
-    let can_refund_again = refunded == CommissionStatus::Locked || refunded == CommissionStatus::Disputed;
-    assert!(!can_refund_again, "Refunded escrow cannot be refunded again");
+    let can_refund_again =
+        refunded == CommissionStatus::Locked || refunded == CommissionStatus::Disputed;
+    assert!(
+        !can_refund_again,
+        "Refunded escrow cannot be refunded again"
+    );
     assert_eq!(EscrowError::InvalidStatus as u32, 3);
 }
 
@@ -94,8 +98,11 @@ fn test_happy_path_refund_contract_registers() {
 /// (create_escrow would have rejected it, so this documents the upstream guard).
 #[test]
 fn test_happy_path_refund_zero_amount_upstream_guard() {
-    assert_eq!(EscrowError::InvalidAmount as u32, 5,
-        "Zero-amount escrow must be rejected at creation");
+    assert_eq!(
+        EscrowError::InvalidAmount as u32,
+        5,
+        "Zero-amount escrow must be rejected at creation"
+    );
 }
 
 /// Verifies that Refunded and Released are distinct terminal states.
@@ -103,7 +110,10 @@ fn test_happy_path_refund_zero_amount_upstream_guard() {
 fn test_happy_path_refund_terminal_state_distinct_from_release() {
     let refunded = CommissionStatus::Refunded;
     let released = CommissionStatus::Released;
-    assert_ne!(refunded, released, "Refunded and Released are distinct states");
+    assert_ne!(
+        refunded, released,
+        "Refunded and Released are distinct states"
+    );
 }
 
 /// Verifies error code consistency for NotFound.

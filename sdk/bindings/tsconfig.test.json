@@ -1,0 +1,16 @@
+{
+  // Type-checking config for the test files only.
+  //
+  // tsconfig.json is the *build* config: its `rootDir` is `src` and its
+  // `include` is `src/**/*`, which is what makes `npm run build` emit a
+  // `dist/` that mirrors src/ exactly. Test files deliberately live outside
+  // that boundary, so they get their own project rather than being allowed
+  // to break the published type surface.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "types": ["vitest/globals"]
+  },
+  "include": ["src/**/*", "test/**/*", "eslint.config.mjs"]
+}

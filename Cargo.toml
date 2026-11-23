@@ -4,13 +4,26 @@ members = [
     "contracts/escrow",
     "contracts/verification",
     "contracts/multi_sig",
+    "multi_wallet_session",
+    "wallet_sign_timeout",
     "contracts/campaign_factory",
 ]
 resolver = "2"
 
-# The post-sweep tree registers only the crates above. Removed, quarantined and
-# top-level source-file dispositions are recorded in
+# NOTE (#918): Workspace membership reflects crates present in this checkout.
+# Present contract crates (each with Cargo.toml and
+# [package.metadata.stellar-aid]) are registered above: shared, escrow,
+# verification, multi_sig, campaign_factory. The top-level
+# `multi_wallet_session` and `wallet_sign_timeout` crates are also present and
+# registered. The post-sweep tree registers only the crates above; removed,
+# quarantined and top-level source-file dispositions are recorded in
 # docs/CONTRACTS_TOP_LEVEL_DISPOSITION.md.
+#
+# contracts/campaign is not present on disk in this checkout and is therefore
+# not a workspace member. contracts/donation and contracts/withdrawal are
+# not present on disk and are not registered workspace members; if/when added
+# they must be audited, given [package.metadata.stellar-aid], and registered as
+# members (or explicitly excluded with rationale) before being built.
 
 [workspace.package]
 version = "0.1.0"
@@ -42,3 +55,14 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ethnum = { version = "=1.5.3" }
 ed25519-dalek = { version = "=2.2.0", features = ["rand_core"] }
+
+# Soroban size-tuned release profile (see docs/WASM_SIZE_BUDGET.md, #1118).
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true

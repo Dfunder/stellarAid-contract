@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "StellarAid npm Audit Allowlist",
+  "description": "Documented and reviewed exceptions for unfixable npm advisories in @stellaraid/wallet-adapters",
+  "exception_process": "See docs/STORAGE.md §9.4 for policy rules. Any waiver requires: 1) confirmation of unfixability without major breaking change, 2) non-exploitability justification in wallet adapter scope, 3) review and sign-off on PR.",
+  "allowlist": [
+    {
+      "id": "GHSA-82x6-q7mm-w9cf",
+      "package": "toml",
+      "severity": "high",
+      "advisory_url": "https://github.com/advisories/GHSA-82x6-q7mm-w9cf",
+      "reason": "Uncontrolled recursion in toml parser via @stellar/stellar-sdk 12.3.0. stellar.toml parsing is not invoked anywhere in @stellaraid/wallet-adapters runtime.",
+      "remediation": "Upgrade to stellar-sdk 17+ when breaking SDK changes are adopted workspace-wide."
+    },
+    {
+      "id": "GHSA-v5mp-jgw5-2x6j",
+      "package": "toml",
+      "severity": "high",
+      "advisory_url": "https://github.com/advisories/GHSA-v5mp-jgw5-2x6j",
+      "reason": "Prototype pollution via toml parser in @stellar/stellar-sdk 12.3.0. Only reachable if untrusted TOML input is parsed, which wallet adapters do not do.",
+      "remediation": "Upgrade to stellar-sdk 17+ when breaking SDK changes are adopted workspace-wide."
+    },
+    {
+      "id": "GHSA-4qx8-w7c3-pj3p",
+      "package": "toml",
+      "severity": "high",
+      "advisory_url": "https://github.com/advisories/GHSA-4qx8-w7c3-pj3p",
+      "reason": "Quadratic complexity DoS in toml parser via @stellar/stellar-sdk 12.3.0. Wallet adapters do not parse TOML.",
+      "remediation": "Upgrade to stellar-sdk 17+ when breaking SDK changes are adopted workspace-wide."
+    },
+    {
+      "id": "GHSA-9j65-hcg3-gc64",
+      "package": "toml",
+      "severity": "high",
+      "advisory_url": "https://github.com/advisories/GHSA-9j65-hcg3-gc64",
+      "reason": "Quadratic complexity DoS via long dotted keys in toml parser via @stellar/stellar-sdk 12.3.0. Wallet adapters do not parse TOML.",
+      "remediation": "Upgrade to stellar-sdk 17+ when breaking SDK changes are adopted workspace-wide."
+    },
+    {
+      "id": "GHSA-9qmh-m7c6-f92p",
+      "package": "toml",
+      "severity": "high",
+      "advisory_url": "https://github.com/advisories/GHSA-9qmh-m7c6-f92p",
+      "reason": "CPU DoS via unbounded-length integer literals in toml parser via @stellar/stellar-sdk 12.3.0. Wallet adapters do not parse TOML.",
+      "remediation": "Upgrade to stellar-sdk 17+ when breaking SDK changes are adopted workspace-wide."
+    },
+    {
+      "id": "GHSA-h895-cgqg-jf52",
+      "package": "toml",
+      "severity": "high",
+      "advisory_url": "https://github.com/advisories/GHSA-h895-cgqg-jf52",
+      "reason": "Prototype pollution parsing TOML document in toml parser via @stellar/stellar-sdk 12.3.0. Wallet adapters do not parse TOML.",
+      "remediation": "Upgrade to stellar-sdk 17+ when breaking SDK changes are adopted workspace-wide."
+    },
+    {
+      "id": "GHSA-q3jh-wrc6-jgq8",
+      "package": "follow-redirects",
+      "severity": "high",
+      "advisory_url": "https://github.com/advisories/GHSA-q3jh-wrc6-jgq8",
+      "reason": "Header bypass in follow-redirects via axios in @stellar/stellar-sdk 12.3.0. Wallet adapters do not follow cross-origin redirects with confidential headers.",
+      "remediation": "Bump transitive axios / follow-redirects in lockfile or upgrade stellar-sdk."
+    },
+    {
+      "id": "GHSA-8r9p-f939-6h3c",
+      "package": "follow-redirects",
+      "severity": "high",
+      "advisory_url": "https://github.com/advisories/GHSA-8r9p-f939-6h3c",
+      "reason": "SensitiveHeaders regex escaping in follow-redirects via axios in @stellar/stellar-sdk 12.3.0.",
+      "remediation": "Bump transitive axios / follow-redirects in lockfile or upgrade stellar-sdk."
+    },
+    {
+      "id": "GHSA-mrwp-f3q8-3g9p",
+      "package": "follow-redirects",
+      "severity": "high",
+      "advisory_url": "https://github.com/advisories/GHSA-mrwp-f3q8-3g9p",
+      "reason": "Cross-realm sensitiveHeaders array discarded in follow-redirects via axios in @stellar/stellar-sdk 12.3.0.",
+      "remediation": "Bump transitive axios / follow-redirects in lockfile or upgrade stellar-sdk."
+    }
+  ]
+}

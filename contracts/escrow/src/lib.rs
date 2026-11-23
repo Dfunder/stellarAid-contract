@@ -592,6 +592,7 @@ impl EscrowContract {
         config_contract: Address,
     ) -> Result<(), EscrowError> {
         // CHECKS
+        shared::circuit_breaker::require_not_halted(&env)?;
         let mut r = get_escrow(&env, &commission_id);
         if r.status != CommissionStatus::Locked && r.status != CommissionStatus::PartiallyReleased {
             return Err(EscrowError::InvalidStatus);

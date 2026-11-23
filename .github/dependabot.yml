@@ -1,0 +1,107 @@
+# Dependabot configuration for the Lumora / StellarAid Soroban workspace.
+#
+# Closes #881, #1147.
+#
+# Ecosystem coverage. The workspace is three dependency graphs, and each needs
+# its own entry because Dependabot resolves them with different tooling:
+#
+#   * cargo          — workspace crates plus soroban-sdk, stellar-xdr, etc.
+#   * github-actions — workflows under .github/workflows/, updates pinned SHAs.
+#   * npm            — sdk/bindings (wallet adapters) and sdk (utilities).
+#
+# Schedule. Weekly, on Mondays at 06:00 UTC.
+version: 2
+
+updates:
+  # ── Rust workspace ────────────────────────────────────────────────────────
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "rust"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      soroban:
+        patterns:
+          - "soroban-sdk"
+          - "soroban-*"
+          - "stellar-*"
+          - "soroban-env-*"
+      rust-dev:
+        dependency-type: "development"
+        patterns:
+          - "*"
+      other-rust:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "soroban-sdk"
+          - "soroban-*"
+          - "stellar-*"
+          - "soroban-env-*"
+    versioning-strategy: "increase"
+
+  # ── GitHub Actions (#1147: dependabot updates commit SHAs) ───────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "ci"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # ── TypeScript wallet adapters (#1148) ────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/sdk/bindings"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "typescript"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      wallet-adapters:
+        patterns:
+          - "@stellar/*"
+          - "albedo-link"
+          - "@lobstrco/*"
+      tooling:
+        dependency-type: "development"
+
+  # ── TypeScript SDK utilities ──────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/sdk"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "typescript"
+    commit-message:
+      prefix: "chore(deps)"

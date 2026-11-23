@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run utils",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

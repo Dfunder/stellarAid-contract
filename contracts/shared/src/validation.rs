@@ -13,7 +13,18 @@
 //! | Commission ID      | 64        |
 //! | Milestone ID       | 64        |
 
-use soroban_sdk::{Bytes, String};
+use soroban_sdk::{contracterror, Bytes, String};
+
+/// Typed failures of the validation helpers, so callers branch on a
+/// discriminant instead of matching panic prose.
+#[contracterror]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ValidationError {
+    /// A string parameter exceeds its maximum byte length.
+    StringTooLong = 1,
+    /// A `Bytes` identifier exceeds its maximum byte length.
+    IdTooLong = 2,
+}
 
 // ── Maximum length constants ──────────────────────────────────────────────────
 
@@ -31,7 +42,7 @@ pub const MAX_ID_LEN: u32 = 64;
 
 // ── Validation helpers ────────────────────────────────────────────────────────
 
-/// Panic with a descriptive message when `s` exceeds `max_len` bytes.
+/// Abort with [`ValidationError::StringTooLong`] when `s` exceeds `max_len` bytes.
 ///
 /// Soroban `String` is UTF-8 and `len()` returns the byte count.
 ///
@@ -39,7 +50,8 @@ pub const MAX_ID_LEN: u32 = 64;
 #[inline]
 pub fn require_string_len(s: &String, max_len: u32, field: &str) {
     if s.len() > max_len {
-        panic!("{} exceeds maximum length of {} bytes", field, max_len);
+        let _ = field;
+        soroban_sdk::panic_with_error!(s.env(), ValidationError::StringTooLong);
     }
 }
 
@@ -49,13 +61,14 @@ pub fn is_string_len_valid(s: &String, max_len: u32) -> bool {
     s.len() <= max_len
 }
 
-/// Panic when a `Bytes` identifier exceeds `max_len` bytes.
+/// Abort with [`ValidationError::IdTooLong`] when a `Bytes` identifier exceeds `max_len` bytes.
 ///
 /// Closes #591.
 #[inline]
 pub fn require_id_len(id: &Bytes, max_len: u32, field: &str) {
     if id.len() > max_len {
-        panic!("{} id exceeds maximum length of {} bytes", field, max_len);
+        let _ = field;
+        soroban_sdk::panic_with_error!(id.env(), ValidationError::IdTooLong);
     }
 }
 

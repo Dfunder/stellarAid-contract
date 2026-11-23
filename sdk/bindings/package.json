@@ -1,8 +1,47 @@
 {
-  "name": "@stellaraid/bindings",
-  "private": true,
-  "type": "module",
+  "name": "@stellaraid/wallet-adapters",
+  "version": "0.1.0",
+  "description": "Unified wallet adapter interface for Freighter, Albedo, and Lobstr",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "dependencies": {
+    "@stellar/stellar-sdk": "^12.1.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src test",
+    "lint:fix": "eslint src test --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "audit": "node ../../scripts/npm_audit.js",
+    "audit:strict": "npm audit --omit=dev --audit-level=high",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run build"
+  },
   "peerDependencies": {
-    "@stellar/freighter-api": "^3.0.0"
-  }
+    "@lobstrco/signer-extension-api": "^0.1.0",
+    "@stellar/freighter-api": "^3.0.0",
+    "albedo-link": "^0.2.3"
+  },
+  "peerDependenciesMeta": {
+    "@stellar/freighter-api": {
+      "optional": true
+    },
+    "albedo-link": {
+      "optional": true
+    },
+    "@lobstrco/signer-extension-api": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.1",
+    "vitest": "^3.2.7"
+  },
+  "files": [
+    "dist"
+  ]
 }

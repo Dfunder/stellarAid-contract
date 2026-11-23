@@ -8,7 +8,7 @@ CARGO ?= cargo
 
 .DEFAULT_GOAL := check
 
-.PHONY: check fmt fmt-check lint test wasm-size
+.PHONY: check fmt fmt-check lint test wasm-size deploy-testnet check-examples
 
 fmt:
 	$(CARGO) fmt --all
@@ -29,3 +29,15 @@ check: fmt-check lint test
 # `cargo build --release --target wasm32-unknown-unknown`.
 wasm-size:
 	@ls -l target/wasm32-unknown-unknown/release/*.wasm | awk '{print $$5, $$9}'
+
+# Single deployment entry point (closes #1090). The removed root-level
+# scripts/deploy_testnet.sh is not referenced anywhere; this target and the
+# docs point at the maintained scripts/deploy/ tree.
+ARGS ?=
+deploy-testnet:
+	./scripts/deploy/deploy_testnet.sh $(ARGS)
+
+# Standalone crate check (closes #1092): verifies the examples stay on the
+# workspace's stellar-strkey major with their own committed lockfile.
+check-examples:
+	cargo check --manifest-path examples/Cargo.toml --locked

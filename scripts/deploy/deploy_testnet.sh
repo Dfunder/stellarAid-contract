@@ -23,6 +23,14 @@ assert_no_secret_args "$@"
 
 head1 "Testnet deployment"
 
+# Fail before building anything if no signer is available in the environment
+# (closes #1090). The secret is read from the environment only — never argv.
+require_secret_env STELLAR_DEPLOYER_SECRET "testnet deployment"
+
+if [ ! -f "$SCRIPT_DIR/deploy.sh" ]; then
+    die "scripts/deploy/deploy.sh is missing from this tree. Restore the shared deployment runner before deploying."
+fi
+
 info "All logic is in scripts/deploy/deploy.sh. This wrapper only pins the"
 info "network to testnet. Recommended first run:  --dry-run"
 

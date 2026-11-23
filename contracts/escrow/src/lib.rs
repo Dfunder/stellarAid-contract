@@ -861,6 +861,17 @@ impl EscrowContract {
         Ok(storage::get_escrow(&env, &commission_id))
     }
 
+    /// Read-only amount escrowed for **one** commission (closes #1093).
+    ///
+    /// Cross-contract callers such as DisputeArbiter must use this instead of
+    /// treating the escrow contract's whole token balance as this commission's
+    /// funds. No auth required. Unknown ids return `EscrowError::NotFound`.
+    /// The value is the originally escrowed amount, independent of status
+    /// (Locked, PartiallyReleased, Expired, Refunded, ...).
+    pub fn get_escrow_amount(env: Env, commission_id: Bytes) -> Result<i128, EscrowError> {
+        Ok(get_escrow(&env, &commission_id)?.amount)
+    }
+
     // ── Atomic escrow-to-commission flow (closes #656) ────────────────────
     //
     // Public entry points over the orchestration in `cross_contract`. The

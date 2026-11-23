@@ -36,6 +36,14 @@ pub enum EscrowError {
     InvalidTtl = 22,
 }
 
+impl From<shared::guard::ReentrancyError> for EscrowError {
+    fn from(error: shared::guard::ReentrancyError) -> Self {
+        match error {
+            shared::guard::ReentrancyError::Reentrant => EscrowError::Reentrant,
+        }
+    }
+}
+
 impl core::fmt::Display for EscrowError {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         match self {

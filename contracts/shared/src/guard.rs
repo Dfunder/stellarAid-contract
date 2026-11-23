@@ -19,9 +19,9 @@
 //! [`with_reentrancy_guard`] releases the lock after `f` returns, covering
 //! early returns and `Err` results. If `f` panics or aborts, the entire
 //! invocation reverts and the instance storage — the lock included — is
-//! discarded with it, so a failed call cannot wedge the contract. This is the
-//! same property `contracts/escrow` relies on for its own
-//! `storage::with_reentrancy_guard`.
+//! discarded with it, so a failed call cannot wedge the contract. Contracts
+//! that expose typed `Result` errors use [`try_with_reentrancy_guard`] to keep
+//! their own error enum while sharing this one lock.
 //!
 //! # Do not nest
 //!
@@ -112,6 +112,27 @@ pub fn with_reentrancy_guard<F, T>(env: &Env, f: F) -> T
 where
     F: FnOnce() -> T,
 {
+    match try_with_reentrancy_guard::<_, _, ReentrancyError>(env, || Ok(f())) {
+        Ok(value) => value,
+        Err(error) => panic_with_error!(env, error),
+    }
+}
+
+/// Runs `f` under the shared re-entrancy guard, returning a typed error when a
+/// re-entrant call is rejected.
+///
+/// This is the `Result`-returning counterpart of [`with_reentrancy_guard`]. It
+/// uses the same [`LockKey::Locked`] flag and releases it after `f` returns,
+/// including when `f` returns `Err`. A contract-specific error type only needs
+/// `From<ReentrancyError>` so callers keep their own error surface.
+pub fn try_with_reentrancy_guard<F, T, E>(env: &Env, f: F) -> Result<T, E>
+where
+    F: FnOnce() -> Result<T, E>,
+    E: From<ReentrancyError>,
+{
+    if is_locked(env) {
+        return Err(ReentrancyError::Reentrant.into());
+    }
     acquire(env);
     let result = f();
     release(env);
@@ -188,6 +209,19 @@ mod tests {
         let env = Env::default();
         let out: Result<u32, u32> = with_reentrancy_guard(&env, || Err(1));
         assert_eq!(out, Err(1));
+        assert!(!is_locked(&env));
+    }
+
+    #[test]
+    fn try_guard_reports_reentry_and_clears_the_lock() {
+        let env = Env::default();
+        let outer: Result<(), ReentrancyError> = try_with_reentrancy_guard(&env, || {
+            let nested: Result<(), ReentrancyError> = try_with_reentrancy_guard(&env, || Ok(()));
+            assert_eq!(nested, Err(ReentrancyError::Reentrant));
+            assert!(is_locked(&env));
+            Ok(())
+        });
+        assert_eq!(outer, Ok(()));
         assert!(!is_locked(&env));
     }
 

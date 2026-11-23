@@ -16,7 +16,6 @@
 use crate::pause::PauseDataKey;
 use crate::rollout::{self, RolloutState};
 use crate::storage::instance;
-use soroban_sdk::{contracttype, symbol_short, Env};
 use soroban_sdk::{contracterror, contracttype, symbol_short, Env};
 
 /// Typed failures of the health module, so callers branch on a discriminant

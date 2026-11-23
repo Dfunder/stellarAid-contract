@@ -70,6 +70,11 @@ struct Fixture<'a> {
 fn setup<'a>() -> Fixture<'a> {
     let env = Env::default();
     env.mock_all_auths();
+    env.ledger().with_mut(|li| {
+        li.min_persistent_entry_ttl = 1_000_000;
+        li.min_temp_entry_ttl = 1_000_000;
+        li.max_entry_ttl = 1_000_000;
+    });
 
     let token_admin = Address::generate(&env);
     let usdc = env

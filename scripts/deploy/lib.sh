@@ -120,6 +120,7 @@ assert_repo_has_no_key_material() {
 
     found="$(git -C "$REPO_ROOT" ls-files 2>/dev/null \
         | grep -Ei '(^|/)(\.env(\..*)?|mnemonic\.txt|[^/]*\.(pem|key|keystore|seed))$' \
+        | grep -Ev '(^|/)\.env\.example$' \
         | head -n 5 || true)"
     if [ -n "$found" ]; then
         err "key material appears to be tracked in git:"
@@ -196,10 +197,9 @@ Known networks: ${known:-<none>}"
 
 # Deployable crates that the workspace actually builds.
 #
-# Read from the root Cargo.toml `members` list rather than hardcoded, because
-# several `contracts/*` directories (campaign, donation, withdrawal,
-# rate_limiter) are NOT workspace members and so are not produced by
-# `cargo build --workspace`. Use `all_contract_crates` to see the full set.
+# Read from the root Cargo.toml `members` list rather than hardcoded. Removed
+# crates are documented in docs/CONTRACTS_TOP_LEVEL_DISPOSITION.md and
+# docs/DONATION_CONTRACT_DECISION.md.
 workspace_contracts() {
     awk '
         # Start collecting at `members = [`.

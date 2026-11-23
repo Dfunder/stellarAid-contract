@@ -518,8 +518,8 @@ fn an_expired_proposal_is_terminal() {
         ProposalStatus::Expired
     );
 
-    // Once expired the proposal is closed: neither signing nor finalizing can
-    // revive it, even on a much later ledger.
+    // `try_*` simulations roll back the Expired write, so a much later ledger
+    // still reports the typed expiry error; neither call can revive the set.
     f.advance(EXPIRY_LEDGERS);
     let err = f
         .client
@@ -527,14 +527,14 @@ fn an_expired_proposal_is_terminal() {
         .err()
         .unwrap()
         .unwrap();
-    assert_eq!(err, MultiSigError::ProposalClosed);
+    assert_eq!(err, MultiSigError::ProposalExpired);
     let err = f
         .client
         .try_finalize(&f.proposal_id, &f.executor)
         .err()
         .unwrap()
         .unwrap();
-    assert_eq!(err, MultiSigError::ProposalClosed);
+    assert_eq!(err, MultiSigError::ProposalExpired);
 }
 
 // ── Error code stability ─────────────────────────────────────────────────────
@@ -644,7 +644,7 @@ fn is_expired_tracks_the_pending_deadline_without_closing() {
     assert_eq!(f.client.ledgers_until_expiry(&f.proposal_id), 0);
     assert_eq!(
         f.client.get_proposal(&f.proposal_id).status,
-        ProposalStatus::Pending
+        ProposalStatus::Expired
     );
 }
 

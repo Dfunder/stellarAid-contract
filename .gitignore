@@ -3,3 +3,6 @@
 /examples/target/
 .env.contracts
 node_modules/
+.env
+.env.*
+!.env.example

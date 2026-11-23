@@ -392,7 +392,7 @@ pub fn atomic_escrow_to_commission(
     );
     admin.require_auth();
 
-    storage::with_reentrancy_guard(env, || {
+    shared::guard::try_with_reentrancy_guard(env, || {
         if !storage::escrow_exists(env, commission_id) {
             return Err(EscrowError::NotFound);
         }

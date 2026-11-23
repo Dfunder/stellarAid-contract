@@ -120,6 +120,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "campaign-factory"
+version = "0.1.0"
+dependencies = [
+ "shared",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1022,6 +1030,8 @@ dependencies = [
 name = "shared"
 version = "0.1.0"
 dependencies = [
+ "ed25519-dalek",
+ "ethnum",
  "soroban-sdk",
 ]
 

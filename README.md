@@ -15,7 +15,7 @@
 
 ---
 
-## 📖 About Lumora
+## About Lumora
 
 Lumora empowers creators to monetize their talents through a decentralized ecosystem built on the Stellar network.
 
@@ -23,7 +23,7 @@ Whether you're a graphic designer, illustrator, UI/UX designer, digital artist, 
 
 The platform combines the power of blockchain transparency, decentralized payments, and professional talent discovery into one unified ecosystem.
 
-### ✨ Core Features
+### Core Features
 
 * 🎨 Portfolio Showcase — Build a professional creative portfolio
 * 💼 Client Marketplace — Connect with businesses and potential clients
@@ -36,7 +36,7 @@ The platform combines the power of blockchain transparency, decentralized paymen
 
 ---
 
-## 🏗 Organization Repositories
+## Organization Repositories
 
 ### lumora-web
 
@@ -162,7 +162,7 @@ Each repository includes:
 
 ---
 
-## 🔑 How Lumora Works
+## How Lumora Works
 
 ### For Artists
 
@@ -196,7 +196,7 @@ Each repository includes:
 
 ---
 
-## 🌐 Powered by Stellar
+## Powered by Stellar
 
 Lumora leverages Stellar's fast, low-cost, and borderless payment infrastructure.
 
@@ -218,9 +218,9 @@ Supported assets include:
 
 ---
 
-## 🛠 Tech Stack
+## Tech Stack
 
-### 🌐 Frontend
+### Frontend
 
 * Next.js
 * React
@@ -230,7 +230,7 @@ Supported assets include:
 * Zustand
 * Stellar Wallet SDK
 
-### ⚙️ Backend
+### Backend
 
 * NestJS
 * PostgreSQL
@@ -239,14 +239,14 @@ Supported assets include:
 * BullMQ
 * Nodemailer
 
-### 📝 Smart Contracts
+### Smart Contracts
 
 * Rust
 * Soroban SDK
 * Soroban CLI
 * Stellar RPC
 
-### 🗄 Storage Layer
+### Storage Layer
 
 * PostgreSQL
 * Redis
@@ -255,7 +255,7 @@ Supported assets include:
 
 ---
 
-## 🚀 Roadmap
+## Roadmap
 
 ### Phase 1 — MVP
 
@@ -315,7 +315,7 @@ Supported assets include:
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Lumora is fully open source and welcomes contributions from:
 
@@ -339,19 +339,19 @@ for development guidelines, contribution workflow, and code standards.
 
 ---
 
-## 🌍 Vision
+## Vision
 
 Our vision is to become the leading decentralized creative economy platform where artists and clients connect without borders, enabling global collaboration, transparent payments, and equal opportunities for creative professionals everywhere.
 
 ---
 
-## 📜 License
+## License
 
 Lumora is released under the MIT License, allowing free use, modification, and distribution with attribution.
 
 ---
 
-## 🌟 Join the Lumora Journey
+## Join the Lumora Journey
 
 We're building the future of creative work on Stellar.
 

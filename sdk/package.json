@@ -3,7 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vitest run utils"
+    "test": "vitest run utils",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@stellar/freighter-api": "^3.0.0"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

@@ -174,15 +174,20 @@ fn find_corr_event(f: &Fixture) -> bool {
 fn create_escrow_emits_correlated_event() {
     let f = setup();
     let amount = 10_000i128;
-    f.escrow.create_escrow(&f.commission_id, &f.client, &f.artist, &amount, &f.config);
-    assert!(find_corr_event(&f), "expected a (escrow, created, corr) correlation event");
+    f.escrow
+        .create_escrow(&f.commission_id, &f.client, &f.artist, &amount, &f.config);
+    assert!(
+        find_corr_event(&f),
+        "expected a (escrow, created, corr) correlation event"
+    );
 }
 
 #[test]
 fn primary_event_schema_is_preserved() {
     let f = setup();
     let amount = 10_000i128;
-    f.escrow.create_escrow(&f.commission_id, &f.client, &f.artist, &amount, &f.config);
+    f.escrow
+        .create_escrow(&f.commission_id, &f.client, &f.artist, &amount, &f.config);
     f.escrow.release_payment(&f.commission_id, &f.config);
 
     let events = f.env.events().all();
@@ -217,7 +222,8 @@ fn primary_event_schema_is_preserved() {
 fn escrow_status_survives_correlated_flow() {
     let f = setup();
     let amount = 10_000i128;
-    f.escrow.create_escrow(&f.commission_id, &f.client, &f.artist, &amount, &f.config);
+    f.escrow
+        .create_escrow(&f.commission_id, &f.client, &f.artist, &amount, &f.config);
     let record = f.escrow.get_escrow(&f.commission_id);
     assert_eq!(record.status, CommissionStatus::Locked);
 }

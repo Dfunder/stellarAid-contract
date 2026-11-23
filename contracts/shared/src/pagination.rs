@@ -570,7 +570,7 @@ mod tests {
     #[test]
     fn collect_window_does_not_overflow_at_the_top_of_the_range() {
         let env = Env::default();
-        let (page, _) = collect_window(&env, u32::MAX, u32::MAX - 2, u32::MAX, |i| Some(i));
+        let (page, _) = collect_window(&env, u32::MAX, u32::MAX - 2, u32::MAX, Some);
         assert_eq!(plain(&page), StdVec::from([u32::MAX - 2, u32::MAX - 1]));
     }
 

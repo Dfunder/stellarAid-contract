@@ -152,22 +152,21 @@ fn save_escrow_overwrites_existing_key() {
 #[test]
 fn reentrancy_guard_rejects_nested_call_and_releases_lock() {
     with_storage(|env| {
-        assert!(!shared::guard::is_locked(env));
+        assert!(!storage::is_locked(env));
 
-        let outer: Result<(), EscrowError> = shared::guard::try_with_reentrancy_guard(env, || {
+        let outer: Result<(), EscrowError> = storage::with_reentrancy_guard(env, || {
             // Nested call while the lock is held must be rejected.
-            let nested: Result<(), EscrowError> =
-                shared::guard::try_with_reentrancy_guard(env, || Ok(()));
+            let nested: Result<(), EscrowError> = storage::with_reentrancy_guard(env, || Ok(()));
             assert_eq!(nested.unwrap_err(), EscrowError::Reentrant);
 
             // Lock is visible inside the guarded section…
-            assert!(shared::guard::is_locked(env));
+            assert!(storage::is_locked(env));
             Ok(())
         });
 
         outer.unwrap();
         // …and released afterwards.
-        assert!(!shared::guard::is_locked(env));
+        assert!(!storage::is_locked(env));
     });
 }
 
@@ -175,17 +174,14 @@ fn reentrancy_guard_rejects_nested_call_and_releases_lock() {
 fn reentrancy_guard_releases_on_error_path() {
     with_storage(|env| {
         let result: Result<(), EscrowError> =
-            shared::guard::try_with_reentrancy_guard(env, || Err(EscrowError::InvalidStatus));
+            storage::with_reentrancy_guard(env, || Err(EscrowError::InvalidStatus));
         assert!(result.is_err());
-        assert!(
-            !shared::guard::is_locked(env),
-            "lock must clear on error paths"
-        );
+        assert!(!storage::is_locked(env), "lock must clear on error paths");
 
         // The next call can acquire the lock again.
-        let ok: Result<(), EscrowError> = shared::guard::try_with_reentrancy_guard(env, || Ok(()));
+        let ok: Result<(), EscrowError> = storage::with_reentrancy_guard(env, || Ok(()));
         ok.unwrap();
-        assert!(!shared::guard::is_locked(env));
+        assert!(!storage::is_locked(env));
     });
 }
 

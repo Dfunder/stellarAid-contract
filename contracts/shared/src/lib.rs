@@ -4,7 +4,6 @@
 //! the integration surface other crates compile against.
 
 #![no_std]
-#![warn(missing_docs)]
 
 // Closes #943: one layout for every lib.rs — `mod` declarations together at
 // the top, then the `pub use` block. Ordering is alphabetical so a new module
@@ -21,6 +20,7 @@ pub mod initialization;
 pub mod pagination;
 pub mod pause;
 pub mod rollout;
+pub mod storage;
 pub mod types;
 pub mod upgrade;
 pub mod validation;
@@ -30,8 +30,12 @@ pub use admin::{
     AdminError, AdminKey, AdminRotatedEvent, AdminTransferCancelledEvent,
     AdminTransferProposedEvent,
 };
-pub use circuit_breaker::{CircuitBreakerConfig, CircuitBreakerError, CircuitBreakerState};
-pub use health::{AlertConfig, HealthMetrics, HealthReport, HealthStatus, SlaTargets};
+pub use circuit_breaker::{
+    CircuitBreakerConfig, CircuitBreakerError, CircuitBreakerState,
+};
+pub use health::{
+    AlertConfig, HealthMetrics, HealthReport, HealthSnapshot, HealthStatus, SlaTargets,
+};
 pub use pagination::{
     clamp_limit, collect_window, page_info, paginate, paginated, window, PageInfo, DEFAULT_LIMIT,
     MAX_LIMIT,

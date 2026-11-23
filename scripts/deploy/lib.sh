@@ -124,7 +124,7 @@ assert_repo_has_no_key_material() {
         | head -n 5 || true)"
     if [ -n "$found" ]; then
         err "key material appears to be tracked in git:"
-        printf '    %s\n' $found >&2
+        printf '    %s\n' "$found" >&2
         die "remove these from version control before deploying."
     fi
     ok "no key material tracked in git"

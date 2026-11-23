@@ -89,12 +89,10 @@ impl Fixture<'_> {
             out.push_back(extra);
         }
         let mut trimmed: Vec<Address> = Vec::new(&self.env);
-        let mut i = 0usize;
-        for signer in out.iter() {
+        for (i, signer) in out.iter().enumerate() {
             if i < count {
                 trimmed.push_back(signer);
             }
-            i += 1;
         }
         trimmed
     }

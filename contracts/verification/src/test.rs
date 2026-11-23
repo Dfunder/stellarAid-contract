@@ -362,9 +362,7 @@ fn badge_expires_after_its_validity_window() {
     );
     assert!(f.client.is_badge_active(&f.artist, &BadgeType::IdVerified));
 
-    f.env
-        .ledger()
-        .with_mut(|l| l.sequence_number += 101);
+    f.env.ledger().with_mut(|l| l.sequence_number += 101);
     assert!(!f.client.is_badge_active(&f.artist, &BadgeType::IdVerified));
 }
 
@@ -399,8 +397,12 @@ fn revoked_badge_is_no_longer_active_and_cannot_be_revoked_twice() {
         &0,
         &note(&f.env),
     );
-    f.client
-        .revoke_badge(&f.reviewer, &f.artist, &BadgeType::TopRated, &String::from_str(&f.env, "quality dropped"));
+    f.client.revoke_badge(
+        &f.reviewer,
+        &f.artist,
+        &BadgeType::TopRated,
+        &String::from_str(&f.env, "quality dropped"),
+    );
 
     assert!(!f.client.is_badge_active(&f.artist, &BadgeType::TopRated));
     let badge = f.client.get_badge(&f.artist, &BadgeType::TopRated);
@@ -408,7 +410,12 @@ fn revoked_badge_is_no_longer_active_and_cannot_be_revoked_twice() {
 
     let err = f
         .client
-        .try_revoke_badge(&f.reviewer, &f.artist, &BadgeType::TopRated, &String::from_str(&f.env, "again"))
+        .try_revoke_badge(
+            &f.reviewer,
+            &f.artist,
+            &BadgeType::TopRated,
+            &String::from_str(&f.env, "again"),
+        )
         .err()
         .unwrap()
         .unwrap();
@@ -422,8 +429,13 @@ fn revoked_badge_is_no_longer_active_and_cannot_be_revoked_twice() {
 #[test]
 fn reissuing_a_badge_after_revocation_starts_fresh() {
     let f = setup();
-    f.client
-        .issue_badge(&f.reviewer, &f.artist, &BadgeType::IdVerified, &0, &note(&f.env));
+    f.client.issue_badge(
+        &f.reviewer,
+        &f.artist,
+        &BadgeType::IdVerified,
+        &0,
+        &note(&f.env),
+    );
     f.client.revoke_badge(
         &f.reviewer,
         &f.artist,
@@ -432,8 +444,13 @@ fn reissuing_a_badge_after_revocation_starts_fresh() {
     );
     assert!(!f.client.is_badge_active(&f.artist, &BadgeType::IdVerified));
 
-    f.client
-        .issue_badge(&f.reviewer, &f.artist, &BadgeType::IdVerified, &0, &note(&f.env));
+    f.client.issue_badge(
+        &f.reviewer,
+        &f.artist,
+        &BadgeType::IdVerified,
+        &0,
+        &note(&f.env),
+    );
     assert!(f.client.is_badge_active(&f.artist, &BadgeType::IdVerified));
 
     let history = f.client.get_badge_history(&f.artist);
@@ -444,12 +461,24 @@ fn reissuing_a_badge_after_revocation_starts_fresh() {
 #[test]
 fn multiple_badge_types_are_tracked_independently() {
     let f = setup();
-    f.client
-        .issue_badge(&f.reviewer, &f.artist, &BadgeType::PortfolioVerified, &0, &note(&f.env));
-    f.client
-        .issue_badge(&f.reviewer, &f.artist, &BadgeType::IdVerified, &0, &note(&f.env));
+    f.client.issue_badge(
+        &f.reviewer,
+        &f.artist,
+        &BadgeType::PortfolioVerified,
+        &0,
+        &note(&f.env),
+    );
+    f.client.issue_badge(
+        &f.reviewer,
+        &f.artist,
+        &BadgeType::IdVerified,
+        &0,
+        &note(&f.env),
+    );
 
-    assert!(f.client.is_badge_active(&f.artist, &BadgeType::PortfolioVerified));
+    assert!(f
+        .client
+        .is_badge_active(&f.artist, &BadgeType::PortfolioVerified));
     assert!(f.client.is_badge_active(&f.artist, &BadgeType::IdVerified));
     assert_eq!(f.client.get_artist_badge_types(&f.artist).len(), 2);
 
@@ -459,7 +488,9 @@ fn multiple_badge_types_are_tracked_independently() {
         &BadgeType::PortfolioVerified,
         &String::from_str(&f.env, "portfolio no longer verified"),
     );
-    assert!(!f.client.is_badge_active(&f.artist, &BadgeType::PortfolioVerified));
+    assert!(!f
+        .client
+        .is_badge_active(&f.artist, &BadgeType::PortfolioVerified));
     assert!(f.client.is_badge_active(&f.artist, &BadgeType::IdVerified));
 }
 
@@ -469,17 +500,33 @@ fn non_reviewer_cannot_issue_or_revoke_badges() {
     let outsider = Address::generate(&f.env);
     let err = f
         .client
-        .try_issue_badge(&outsider, &f.artist, &BadgeType::IdVerified, &0, &note(&f.env))
+        .try_issue_badge(
+            &outsider,
+            &f.artist,
+            &BadgeType::IdVerified,
+            &0,
+            &note(&f.env),
+        )
         .err()
         .unwrap()
         .unwrap();
     assert_eq!(err, VerificationError::Unauthorized);
 
-    f.client
-        .issue_badge(&f.reviewer, &f.artist, &BadgeType::IdVerified, &0, &note(&f.env));
+    f.client.issue_badge(
+        &f.reviewer,
+        &f.artist,
+        &BadgeType::IdVerified,
+        &0,
+        &note(&f.env),
+    );
     let err = f
         .client
-        .try_revoke_badge(&outsider, &f.artist, &BadgeType::IdVerified, &String::from_str(&f.env, "x"))
+        .try_revoke_badge(
+            &outsider,
+            &f.artist,
+            &BadgeType::IdVerified,
+            &String::from_str(&f.env, "x"),
+        )
         .err()
         .unwrap()
         .unwrap();
@@ -491,7 +538,12 @@ fn revoking_a_nonexistent_badge_is_reported() {
     let f = setup();
     let err = f
         .client
-        .try_revoke_badge(&f.reviewer, &f.artist, &BadgeType::IdVerified, &String::from_str(&f.env, "n/a"))
+        .try_revoke_badge(
+            &f.reviewer,
+            &f.artist,
+            &BadgeType::IdVerified,
+            &String::from_str(&f.env, "n/a"),
+        )
         .err()
         .unwrap()
         .unwrap();

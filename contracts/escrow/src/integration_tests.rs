@@ -59,13 +59,34 @@ fn test_error_suggestion_mappings() {
     use crate::errors::get_suggestion;
     use soroban_sdk::symbol_short;
 
-    assert_eq!(get_suggestion(EscrowError::AlreadyExists), symbol_short!("DUP"));
-    assert_eq!(get_suggestion(EscrowError::NotFound), symbol_short!("NOT_FOUND"));
-    assert_eq!(get_suggestion(EscrowError::InvalidStatus), symbol_short!("BAD_STS"));
-    assert_eq!(get_suggestion(EscrowError::Unauthorized), symbol_short!("AUTH"));
-    assert_eq!(get_suggestion(EscrowError::InvalidAmount), symbol_short!("BAD_AMT"));
-    assert_eq!(get_suggestion(EscrowError::InvalidFeeBps), symbol_short!("BAD_BPS"));
-    assert_eq!(get_suggestion(EscrowError::NotExpired), symbol_short!("NOT_EXP"));
+    assert_eq!(
+        get_suggestion(EscrowError::AlreadyExists),
+        symbol_short!("DUP")
+    );
+    assert_eq!(
+        get_suggestion(EscrowError::NotFound),
+        symbol_short!("NOT_FOUND")
+    );
+    assert_eq!(
+        get_suggestion(EscrowError::InvalidStatus),
+        symbol_short!("BAD_STS")
+    );
+    assert_eq!(
+        get_suggestion(EscrowError::Unauthorized),
+        symbol_short!("AUTH")
+    );
+    assert_eq!(
+        get_suggestion(EscrowError::InvalidAmount),
+        symbol_short!("BAD_AMT")
+    );
+    assert_eq!(
+        get_suggestion(EscrowError::InvalidFeeBps),
+        symbol_short!("BAD_BPS")
+    );
+    assert_eq!(
+        get_suggestion(EscrowError::NotExpired),
+        symbol_short!("NOT_EXP")
+    );
 }
 
 #[test]
@@ -84,7 +105,7 @@ fn test_error_discriminants_unique() {
         EscrowError::InsufficientBalance as u32,
     ];
     vals.sort();
-    for i in 0..vals.len() {
-        assert_eq!(vals[i], (i + 1) as u32, "discriminant {} must be unique", i + 1);
+    for (i, &val) in vals.iter().enumerate() {
+        assert_eq!(val, (i + 1) as u32, "discriminant {} must be unique", i + 1);
     }
 }

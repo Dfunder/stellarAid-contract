@@ -1,0 +1,79 @@
+# pre-commit hooks for the Lumora / StellarAid Soroban workspace.
+#
+# Closes #886, #1144.
+
+minimum_pre_commit_version: "3.0.0"
+default_stages: [pre-commit]
+
+repos:
+  # ── File hygiene ─────────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+        exclude: \.md$
+
+      - id: end-of-file-fixer
+        exclude: ^(Cargo\.lock|sdk/bindings/package-lock\.json)$
+
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+      - id: check-merge-conflict
+
+      - id: check-yaml
+        files: ^(\.github/|\.pre-commit-config\.yaml)
+
+      - id: check-json
+        files: ^(config/|sdk/bindings/)
+        exclude: tsconfig.*\.json$
+
+      - id: check-toml
+
+      - id: check-added-large-files
+        args: [--maxkb=512]
+        exclude: ^Cargo\.lock$
+
+      - id: check-executables-have-shebangs
+
+      - id: detect-private-key
+
+  # ── Shell (#1144) ────────────────────────────────────────────────────────
+  # shellcheck-py lints shell scripts. Local commits run with --severity=warning
+  # to block defect classes (unquoted variables, word-splitting, syntax errors)
+  # while keeping local noise low. CI runs matching strict validation (CI=true -> strict).
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        name: shellcheck (scripts)
+        args: [--severity=warning]
+        files: ^scripts/.*\.sh$
+
+  # ── Rust ─────────────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: fmt
+        name: rustfmt (staged files)
+        entry: scripts/precommit_fmt.sh
+        language: script
+        pass_filenames: false
+        files: \.rs$
+
+      - id: clippy
+        name: cargo clippy (staged crates)
+        entry: scripts/precommit_clippy.sh
+        language: script
+        pass_filenames: false
+        files: \.rs$
+
+  # ── TypeScript ───────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: ts-lint
+        name: eslint (sdk/bindings)
+        entry: scripts/precommit_ts_lint.sh
+        language: script
+        pass_filenames: false
+        files: ^sdk/bindings/.*\.(ts|mjs)$

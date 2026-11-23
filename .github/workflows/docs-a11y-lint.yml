@@ -1,0 +1,39 @@
+name: Documentation Accessibility Lint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "scripts/lint_tables.py"
+      - "scripts/check_headings.py"
+      - ".github/workflows/docs-a11y-lint.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "scripts/lint_tables.py"
+      - "scripts/check_headings.py"
+      - ".github/workflows/docs-a11y-lint.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  a11y-lint:
+    name: table cell length & heading hierarchy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Lint table cell character limits (cap 280 chars)
+        run: python scripts/lint_tables.py
+
+      - name: Validate heading hierarchy continuity
+        run: python scripts/check_headings.py

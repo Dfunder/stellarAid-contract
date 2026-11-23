@@ -22,13 +22,9 @@ fn try_call<T>(env: &Env, config_contract: &Address, selector: &Symbol) -> Optio
 where
     T: TryFromVal<Env, Val>,
 {
-    env.try_invoke_contract::<T, InvokeError>(
-        config_contract,
-        selector,
-        soroban_sdk::vec![env],
-    )
-    .ok()
-    .and_then(Result::ok)
+    env.try_invoke_contract::<T, InvokeError>(config_contract, selector, soroban_sdk::vec![env])
+        .ok()
+        .and_then(Result::ok)
 }
 
 // ── Typed wrappers ───────────────────────────────────────────────────────────

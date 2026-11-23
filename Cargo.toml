@@ -34,3 +34,14 @@ min-compatible = "0.1.0"
 
 [workspace.dependencies]
 soroban-sdk = { version = "21.0.0" }
+
+# Soroban size-tuned release profile (see docs/WASM_SIZE_BUDGET.md, #1118).
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
